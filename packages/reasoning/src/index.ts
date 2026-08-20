@@ -37,6 +37,14 @@ export { ReasoningStore, CRITERIA_DIR, INSTANCES_DIR, PROPOSALS_DIR } from "./st
 export { criterionFromMarkdown, criterionToMarkdown, instanceToMarkdown } from "./criterion.ts";
 export type { Criterion, CriterionStatus, Instance, Trigger } from "./criterion.ts";
 
+export {
+  DELIVERY_LIMIT,
+  buildSelectionPrompt,
+  formatForSystemChannel,
+  parseSelection,
+  triggerMatches,
+} from "./deliver.ts";
+
 export { buildDistilPrompt, parseDistillation } from "./distil.ts";
 export type { DistilInput, Distillation, Relation } from "./distil.ts";
 

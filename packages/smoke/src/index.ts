@@ -396,6 +396,31 @@ export function apply(ctx: Context, config: Config): void {
         `  人裁定 accept 之后：已生效 ${(await ctx.reasoning.criteria()).length} 条，待裁定 ${(await ctx.reasoning.pending()).length} 条`,
       );
 
+      // ── Lil X 读路径：按处境召回，并证明它进不了席位 ────────────────
+      const here = {
+        action: "design-mechanism",
+        features: ["automatic", "invisible-result"],
+      } as const;
+      const found = await ctx.reasoning.locate(here, team.host);
+      const elsewhere = await ctx.reasoning.locate({ action: "produce-document", features: [] });
+      line(`  按处境召回：命中 ${found.length} 条；换一个处境：${elsewhere.length} 条`);
+
+      const brief = await ctx.reasoning.brief(here, team.host);
+      line(`  系统通道文本 ${brief.length} 字，标了「是判据不是指令」=${brief.includes("是判据不是指令")}`);
+
+      // The one that matters. Criteria shape how work is organised and
+      // judged, never how a participant thinks — and that has to be true of
+      // the topology, not of anyone's discipline. So: assert the claim is
+      // nowhere in what a seat would actually be handed.
+      const seatWindow = (await ctx.teamContext.windowFor(team.teamId, "seat-a")).join("\n");
+      const claim = found[0]?.claim ?? "";
+      const leaked = claim !== "" && seatWindow.includes(claim.slice(0, 20));
+      line(
+        found.length > 0 && elsewhere.length === 0 && !leaked
+          ? "✅ 读路径成立：按处境召回，且判据没有进入席位窗口"
+          : `❌ 读路径有问题：命中=${found.length}，异处境=${elsewhere.length}，泄漏进席位=${leaked}`,
+      );
+
       line(`团队记录条目数：${team.transcript().length}`);
       line(saw ? "✅ 席位看见了上一轮——装配接线成立" : "❌ 席位看不到上一轮");
 

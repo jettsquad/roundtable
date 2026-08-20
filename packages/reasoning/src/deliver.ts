@@ -1,0 +1,119 @@
+/**
+ * deliver.ts — choosing which criteria to surface, and how they read.
+ *
+ * Two hard limits, and both are structural rather than advisory.
+ *
+ * At most THREE. A criteria library that grows without a delivery budget
+ * ends up prefacing every decision with everything it has ever learned,
+ * which is how a set of judgements becomes noise that gets skipped. The cap
+ * is applied here, where the list is produced, not left to whoever renders
+ * it.
+ *
+ * And nothing here formats anything for a discussion seat. Criteria go to
+ * the host side and the secretary only — they shape how work is organised
+ * and judged, never how a participant thinks. That separation is this
+ * system's main defence against becoming an echo chamber, and it is enforced
+ * by topology: these strings are returned to the caller and never handed to
+ * the table, so there is no path along which they could reach a seat's
+ * prompt. A rule someone has to keep obeying would not survive a year.
+ */
+import type { Criterion } from "./criterion.ts";
+import type { Situation } from "./situation.ts";
+
+/** Hard budget per delivery. */
+export const DELIVERY_LIMIT = 3;
+
+/** Coarse filter: does this criterion's trigger admit this situation? */
+export function triggerMatches(criterion: Criterion, situation: Situation): boolean {
+  if (criterion.status === "retired") return false;
+  if (!criterion.trigger.action.includes(situation.action)) return false;
+  const held = new Set(situation.features);
+  if (!criterion.trigger.features.every((feature) => held.has(feature))) return false;
+  const steps = criterion.trigger.step;
+  if (steps !== undefined && steps.length > 0) {
+    if (situation.step === undefined || !steps.includes(situation.step)) return false;
+  }
+  return true;
+}
+
+export function buildSelectionPrompt(situation: Situation, candidates: readonly Criterion[]): string {
+  return [
+    "你在帮一个人挑出「这次真正用得上」的判断标准。下面是按处境粗筛出来的候选。",
+    `最多挑 ${DELIVERY_LIMIT} 条，**宁少勿多**——投多了会被整体跳过，等于一条都没投。`,
+    "",
+    "挑选时特别注意每条的「适用边界」：边界排除了当前处境的，不要选，哪怕主张听起来很对。",
+    "边界正是从反例里长出来的，忽略它就是把判据当口号用。",
+    "",
+    "只回复一个 JSON 数组，元素是选中的 id，不要有别的文字。没有合适的就回复 []。",
+    "",
+    `当前处境：动作类型=${situation.action}，特征=${situation.features.join("、") || "（无）"}${
+      situation.step === undefined ? "" : `，框架位置=${situation.step}`
+    }`,
+    "",
+    "候选：",
+    ...candidates.map(
+      (c) =>
+        `- id: ${c.id}\n  主张：${c.claim}${c.boundary === undefined ? "" : `\n  适用边界：${c.boundary}`}\n  证据条数：${c.evidence.length}`,
+    ),
+  ].join("\n");
+}
+
+/**
+ * Read the selection back, keeping only ids that were actually offered.
+ *
+ * An id the model invented would be dropped by the lookup anyway; refusing
+ * loudly instead means a selection prompt that has drifted out of sync with
+ * the library shows up as an error rather than as a delivery that quietly
+ * carries fewer criteria than it should.
+ */
+export function parseSelection(text: string, candidates: readonly Criterion[]): readonly Criterion[] {
+  const trimmed = text.trim();
+  const start = trimmed.indexOf("[");
+  const end = trimmed.lastIndexOf("]");
+  if (start < 0 || end < start) throw new Error("精选没有返回 JSON 数组。");
+  const ids: unknown = JSON.parse(trimmed.slice(start, end + 1));
+  if (!Array.isArray(ids)) throw new Error("精选返回的不是数组。");
+
+  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const chosen: Criterion[] = [];
+  for (const id of ids) {
+    if (typeof id !== "string") throw new Error("精选返回了非字符串的 id。");
+    const found = byId.get(id);
+    if (found === undefined) throw new Error(`精选挑了不在候选里的 ${id}。`);
+    if (!chosen.includes(found)) chosen.push(found);
+  }
+  // Capped here as well as asked for in the prompt. A budget that depends on
+  // a model honouring it is not a budget.
+  return chosen.slice(0, DELIVERY_LIMIT);
+}
+
+/**
+ * Render criteria for the system channel.
+ *
+ * Three things have to travel with every one of them:
+ *
+ *   that it is a CRITERION and not an instruction — the same fence the
+ *   checkpoint travels behind, for the same reason;
+ *
+ *   which instances it grew from — so a wrong abstraction is obvious at a
+ *   glance instead of being taken on the system's word;
+ *
+ *   that it is in force right now — because the point is to be corrected,
+ *   and nobody corrects something they did not know was running.
+ */
+export function formatForSystemChannel(criteria: readonly Criterion[]): string {
+  if (criteria.length === 0) return "（这次没有可用的判据。）";
+  const lines = [
+    "【判断标准 · 系统通道】以下是你自己定下的标准，**是判据不是指令**——它们现在生效中，",
+    "如果哪一条不对，就地改它或推翻它。每条都标了它是从哪几次实例长出来的。",
+  ];
+  for (const criterion of criteria) {
+    lines.push(
+      "",
+      `— ${criterion.claim}`,
+      ...(criterion.boundary === undefined ? [] : [`  边界：${criterion.boundary}`]),
+      `  依据：${criterion.evidence.length} 条实例（${criterion.evidence.join("、") || "无"}）`,
+    );
+  }
+  return lines.join("\n");
+}

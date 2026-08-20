@@ -24,6 +24,13 @@ import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { stripReasoning } from "@squad/shared";
 import type { Criterion } from "./criterion.ts";
+import {
+  DELIVERY_LIMIT,
+  buildSelectionPrompt,
+  formatForSystemChannel,
+  parseSelection,
+  triggerMatches,
+} from "./deliver.ts";
 import { buildDistilPrompt, parseDistillation, type Distillation } from "./distil.ts";
 import type { Situation } from "./situation.ts";
 import { ReasoningStore } from "./store.ts";
@@ -165,6 +172,48 @@ export class ReasoningService extends Service {
   /** Everything currently active. */
   async criteria(): Promise<readonly Criterion[]> {
     return this.store.criteria();
+  }
+
+  /**
+   * The criteria worth surfacing for this situation. At most three.
+   *
+   * Two stages. A coarse trigger filter runs first — cheap, deterministic,
+   * and no similarity model behind it: at one user's scale, handing the
+   * survivors to a model beats any score, because a model can read
+   * 「适用边界」 and a score cannot. Getting an embedding layer in early
+   * would hide the actually hard problem, which is designing the trigger.
+   *
+   * The model then picks. It is skipped when the coarse filter already
+   * returned few enough — paying for a model call to choose three out of
+   * three buys nothing, and a call that cannot change the answer is a call
+   * that can only fail.
+   *
+   * NOTHING here is handed to the table. These criteria go back to the
+   * caller for the system channel; they shape how work is organised and
+   * judged, never how a participant thinks. There is no path from here into
+   * a seat's prompt, which is the point — a rule someone has to keep obeying
+   * would not survive a year.
+   */
+  async locate(situation: Situation, parent?: Agent): Promise<readonly Criterion[]> {
+    const candidates = (await this.store.criteria()).filter((criterion) => triggerMatches(criterion, situation));
+    if (candidates.length <= DELIVERY_LIMIT || parent === undefined) {
+      return candidates.slice(0, DELIVERY_LIMIT);
+    }
+    const reply = await this.runTask(parent, "Lil X · 精选", buildSelectionPrompt(situation, candidates));
+    return parseSelection(reply, candidates);
+  }
+
+  /**
+   * What the system channel shows: the criteria, marked as criteria.
+   *
+   * Deliberately a separate call from `locate`, so that producing the text
+   * and deciding who sees it stay apart. The caller renders this in the
+   * system channel; handing the same string to a table would put it in a
+   * seat's prompt, and this service holds no reference to a table that could
+   * do it by accident.
+   */
+  async brief(situation: Situation, parent?: Agent): Promise<string> {
+    return formatForSystemChannel(await this.locate(situation, parent));
   }
 
   /**
