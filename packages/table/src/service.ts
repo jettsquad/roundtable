@@ -53,8 +53,40 @@ export interface Team {
   readonly hostSessionId: string;
   /** Ask the named seats (or all of them) and return what they said. */
   ask(instruction: string, seatIds?: readonly string[]): Promise<readonly SeatReply[]>;
+  /**
+   * The team record, flattened — every event, in order, nothing filtered.
+   *
+   * Faithful on purpose. It is tempting to drop the events a seat obviously
+   * should not read, but the assembler's whole guarantee is that every kind
+   * lands in one of its three tables, and one of those tables exists to catch
+   * the host node having run a turn. Filtering here would hide exactly the
+   * events that prove the invariant was broken, and the component built to
+   * notice would be the one component that never sees them.
+   */
+  transcript(): readonly TranscriptEvent[];
   dispose(): Promise<void>;
 }
+
+/** One recorded event of a team, in the flat shape assembly reads. */
+export interface TranscriptEvent {
+  /** The dsh event type verbatim — `user/message`, `turn/start`, … */
+  readonly kind: string;
+  /** Text carried by the event, or empty for the ones that carry none. */
+  readonly text: string;
+  /** Stable identity of this entry, used to cut windows at a checkpoint. */
+  readonly turnId: string;
+}
+
+/**
+ * Assembles what one seat sees this round.
+ *
+ * Registered by `@squad/context`; absent until it mounts. The dependency runs
+ * one way only — context injects `teams`, never the reverse — because two
+ * services that inject each other cannot both start. A table with nobody
+ * registered hands its seats an empty window, which is exactly stage 1's
+ * behaviour and is why stage 1 still runs.
+ */
+export type ContextSource = (teamId: string, seatId: string) => Promise<readonly string[]>;
 
 /** The provider name each backend is registered under in dsh. */
 const PROVIDER_BY_BACKEND: Record<SeatSpec["backend"], string> = {
@@ -67,9 +99,28 @@ export class TeamsService extends Service {
   static readonly inject = ["agents", "subagents"];
 
   private readonly teams = new Map<string, TeamRecord>();
+  private contextSource: ContextSource | undefined;
 
   constructor(ctx: Context) {
     super(ctx, "teams");
+  }
+
+  /**
+   * Register the assembler that decides what each seat sees.
+   *
+   * Returns its disposer; the registrant owns the lifetime (typically its own
+   * `ctx.effect`). A second registration while one is live throws rather than
+   * replacing it: two assemblers silently taking turns would make what a seat
+   * saw depend on mount order, and nothing in the record would say so.
+   */
+  useContextSource(source: ContextSource): () => void {
+    if (this.contextSource !== undefined) {
+      throw new Error("已经有一个上下文装配器注册在这张桌子上了。");
+    }
+    this.contextSource = source;
+    return () => {
+      if (this.contextSource === source) this.contextSource = undefined;
+    };
   }
 
   async create(input: CreateTeamInput): Promise<Team> {
@@ -105,6 +156,7 @@ export class TeamsService extends Service {
       seats: record.input.seats,
       hostSessionId: String(record.handle.agent.session.id),
       ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
+      transcript: () => transcriptOf(record.handle.agent),
       dispose: () => this.dispose(record),
     };
   }
@@ -131,19 +183,64 @@ export class TeamsService extends Service {
     if (seats.length === 0) throw new Error("点名的席位都不在这支团队里。");
 
     const host = record.handle.agent;
+
+    // Windows are taken BEFORE the instruction is recorded. The instruction
+    // reaches a seat as 「本轮指令」; a seat that then also finds the same
+    // sentence inside the carried discussion is reading it twice and has to
+    // guess which copy it is answering. The snapshot is also what
+    // `contextMode: independent` means — every seat sees the discussion as it
+    // stood when the round opened, not as the seats ahead of it left it.
+    // (Cumulative mode will need this taken per seat, mid-loop, instead.)
+    const windows = new Map<string, WindowAttempt>();
+    for (const seat of seats) {
+      windows.set(seat.seatId, await this.contextFor(record.teamId, seat.seatId));
+    }
+
     recordSpoken(host, record.input.hostDisplayName, instruction);
 
     const replies: SeatReply[] = [];
     for (const seat of seats) {
-      replies.push(await this.runSeat(host, seat, instruction));
+      const window = windows.get(seat.seatId) ?? { lines: [] };
+      replies.push(await this.runSeat(record, host, seat, instruction, window));
     }
     return replies;
   }
 
-  private async runSeat(host: Agent, seat: SeatSpec, instruction: string): Promise<SeatReply> {
-    const provider = PROVIDER_BY_BACKEND[seat.backend];
-    const prompt = composeSeatPrompt({ seat, instruction, context: [] });
+  /**
+   * What this seat sees this round, or nothing when no assembler is mounted.
+   *
+   * A failure is CARRIED rather than thrown: the windows are taken before the
+   * round is recorded, so throwing here would abandon the round before
+   * anything about it reached the log — a round that never happened, with no
+   * trace of why. Carried, it surfaces inside the seat's own failure boundary
+   * and lands in the record as that seat failing, which is both true and
+   * findable.
+   */
+  private async contextFor(teamId: string, seatId: string): Promise<WindowAttempt> {
+    if (this.contextSource === undefined) return { lines: [] };
     try {
+      return { lines: await this.contextSource(teamId, seatId) };
+    } catch (error) {
+      return { error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+
+  private async runSeat(
+    record: TeamRecord,
+    host: Agent,
+    seat: SeatSpec,
+    instruction: string,
+    window: WindowAttempt,
+  ): Promise<SeatReply> {
+    const provider = PROVIDER_BY_BACKEND[seat.backend];
+    try {
+      // Rethrown inside the try, so a broken assembler becomes a visible
+      // failed seat instead of a silently empty window. A seat handed nothing
+      // answers confidently from nothing, which reads exactly like a seat that
+      // was given the discussion and ignored it — the failure has to be louder
+      // than its symptom.
+      if (window.error !== undefined) throw window.error;
+      const prompt = composeSeatPrompt({ seat, instruction, context: window.lines ?? [] });
       const request: SubagentStartRequest = {
         label: seat.displayName,
         prompt: [{ type: "text", text: prompt }],
@@ -177,6 +274,12 @@ export class TeamsService extends Service {
     await record.handle.dispose();
     this.teams.delete(record.teamId);
   }
+}
+
+/** One seat's window for a round, or the failure that stopped it being built. */
+interface WindowAttempt {
+  readonly lines?: readonly string[];
+  readonly error?: Error;
 }
 
 interface TeamRecord {
@@ -214,6 +317,29 @@ function recordSpoken(host: Agent, speaker: string, text: string): void {
     // that model history is derived from.
     { surfaceOp: "append" } as never,
   );
+}
+
+/**
+ * Flatten the host session log into the shape assembly reads.
+ *
+ * Every event, in order. `user/message` carries the discussion and gets its
+ * text; everything else travels with empty text so the assembler still sees
+ * the kind — which is the point, because one of its tables exists to catch
+ * kinds that prove the host node ran a turn.
+ */
+function transcriptOf(host: Agent): readonly TranscriptEvent[] {
+  return host.session.events.map((event) => {
+    const data = event.data as { message?: { id?: unknown; content?: unknown } } | undefined;
+    const message = data?.message;
+    const content = Array.isArray(message?.content) ? (message.content as ContentBlock[]) : undefined;
+    return {
+      kind: event.type,
+      text: content === undefined ? "" : textOf(content),
+      // The message id when there is one; otherwise the sequence number, which
+      // is contiguous and unique by the log's own contract.
+      turnId: typeof message?.id === "string" ? message.id : `seq-${event.seq}`,
+    };
+  });
 }
 
 const textOf = (blocks: readonly ContentBlock[]): string =>

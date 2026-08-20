@@ -13,6 +13,32 @@
  * by the second — history gone, replacement gone, no error. Keeping the two
  * layers named and separate is the point, not an implementation detail.
  */
+import type { Context } from "@deepseek-ai/cordis";
+import { TeamContextService } from "./service.ts";
+
+export const name = "squad-context";
+
+/**
+ * `teams` because this reads the team record and registers itself on the
+ * table; `storageDomain` because checkpoints do not live in the session log
+ * (see domain.ts). The arrow never runs the other way — the table must not
+ * inject this service, or neither could start.
+ */
+export const inject = ["teams", "storageDomain"];
+
+export function apply(ctx: Context): void {
+  ctx.plugin(TeamContextService);
+}
+
+export { TeamContextService } from "./service.ts";
+export type { RecordCheckpointInput } from "./service.ts";
+
+export { SQUAD_TEAMS_DOMAIN } from "./domain.ts";
+export type { CheckpointRecord } from "./domain.ts";
+
+export { mergeCheckpoints } from "./merge.ts";
+export type { MergeableCheckpoint, TranscriptEntry } from "./merge.ts";
+
 export { selectContextEvents, QUOTED_PREFIX, CHECKPOINT_KIND, CHECKPOINT_REVOKED_KIND } from "./window.ts";
 export type { SelectableEvent } from "./window.ts";
 

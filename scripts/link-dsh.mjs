@@ -30,10 +30,23 @@ import { homedir } from "node:os";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Where the profile farm points; the harness install is the single source. */
-const farm = join(homedir(), ".dsh", "profiles", "node_modules", "@deepseek-ai");
+const farmRoot = join(homedir(), ".dsh", "profiles", "node_modules");
+const farm = join(farmRoot, "@deepseek-ai");
 
 /** Only what our plugins import directly. Add here, never guess at runtime. */
-const NEEDED = ["cordis", "dsh-agent", "dsh-subagent", "dsh-llm", "dsh-session"];
+const NEEDED = ["cordis", "dsh-agent", "dsh-subagent", "dsh-llm", "dsh-session", "dsh-storage", "dsh-storage-domain"];
+
+/**
+ * Unscoped packages needing the same treatment.
+ *
+ * zod is here for the same reason cordis is, and the failure is worse because
+ * it looks like a type error rather than a wiring one: a domain spec's schemas
+ * are validated by the copy `dsh-storage-domain` imports, and zod checks
+ * schema identity with its own brand symbols. Two physical copies and every
+ * schema we hand it is "not a zod schema" — from a file that imports zod and
+ * type-checks clean.
+ */
+const NEEDED_UNSCOPED = ["zod"];
 
 if (!existsSync(farm)) {
   console.error(
@@ -43,22 +56,26 @@ if (!existsSync(farm)) {
   process.exit(1);
 }
 
-const scope = join(repoRoot, "node_modules", "@deepseek-ai");
+const modules = join(repoRoot, "node_modules");
+const scope = join(modules, "@deepseek-ai");
 mkdirSync(scope, { recursive: true });
 
+const targets = [
+  ...NEEDED.map((name) => ({ name: `@deepseek-ai/${name}`, source: join(farm, name), link: join(scope, name) })),
+  ...NEEDED_UNSCOPED.map((name) => ({ name, source: join(farmRoot, name), link: join(modules, name) })),
+];
+
 let linked = 0;
-for (const name of NEEDED) {
-  const source = join(farm, name);
+for (const { name, source, link } of targets) {
   if (!existsSync(source)) {
     console.error(`农场里没有 ${name}：${source}`);
     process.exit(1);
   }
   // Resolve through the farm's own symlink so both paths share one realpath.
   const target = lstatSync(source).isSymbolicLink() ? readlinkSync(source) : source;
-  const link = join(scope, name);
   if (existsSync(link) || lstatSync(link, { throwIfNoEntry: false })) rmSync(link, { recursive: true, force: true });
   symlinkSync(target, link, "dir");
-  console.log(`✓ @deepseek-ai/${name} → ${target}`);
+  console.log(`✓ ${name} → ${target}`);
   linked += 1;
 }
 

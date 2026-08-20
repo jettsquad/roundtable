@@ -2,12 +2,15 @@
   "name": "dsh-profile-squad",
   "private": true,
   "dependencies": {
-    "@squad/table": "file:/Volumes/Jett/projects/Squad2/packages/table",
-    "@deepseek-ai/dsh-subagent-claude-code": "file:/Users/yanwong/.local/share/roundtable/deepseek-harness/packages/subagent/subagent-claude-code"
+    "@deepseek-ai/dsh-subagent-claude-code": "file:/Users/yanwong/.local/share/roundtable/deepseek-harness/packages/subagent/subagent-claude-code",
+    "@squad/context": "file:/Volumes/Jett/projects/Squad2/packages/context",
+    "@squad/table": "file:/Volumes/Jett/projects/Squad2/packages/table"
   },
   "dsh": {
     "profile": {
-      "bundles": ["@deepseek-ai/dsh-base"]
+      "bundles": [
+        "@deepseek-ai/dsh-base"
+      ]
     }
   }
 }
