@@ -1,0 +1,12 @@
+{
+  "harnessRoot": "/Users/yanwong/.local/share/roundtable/deepseek-harness",
+  "commit": "47f943859b",
+  "packages": [
+    "cordis",
+    "dsh-agent",
+    "dsh-subagent",
+    "dsh-llm",
+    "dsh-session"
+  ],
+  "linkedAt": "2026-08-20T05:37:59.353Z"
+}

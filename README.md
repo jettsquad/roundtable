@@ -30,6 +30,15 @@ Squad 2.0 **作为 DSH 的一组插件**存在，不是独立应用。四个插�
 秘书、Lil X；席位用 DSH 现成的 subagent provider。完整设计见
 `docs/specs/2026-08-19-architecture.md`。
 
+## 依赖可重现性
+
+本仓库**不跟踪 `package-lock.json`**：每一条依赖都是 `file:` 链到本机绝对路径
+（`packages/*`、以及 DSH 的 vendored 包），锁文件里全是这台机器的路径，进 git 只是噪音。
+
+代价要认清：**整套依赖的可重现性押在 `link-dsh.mjs` 和本机 DSH 的构建状态上。**
+所以 `link-dsh` 把它绑定的 harness 提交号写进 `.dsh-link.json`，
+下次链接时若发现变了会告警——**dsh 在脚下被换掉，不该表现为「行为变了但没有 diff 能解释」**。
+
 ## 阶段与门控
 
 - **阶段 0 · 定边界** — ✅ 已完成。形态、插件契约、树形结构、插件清单已定。
