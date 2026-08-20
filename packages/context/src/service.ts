@@ -17,6 +17,7 @@ import type { Domain } from "@deepseek-ai/dsh-storage-domain";
 import { accumulatedTokens, evaluateThreshold, thresholdTokensFor, type ThresholdDecision } from "@squad/shared";
 import { SQUAD_TEAMS_DOMAIN, type CheckpointRecord } from "./domain.ts";
 import { mergeCheckpoints } from "./merge.ts";
+import { planFold } from "./plan.ts";
 import { renderTimeline } from "./timeline.ts";
 import { CHECKPOINT_KIND, selectContextEvents, type SelectableEvent } from "./window.ts";
 
@@ -35,9 +36,11 @@ export interface RecordCheckpointInput {
 }
 
 export class TeamContextService extends Service {
-  static readonly inject = ["teams", "storageDomain"];
+  static readonly inject = ["teams", "storageDomain", "secretary"];
 
   private domain: Domain<typeof SQUAD_TEAMS_DOMAIN> | undefined;
+  /** Teams whose fold is running. A second would cover the same ground. */
+  private readonly folding = new Set<string>();
 
   constructor(ctx: Context) {
     super(ctx, "teamContext");
@@ -56,7 +59,10 @@ export class TeamContextService extends Service {
       this.domain = undefined;
       await domain.close();
     });
-    const release = this.ctx.teams.useContextSource((teamId, seatId) => this.windowFor(teamId, seatId));
+    const release = this.ctx.teams.useAssembler({
+      windowFor: (teamId, seatId) => this.windowFor(teamId, seatId),
+      roundEnded: (teamId) => this.onRoundEnded(teamId),
+    });
     this.ctx.effect(() => release);
   }
 
@@ -105,13 +111,22 @@ export class TeamContextService extends Service {
   }
 
   /** How much has accumulated since the last live checkpoint, against its limit. */
+  /**
+   * How much has accumulated since the last live checkpoint, against its
+   * limit — and, when it is over the limit and still not folding, why not.
+   *
+   * The two hold reasons are reported rather than hardcoded away. "Over the
+   * limit and doing nothing" is a normal state (the team is mid-round, or a
+   * fold is already running) and it needs to be distinguishable from the
+   * trigger being broken.
+   */
   progress(teamId: string, coefficient?: number): ThresholdDecision {
-    const contents = this.sinceLastCheckpoint(teamId).map((event) => ({ text: textOf(event) }));
+    const team = this.ctx.teams.get(teamId);
     return evaluateThreshold({
-      contents,
-      coefficient,
-      checkpointInFlight: false,
-      teamBusy: false,
+      contents: this.sinceLastCheckpoint(teamId).map((event) => ({ text: textOf(event) })),
+      coefficient: coefficient ?? team?.checkpointCoefficient,
+      checkpointInFlight: this.folding.has(teamId),
+      teamBusy: team?.busy ?? false,
     });
   }
 
@@ -123,6 +138,84 @@ export class TeamContextService extends Service {
   /** Estimated tokens accumulated since the last live checkpoint. */
   accumulated(teamId: string): number {
     return accumulatedTokens(this.sinceLastCheckpoint(teamId).map((event) => ({ text: textOf(event) })));
+  }
+
+  /**
+   * A round ended. Fold if the record has grown past this team's limit.
+   *
+   * Returns void and never rejects. Crossing the threshold must not make the
+   * team wait — 1.x made the secretary blocking once and the team sat idle
+   * watching it write — so this starts the work and returns. Which means
+   * nothing is awaiting the result, and a failure here has no caller to
+   * surface it: it has to report itself or vanish.
+   */
+  private onRoundEnded(teamId: string): void {
+    void this.maybeFold(teamId).catch((error: unknown) => {
+      this.ctx.logger.error(
+        `团队 ${teamId}：自动折叠失败：${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+      );
+    });
+  }
+
+  /**
+   * Fold when the accumulated record crosses the limit and the team is idle.
+   *
+   * Idle, not merely "crossed": the secretary reads the record while writing,
+   * and starting mid-round would record a boundary with work still in flight.
+   * Round end is that idle moment. A team that keeps talking simply crosses
+   * again at the next round end.
+   */
+  private async maybeFold(teamId: string): Promise<void> {
+    const team = this.ctx.teams.get(teamId);
+    if (team === undefined) return;
+    // One place decides. `evaluateThreshold` already holds for a fold in
+    // flight and for a busy team, so guarding again here would put the same
+    // decision in two places, where they can drift apart.
+    if (!this.progress(teamId).crossed) return;
+    await this.fold(teamId);
+  }
+
+  /**
+   * Fold this team's discussion into a checkpoint, now.
+   *
+   * `coversUpTo` is taken BEFORE the secretary starts, and it names the last
+   * entry that exists at this instant. The secretary writes without stopping
+   * the team, so rounds can land while it works and end up recorded before
+   * the checkpoint is stored — turns it never saw. Naming the boundary up
+   * front means those turns travel whole instead of being cut away by a
+   * document that does not mention them.
+   *
+   * The turns fed in are "since the last checkpoint", not "the window". Those
+   * differ, and taking the window would make each checkpoint's input depend
+   * on the previous checkpoint's own output — losses compounding once per
+   * fold.
+   */
+  async fold(teamId: string): Promise<CheckpointRecord> {
+    const team = this.ctx.teams.get(teamId);
+    if (team === undefined) throw new Error(`没有这支团队：${teamId}。`);
+    if (this.folding.has(teamId)) throw new Error(`团队 ${teamId} 正在折叠中。`);
+
+    this.folding.add(teamId);
+    try {
+      const plan = planFold(this.sinceLastCheckpoint(teamId), this.liveCheckpoint(teamId)?.text);
+      if (plan === undefined) throw new Error(`团队 ${teamId} 没有可折叠的记录。`);
+
+      const text = await this.ctx.secretary.writeCheckpoint({
+        parent: team.host,
+        hostGoal: team.displayName,
+        previousCheckpoint: plan.previousCheckpoint,
+        turns: plan.turns,
+      });
+      return await this.record({ teamId, text, coversUpTo: plan.coversUpTo });
+    } finally {
+      this.folding.delete(teamId);
+    }
+  }
+
+  /** The newest checkpoint still standing, or none. */
+  private liveCheckpoint(teamId: string): CheckpointRecord | undefined {
+    const live = this.checkpointsOf(teamId).filter((record) => record.revokedAt === undefined);
+    return live[live.length - 1];
   }
 
   /** The team record as one ordered stream; the two-homes seam is `mergeCheckpoints`. */

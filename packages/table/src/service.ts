@@ -35,6 +35,15 @@ export interface CreateTeamInput {
   readonly projectFolder: string;
   readonly hostDisplayName: string;
   readonly seats: readonly SeatSpec[];
+  /**
+   * Multiplier on the 1M-token base that sets when the record is folded.
+   *
+   * A base rather than a per-model lookup: no API reports a model's context
+   * window, a built-in table goes stale, and one team's seats may sit on
+   * different models — so it would have to be filled in more than once and
+   * again on every model change. Asked once, as a coefficient.
+   */
+  readonly checkpointCoefficient?: number | undefined;
 }
 
 export interface SeatReply {
@@ -51,6 +60,10 @@ export interface Team {
   readonly seats: readonly SeatSpec[];
   /** The host node's session id — the team's durable record. */
   readonly hostSessionId: string;
+  /** A round is running right now; folding waits for this to clear. */
+  readonly busy: boolean;
+  /** The team's checkpoint coefficient, if it set one. */
+  readonly checkpointCoefficient?: number | undefined;
   /**
    * The host node itself.
    *
@@ -88,15 +101,32 @@ export interface TranscriptEvent {
 }
 
 /**
- * Assembles what one seat sees this round.
+ * The collaborator that decides what seats see, and folds the record when it
+ * grows too large.
  *
  * Registered by `@squad/context`; absent until it mounts. The dependency runs
  * one way only — context injects `teams`, never the reverse — because two
  * services that inject each other cannot both start. A table with nobody
  * registered hands its seats an empty window, which is exactly stage 1's
  * behaviour and is why stage 1 still runs.
+ *
+ * A cordis event would have done this too, but the event's type would have to
+ * be declared in one plugin and consumed in another that is forbidden to
+ * import it. A registered object keeps the seam typed on one side.
  */
-export type ContextSource = (teamId: string, seatId: string) => Promise<readonly string[]>;
+export interface TeamAssembler {
+  /** The lines this seat is shown this round. */
+  windowFor(teamId: string, seatId: string): Promise<readonly string[]>;
+  /**
+   * A round just finished and this team is idle.
+   *
+   * Returns `void`, not a promise: folding must never make the team wait, and
+   * a signature with nothing to await makes that structural rather than a
+   * comment. Whatever it starts, it owns — including reporting its own
+   * failures, because nobody here is listening for them.
+   */
+  roundEnded(teamId: string): void;
+}
 
 /** The provider name each backend is registered under in dsh. */
 const PROVIDER_BY_BACKEND: Record<SeatSpec["backend"], string> = {
@@ -109,7 +139,7 @@ export class TeamsService extends Service {
   static readonly inject = ["agents", "subagents"];
 
   private readonly teams = new Map<string, TeamRecord>();
-  private contextSource: ContextSource | undefined;
+  private assembler: TeamAssembler | undefined;
 
   constructor(ctx: Context) {
     super(ctx, "teams");
@@ -123,13 +153,13 @@ export class TeamsService extends Service {
    * replacing it: two assemblers silently taking turns would make what a seat
    * saw depend on mount order, and nothing in the record would say so.
    */
-  useContextSource(source: ContextSource): () => void {
-    if (this.contextSource !== undefined) {
+  useAssembler(assembler: TeamAssembler): () => void {
+    if (this.assembler !== undefined) {
       throw new Error("已经有一个上下文装配器注册在这张桌子上了。");
     }
-    this.contextSource = source;
+    this.assembler = assembler;
     return () => {
-      if (this.contextSource === source) this.contextSource = undefined;
+      if (this.assembler === assembler) this.assembler = undefined;
     };
   }
 
@@ -144,7 +174,7 @@ export class TeamsService extends Service {
       meta: { cwd: input.projectFolder },
     });
 
-    const record: TeamRecord = { teamId, input, handle, disposed: false };
+    const record: TeamRecord = { teamId, input, handle, roundsInFlight: 0, disposed: false };
     this.teams.set(teamId, record);
     return this.viewOf(record);
   }
@@ -166,6 +196,12 @@ export class TeamsService extends Service {
       seats: record.input.seats,
       hostSessionId: String(record.handle.agent.session.id),
       host: record.handle.agent,
+      // Read through the record, not captured: a view handed out before a
+      // round started must not keep reporting the team as idle.
+      get busy() {
+        return record.roundsInFlight > 0;
+      },
+      checkpointCoefficient: record.input.checkpointCoefficient,
       ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
       transcript: () => transcriptOf(record.handle.agent),
       dispose: () => this.dispose(record),
@@ -210,10 +246,21 @@ export class TeamsService extends Service {
     recordSpoken(host, record.input.hostDisplayName, instruction);
 
     const replies: SeatReply[] = [];
-    for (const seat of seats) {
-      const window = windows.get(seat.seatId) ?? { lines: [] };
-      replies.push(await this.runSeat(record, host, seat, instruction, window));
+    record.roundsInFlight += 1;
+    try {
+      for (const seat of seats) {
+        const window = windows.get(seat.seatId) ?? { lines: [] };
+        replies.push(await this.runSeat(record, host, seat, instruction, window));
+      }
+    } finally {
+      record.roundsInFlight -= 1;
     }
+
+    // Signalled AFTER the count drops, so an assembler that asks whether the
+    // team is busy gets the answer this round's end actually created. And
+    // signalled outside the caller's await path — the round is already
+    // finished; whatever this starts must not make anyone wait for it.
+    this.signalRoundEnded(record);
     return replies;
   }
 
@@ -228,11 +275,30 @@ export class TeamsService extends Service {
    * findable.
    */
   private async contextFor(teamId: string, seatId: string): Promise<WindowAttempt> {
-    if (this.contextSource === undefined) return { lines: [] };
+    if (this.assembler === undefined) return { lines: [] };
     try {
-      return { lines: await this.contextSource(teamId, seatId) };
+      return { lines: await this.assembler.windowFor(teamId, seatId) };
     } catch (error) {
       return { error: error instanceof Error ? error : new Error(String(error)) };
+    }
+  }
+
+  /**
+   * Tell the assembler a round ended.
+   *
+   * A throwing assembler must not take the round's replies with it: the work
+   * is done and recorded by this point, and losing it to a bookkeeping
+   * failure would be the round disappearing for a reason unrelated to the
+   * round. Reported, not propagated.
+   */
+  private signalRoundEnded(record: TeamRecord): void {
+    if (this.assembler === undefined || record.disposed) return;
+    try {
+      this.assembler.roundEnded(record.teamId);
+    } catch (error) {
+      this.ctx.logger.warn(
+        `团队 ${record.teamId}：装配器的 roundEnded 抛错：${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -297,6 +363,8 @@ interface TeamRecord {
   readonly teamId: string;
   readonly input: CreateTeamInput;
   readonly handle: AgentHandle;
+  /** Rounds currently running. Folding starts only at zero. */
+  roundsInFlight: number;
   disposed: boolean;
 }
 

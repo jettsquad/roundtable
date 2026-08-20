@@ -37,6 +37,8 @@ export { SQUAD_TEAMS_DOMAIN } from "./domain.ts";
 export type { CheckpointRecord } from "./domain.ts";
 
 export { mergeCheckpoints } from "./merge.ts";
+export { planFold } from "./plan.ts";
+export type { FoldPlan, PlannedTurn } from "./plan.ts";
 export type { MergeableCheckpoint, TranscriptEntry } from "./merge.ts";
 
 export { selectContextEvents, QUOTED_PREFIX, CHECKPOINT_KIND, CHECKPOINT_REVOKED_KIND } from "./window.ts";

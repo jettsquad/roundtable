@@ -89,21 +89,22 @@ export function apply(ctx: Context, config: Config): void {
       // them — and the boundary has to hold, or history is cut with nothing
       // put in its place, which is the failure 1.x shipped for a while.
       const spoken = team.transcript().filter((entry) => entry.kind === "user/message" && entry.text.length > 0);
-      const coversUpTo = spoken[spoken.length - 1]?.turnId;
-      if (coversUpTo === undefined) throw new Error("没有可折叠的记录。");
 
-      line("秘书写检查点…");
-      const checkpointText = await ctx.secretary.writeCheckpoint({
-        parent: team.host,
-        hostGoal: `讨论「${topic}」`,
-        turns: spoken.map((entry) => {
-          const match = /^【(.+?)】([\s\S]*)$/.exec(entry.text);
-          return { speaker: match?.[1] ?? "记录", text: match?.[2] ?? entry.text };
-        }),
-      });
-      line(`检查点 ${checkpointText.length} 字，标题齐全（否则上一步已经抛错）`);
+      // What the trigger sees. The smoke cannot cross the real threshold —
+      // the floor is 1M × 0.05 = 50k tokens, and getting there means actually
+      // sending a 50k-token round — so what is checked here is the accounting
+      // and the reason it is holding, not the firing. `evaluateThreshold`
+      // owns the firing decision and has its own tests.
+      const before = ctx.teamContext.progress(team.teamId);
+      line(
+        `阈值：累计 ${before.accumulated} / 上限 ${before.limit}，crossed=${before.crossed}` +
+          `${before.holdReason === undefined ? "" : `，按住的原因=${before.holdReason}`}`,
+      );
+      if (before.accumulated === 0) line("⚠️ 累计为 0——记录没被算进去，接线有问题");
 
-      await ctx.teamContext.record({ teamId: team.teamId, text: checkpointText, coversUpTo });
+      line("秘书写检查点（手动触发，走的是自动折叠的同一条路）…");
+      const checkpoint = await ctx.teamContext.fold(team.teamId);
+      line(`检查点 ${checkpoint.text.length} 字，覆盖到 ${checkpoint.coversUpTo}，标题齐全（否则已经抛错）`);
 
       const folded = await ctx.teamContext.windowFor(team.teamId, "seat-a");
       const joined = folded.join("\n");
