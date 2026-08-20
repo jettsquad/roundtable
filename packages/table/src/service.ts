@@ -19,7 +19,7 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
-import type { ContentBlock, UserMessage } from "@deepseek-ai/dsh-llm/types";
+import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { stripReasoning } from "@squad/shared";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
 
@@ -131,7 +131,7 @@ export class TeamsService extends Service {
     if (seats.length === 0) throw new Error("点名的席位都不在这支团队里。");
 
     const host = record.handle.agent;
-    host.followup(userMessage(`【${record.input.hostDisplayName}】${instruction}`));
+    recordSpoken(host, record.input.hostDisplayName, instruction);
 
     const replies: SeatReply[] = [];
     for (const seat of seats) {
@@ -158,10 +158,7 @@ export class TeamsService extends Service {
       // a round that quietly drops a member reads exactly like a round where
       // that member had nothing to say.
       const failed = result.stopReason !== "completed";
-      // Injected rather than appended: the reply becomes model-visible context
-      // for later rounds, and doing it through the inbox means the host's log
-      // records that it arrived.
-      host.inject(userMessage(`【${seat.displayName}】${text}`));
+      recordSpoken(host, seat.displayName, text);
       return { seatId: seat.seatId, displayName: seat.displayName, text, failed };
     } catch (error) {
       // A seat that could not run is reported, never silently skipped: a round
@@ -169,7 +166,7 @@ export class TeamsService extends Service {
       // nothing to say.
       const detail = error instanceof Error ? error.message : String(error);
       const text = `⚠️ 该席位未能执行：${detail}`;
-      host.inject(userMessage(`【${seat.displayName}】${text}`));
+      recordSpoken(host, seat.displayName, text);
       return { seatId: seat.seatId, displayName: seat.displayName, text, failed: true };
     }
   }
@@ -189,12 +186,35 @@ interface TeamRecord {
   disposed: boolean;
 }
 
-const userMessage = (text: string): UserMessage =>
-  ({
-    id: `squad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-    source: { kind: "host" },
-    content: [{ type: "text", text }],
-  }) as unknown as UserMessage;
+/**
+ * Write one line of the discussion into the team record.
+ *
+ * Appended to the host's log, never sent through its inbox. The inbox is how
+ * an agent is given work: `followup` wakes it into a turn — which would put an
+ * LLM in the chair — and `inject` parks the text until some later message
+ * wakes it, so the record would lag the discussion and lose its tail entirely
+ * when a team goes quiet. Both were tried; both were wrong.
+ *
+ * The host node runs no turns. Its log is the team's transcript, and what a
+ * seat is shown next round is assembled from that log rather than from
+ * anything queued on an agent.
+ */
+function recordSpoken(host: Agent, speaker: string, text: string): void {
+  host.session.append(
+    "user/message",
+    {
+      message: {
+        id: `squad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        source: { kind: "host" },
+        content: [{ type: "text", text: `【${speaker}】${text}` }],
+      },
+    } as never,
+    // `SurfaceOp` is the literal 'append', not an object. Every
+    // surface-eligible event must declare how it joins the ordered surface
+    // that model history is derived from.
+    { surfaceOp: "append" } as never,
+  );
+}
 
 const textOf = (blocks: readonly ContentBlock[]): string =>
   blocks
