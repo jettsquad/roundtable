@@ -1,13 +1,39 @@
 # Squad 2.0 —— 叠在 dsh-base 之上的插件层。
 #
 # `insert` 新增行；带 id 的裸 patch 是替换已有行的 config，不是新增。
+#
+# 顺序有意义：storage 三行必须排在我们的插件之前。`ctx.storage.domain` 是
+# 惰性解析的 form，在 storage-domain 挂上之前读它会抛 `form-not-mounted`。
 - insert:
+    # ── 存储 ──────────────────────────────────────────────────────────
+    # base 不挂 storage。Squad 需要它是因为**团队级记录不能进 session 日志**：
+    # 读路径的 assertEventsSupported 会拒绝任何不在 KNOWN_SESSION_EVENT_TYPES
+    # 里、又没标 ignorable 的事件类型，而 out-of-repo 插件的事件按设计就在名单
+    # 之外（known-event-types.ts 的注释：registration surface「deferred until
+    # such a consumer exists」）。标 ignorable 则会在重载时被跳过——检查点悄悄
+    # 消失，正是 1.x 花一整轮修掉的那个 bug 换个楼层重演。
+    # 所以检查点这类 Squad 自有记录走 storage，session 日志只用 dsh 原生词汇。
+    - id: storage
+      name: '@deepseek-ai/dsh-storage'
+
+    - id: storage-json
+      name: '@deepseek-ai/dsh-storage-json'
+      config:
+        root: !!js dshHomePath('squad-storage')
+
+    - id: storage-domain
+      name: '@deepseek-ai/dsh-storage-domain'
+      config:
+        backend: json
+
+    # ── 席位后端 ──────────────────────────────────────────────────────
     # base 只挂进程内的两个 subagent provider，不挂 CLI 后端的，所以这里显式加上。
     # 它读宿主自己的 Claude 设置与登录态：provider 刻意不传 settingSources，
     # 也不创建或修改登录状态，订阅登录因此原样透传。
     - id: subagent-claude-code
       name: '@deepseek-ai/dsh-subagent-claude-code'
 
+    # ── Squad ────────────────────────────────────────────────────────
     # 桌子：主持人节点 + 席位编排。
     - id: squad-table
       name: '@squad/table'
