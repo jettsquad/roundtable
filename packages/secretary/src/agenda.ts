@@ -11,7 +11,7 @@
  * strict, and the roster check runs afterwards because the shape being legal
  * says nothing about the seats being real.
  */
-import { checkAgendaAgainstRoster, parseAgendaSpec, type AgendaSpec } from "@squad/shared";
+import { ACTION_KINDS, FEATURE_FLAGS, checkAgendaAgainstRoster, parseAgendaSpec, type AgendaSpec } from "@squad/shared";
 
 /** One seat as the drafting prompt needs to see it. */
 export interface RosterSeat {
@@ -46,10 +46,15 @@ export function buildAgendaPrompt(input: AgendaDraftInput): string {
   return [
     "You are a meeting secretary. Convert the host's instruction into a JSON team agenda.",
     "Reply with ONLY a JSON object (no prose, no code fence) matching exactly this shape:",
-    '{"hostGoal"?: string, "phases": [{"title": string, "purpose"?: string, "contextMode": "independent"|"cumulative", "tasks": [{"seatId": string, "instruction": string, "publicContextCutoff"?: "phase-start"|"immediately-before-turn", "artifactPath"?: string}], "exit"?: "after-tasks"|"after-bounded-rounds"|"wait-for-host", "maxRounds"?: number}]}',
+    '{"hostGoal"?: string, "phases": [{"title": string, "purpose"?: string, "contextMode": "independent"|"cumulative", "situation"?: {"action": string, "features": string[]}, "tasks": [{"seatId": string, "instruction": string, "publicContextCutoff"?: "phase-start"|"immediately-before-turn", "artifactPath"?: string}], "exit"?: "after-tasks"|"after-bounded-rounds"|"wait-for-host", "maxRounds"?: number}]}',
     'Rules: use only the seatIds listed below; every phase needs at least one task; a phase that repeats rounds uses exit "after-bounded-rounds" WITH a positive integer maxRounds, and no other phase may set maxRounds.',
     'Set "artifactPath" ONLY when the host explicitly asks for that task\'s answer to be written to a file, and only with a path they actually name (relative to the project folder, e.g. "docs/review.md"). Never invent one: the app writes the file itself, so a made-up path sends later turns to a file that does not exist. Omit it otherwise.',
     'Set "contextMode" to "independent" when the host wants each member to answer without seeing the others (e.g. 各自独立评审); otherwise "cumulative".',
+    // Labelling the phase is not extra work asked of the model — deciding
+    // what a phase is FOR is what drafting it already consists of. Naming it
+    // is what lets the host's own criteria be consulted when the phase opens,
+    // instead of only when somebody remembers to ask.
+    `Set "situation" to describe what KIND of decision the phase makes. "action" is exactly one of: ${ACTION_KINDS.join(", ")}. "features" are properties of the thing being decided about, zero or more of: ${FEATURE_FLAGS.join(", ")}. Both lists are CLOSED — never invent a value; omit "situation" entirely if none of them fit.`,
     `Seats (use these exact seatIds): ${roster}.`,
     `Topic: ${input.topic}`,
     `Host instruction: ${input.command}`,

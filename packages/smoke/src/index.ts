@@ -408,6 +408,26 @@ export function apply(ctx: Context, config: Config): void {
       const brief = await ctx.reasoning.brief(here, team.host);
       line(`  系统通道文本 ${brief.length} 字，标了「是判据不是指令」=${brief.includes("是判据不是指令")}`);
 
+      // The step that makes Lil X actually run rather than be a library
+      // somebody could call: the secretary labels each phase while drafting,
+      // and the briefs come off that label at confirmation time.
+      const labelled = await ctx.secretary.draftAgenda({
+        parent: team.host,
+        command: "设计一个「讨论过长时自动折叠」的机制，让甲提出方案。",
+        topic: topic,
+        seats: [{ seatId: "seat-a", displayName: "甲" }],
+      });
+      const labels = labelled.phases.map(
+        (p) =>
+          `${p.title}=${p.situation === undefined ? "（未标）" : `${p.situation.action}[${p.situation.features.join(",")}]`}`,
+      );
+      line(`  秘书给阶段标的处境：${labels.join(" | ")}`);
+      const briefs = await ctx.reasoning.briefForAgenda(labelled, team.host);
+      line(`  按议程投放：${briefs.length} 个阶段拿到了判据`);
+      for (const item of briefs) {
+        line(`    [${item.phase}] ${item.brief.replace(/\n/g, " ").slice(0, 70)}…`);
+      }
+
       // The one that matters. Criteria shape how work is organised and
       // judged, never how a participant thinks — and that has to be true of
       // the topology, not of anyone's discipline. So: assert the claim is

@@ -14,6 +14,7 @@
  * like a seat that simply had nothing to say.
  */
 import { z } from "zod";
+import { ACTION_KINDS, FEATURE_FLAGS } from "./situation.ts";
 
 export const AgendaTaskSchema = z
   .object({
@@ -40,6 +41,26 @@ export const AgendaPhaseSchema = z
      */
     contextMode: z.enum(["independent", "cumulative"]),
     tasks: z.array(AgendaTaskSchema).min(1),
+    /**
+     * What KIND of decision this phase makes.
+     *
+     * Declared here because drafting a phase already is deciding what it is
+     * for — the secretary is choosing that anyway, and the host sees and can
+     * change it in the draft. Exactly the shape `artifactPath` already has,
+     * reusing a mechanism that runs rather than inventing a second one.
+     *
+     * It is what lets the criteria library be consulted at the moment a phase
+     * opens instead of only when someone remembers to ask. Optional: a phase
+     * that declares nothing simply gets no criteria, which is the same as
+     * today rather than a failure.
+     */
+    situation: z
+      .object({
+        action: z.enum(ACTION_KINDS),
+        features: z.array(z.enum(FEATURE_FLAGS)).default([]),
+      })
+      .strict()
+      .optional(),
     exit: z.enum(["after-tasks", "after-bounded-rounds", "wait-for-host"]).optional(),
     maxRounds: z.number().int().positive().optional(),
   })

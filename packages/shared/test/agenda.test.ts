@@ -73,3 +73,44 @@ describe("checkAgendaAgainstRoster", () => {
     expect(problems).toHaveLength(2);
   });
 });
+
+describe("phase situation labels", () => {
+  it("accepts a phase labelled with a closed-list action and features", () => {
+    const parsed = parseAgendaSpec({
+      phases: [{ ...phase(), situation: { action: "design-mechanism", features: ["automatic"] } }],
+    });
+    expect(parsed.phases[0]?.situation?.action).toBe("design-mechanism");
+  });
+
+  it("defaults features to none rather than to undefined", () => {
+    // A label with no features still keys a situation; leaving it undefined
+    // would make "no features" and "not labelled" the same shape.
+    const parsed = parseAgendaSpec({
+      phases: [{ ...phase(), situation: { action: "adjudicate" } }],
+    });
+    expect(parsed.phases[0]?.situation?.features).toEqual([]);
+  });
+
+  it("refuses an action outside the closed list", () => {
+    // Refused at draft time, before the host can confirm it. A label the
+    // criteria library cannot read is a label about nothing, and it would
+    // fail later as a phase that silently never matches anything.
+    expect(() =>
+      parseAgendaSpec({ phases: [{ ...phase(), situation: { action: "随便编一个", features: [] } }] }),
+    ).toThrow();
+  });
+
+  it("refuses an invented feature flag", () => {
+    expect(() =>
+      parseAgendaSpec({
+        phases: [{ ...phase(), situation: { action: "adjudicate", features: ["自作主张"] } }],
+      }),
+    ).toThrow();
+  });
+
+  it("leaves a phase without a label alone", () => {
+    // Optional on purpose: an unlabelled phase gets no criteria, which is
+    // today's behaviour rather than a failure.
+    expect(parseAgendaSpec({ phases: [phase()] }).phases[0]).not.toHaveProperty("situation");
+  });
+});

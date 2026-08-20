@@ -16,8 +16,8 @@
  * abstracts are transferable and may be given away, instances carry the
  * user's own project detail and never leave. One decision, not two.
  */
-import type { ActionKind, FeatureFlag, FrameworkStep, Situation } from "./situation.ts";
-import { parseSituation } from "./situation.ts";
+import type { ActionKind, FeatureFlag, FrameworkStep, Situation } from "@squad/shared";
+import { parseSituation } from "@squad/shared";
 
 /** When a criterion should be fetched. Coarse on purpose; the model refines. */
 export interface Trigger {

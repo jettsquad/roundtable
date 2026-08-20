@@ -18,17 +18,42 @@
  * prompt. A rule someone has to keep obeying would not survive a year.
  */
 import type { Criterion } from "./criterion.ts";
-import type { Situation } from "./situation.ts";
+import type { Situation } from "@squad/shared";
 
 /** Hard budget per delivery. */
 export const DELIVERY_LIMIT = 3;
 
-/** Coarse filter: does this criterion's trigger admit this situation? */
+/**
+ * Coarse filter: could this criterion bear on this situation?
+ *
+ * COULD, not DOES. Features only have to overlap, not to be contained — and
+ * that is a correction, made against evidence rather than taste.
+ *
+ * It was written as a conjunction first, matching how a criterion reads
+ * (「特征 ⊇ {自动触发, 结果不可见}」). Then a criterion learned from
+ * designing an auto-fold mechanism failed to fire on a phase labelled
+ * "design an auto-fold mechanism": the distillation had filed it under
+ * {automatic, invisible-result} and the secretary had labelled the phase
+ * {automatic, changes-default}. Both labels are defensible. Two independent
+ * model calls picking from a closed list with no shared anchor will disagree
+ * like this, and no amount of prompt tuning on either side removes it.
+ *
+ * The asymmetry decides it. Over-fetching is recoverable — the selection step
+ * reads the claim and the boundary and drops what does not apply, and a hard
+ * cap of three stands behind that. Under-fetching is not: the criterion is
+ * never seen by anything that could judge it, which is the design's own first
+ * failure mode ("never recalled → the trigger is wrong"). A coarse filter
+ * that demands exact agreement is not coarse.
+ */
 export function triggerMatches(criterion: Criterion, situation: Situation): boolean {
   if (criterion.status === "retired") return false;
   if (!criterion.trigger.action.includes(situation.action)) return false;
   const held = new Set(situation.features);
-  if (!criterion.trigger.features.every((feature) => held.has(feature))) return false;
+  // A trigger naming no features fires on the action alone — a deliberately
+  // broad criterion, and the model still gets to drop it.
+  if (criterion.trigger.features.length > 0 && !criterion.trigger.features.some((feature) => held.has(feature))) {
+    return false;
+  }
   const steps = criterion.trigger.step;
   if (steps !== undefined && steps.length > 0) {
     if (situation.step === undefined || !steps.includes(situation.step)) return false;

@@ -9,6 +9,12 @@
  * is something the user would have thought of anyway, a cross-topic one only
  * the system can offer.
  *
+ * It lives in shared because it has two consumers and cannot sit on either
+ * side of the wall between them: ③ the secretary LABELS an agenda phase with
+ * a situation while drafting it, and ④ Lil X uses the same vocabulary as the
+ * key its criteria are filed under. A phase label the library cannot read
+ * would be a label about nothing.
+ *
  * Both lists are CLOSED, at 7 and 8. Extending either is a deliberate human
  * act, not something the system may do to itself while running — an open
  * vocabulary drifts, and a key that drifts stops matching what was filed

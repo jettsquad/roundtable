@@ -48,6 +48,10 @@ export {
 export { buildDistilPrompt, parseDistillation } from "./distil.ts";
 export type { DistilInput, Distillation, Relation } from "./distil.ts";
 
+// The situation vocabulary now lives in @squad/shared: the secretary labels
+// agenda phases with it and Lil X files criteria under it, so it belongs to
+// neither plugin alone. Re-exported here so a consumer of the library does
+// not have to know where the words came from.
 export {
   ACTION_KINDS,
   ACTION_KIND_LABELS,
@@ -58,5 +62,5 @@ export {
   isFeatureFlag,
   isFrameworkStep,
   parseSituation,
-} from "./situation.ts";
-export type { ActionKind, FeatureFlag, FrameworkStep, Situation } from "./situation.ts";
+} from "@squad/shared";
+export type { ActionKind, FeatureFlag, FrameworkStep, Situation } from "@squad/shared";

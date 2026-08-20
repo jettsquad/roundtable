@@ -12,7 +12,7 @@ import {
   triggerMatches,
 } from "../src/deliver.ts";
 import type { Criterion } from "../src/criterion.ts";
-import type { Situation } from "../src/situation.ts";
+import type { Situation } from "@squad/shared";
 
 const make = (id: string, over: Partial<Criterion> = {}): Criterion => ({
   id,
@@ -33,11 +33,30 @@ describe("triggerMatches", () => {
     expect(triggerMatches(make("c1"), situation)).toBe(true);
   });
 
-  it("requires ALL of a trigger's features, not any", () => {
-    // A trigger is a conjunction. Treated as a disjunction, a narrowly-aimed
-    // criterion fires everywhere and the budget fills with noise.
-    const narrow = make("c2", { trigger: { action: ["design-mechanism"], features: ["automatic", "irreversible"] } });
-    expect(triggerMatches(narrow, situation)).toBe(false);
+  it("admits a partial feature overlap, on purpose", () => {
+    // Corrected against evidence: as a strict conjunction, a criterion filed
+    // under {automatic, invisible-result} missed a phase labelled
+    // {automatic, changes-default} — two model calls labelling the same
+    // situation from a closed list, both defensibly, and disagreeing. The
+    // asymmetry settles it: over-fetching is dropped by the selection step,
+    // under-fetching is never seen by anything that could judge it.
+    const overlapping = make("c2", {
+      trigger: { action: ["design-mechanism"], features: ["automatic", "irreversible"] },
+    });
+    expect(triggerMatches(overlapping, situation)).toBe(true);
+  });
+
+  it("rejects a trigger sharing no feature at all with the situation", () => {
+    // Coarse, not absent. Nothing in common is still nothing in common.
+    const unrelated = make("c2b", {
+      trigger: { action: ["design-mechanism"], features: ["benchmark-backed"] },
+    });
+    expect(triggerMatches(unrelated, situation)).toBe(false);
+  });
+
+  it("fires on the action alone when the trigger names no features", () => {
+    const broad = make("c2c", { trigger: { action: ["design-mechanism"], features: [] } });
+    expect(triggerMatches(broad, { action: "design-mechanism", features: [] })).toBe(true);
   });
 
   it("does not match a different action", () => {

@@ -81,3 +81,29 @@ describe("parseDistillation", () => {
     expect(() => parseDistillation('{"relation":"new"}', [])).toThrow(/没有给出主张/);
   });
 });
+
+describe("trigger features", () => {
+  it("keeps the essential features the distillation chose", () => {
+    const result = parseDistillation('{"relation":"new","claim":"x","triggerFeatures":["automatic"]}', []);
+    expect(result.triggerFeatures).toEqual(["automatic"]);
+  });
+
+  it("refuses a feature outside the closed list instead of filtering it out", () => {
+    // Filtering would narrow the trigger without saying so — the same failure
+    // this field exists to fix, arriving by another route.
+    expect(() => parseDistillation('{"relation":"new","claim":"x","triggerFeatures":["自作主张"]}', [])).toThrow(
+      /触发特征/,
+    );
+  });
+
+  it("leaves the field absent when the distillation gave none", () => {
+    // Absent means "fall back to the instance's features", which is worse but
+    // safe. Present-but-empty would mean "fires on the action alone", which is
+    // a real choice the model can make — the two must stay distinguishable.
+    expect(parseDistillation('{"relation":"new","claim":"x"}', [])).not.toHaveProperty("triggerFeatures");
+  });
+
+  it("accepts an empty list as a deliberately broad trigger", () => {
+    expect(parseDistillation('{"relation":"new","claim":"x","triggerFeatures":[]}', []).triggerFeatures).toEqual([]);
+  });
+});

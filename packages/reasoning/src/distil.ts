@@ -16,7 +16,7 @@
  * it. Without a counter-example channel an abstract grows more absolute with
  * every confirmation, until it is a slogan with no conditions attached.
  */
-import { ACTION_KINDS, FEATURE_FLAGS, type Situation } from "./situation.ts";
+import { ACTION_KINDS, FEATURE_FLAGS, isFeatureFlag, type Situation } from "@squad/shared";
 import type { Criterion } from "./criterion.ts";
 
 export type Relation = "new" | "reinforce" | "revise" | "counter-example";
@@ -27,6 +27,20 @@ export interface Distillation {
   readonly criterionId?: string | undefined;
   readonly claim: string;
   readonly boundary?: string | undefined;
+  /**
+   * When this should be fetched — the ESSENTIAL features, not every feature
+   * the originating case happened to have.
+   *
+   * Chosen by the distillation rather than copied from the instance. Copying
+   * makes the trigger exactly as narrow as the one case that produced it, and
+   * a trigger is a coarse filter by design: a later selection step reads
+   * 適用邊界, so the filter only has to be roughly right. Observed: a
+   * criterion learned from designing an auto-fold mechanism did not fire on a
+   * phase labelled "design an auto-fold mechanism", because the instance
+   * carried two features and the phase was labelled with one. The design
+   * already names this failure — "never recalled → the trigger is wrong".
+   */
+  readonly triggerFeatures?: readonly string[] | undefined;
 }
 
 export interface DistilInput {
@@ -65,8 +79,13 @@ export function buildDistilPrompt(input: DistilInput): string {
     "  这个区别是整件事的生死线：结论没法迁移到别的处境，标准可以。",
     "- 去掉项目名、人名、具体文件名。抽象要能给别人用。",
     "",
+    "另外给出**触发条件**：这条判据以后应该在什么处境下被捞出来。",
+    "- triggerFeatures 只填**必要**的特征，不要把这次碰巧带有的特征全填上。",
+    "  触发条件是**粗过滤**——捞出来之后还有一步精选去读适用边界，所以宁可宽一点。",
+    "  填全了会让这条判据只在与这一次一模一样的处境下才触发，等于永远捞不出来。",
+    "",
     "只回复一个 JSON 对象，不要有别的文字：",
-    '{"relation": "new"|"reinforce"|"revise"|"counter-example", "criterionId"?: string, "claim": string, "boundary"?: string}',
+    '{"relation": "new"|"reinforce"|"revise"|"counter-example", "criterionId"?: string, "claim": string, "boundary"?: string, "triggerFeatures": string[]}',
     "relation 不是 new 时，criterionId 必填，且必须是下面列出的 id 之一。",
     "",
     `这次的处境：动作类型=${input.situation.action}，特征=${input.situation.features.join("、") || "（无）"}${
@@ -116,10 +135,25 @@ export function parseDistillation(text: string, candidates: readonly Criterion[]
   }
   const boundary =
     typeof raw["boundary"] === "string" && raw["boundary"].trim() !== "" ? raw["boundary"].trim() : undefined;
+  // Unknown feature names are refused rather than filtered out. Silently
+  // dropping one narrows the trigger without saying so — the same failure
+  // this field exists to fix, arriving by a different route.
+  const rawFeatures = raw["triggerFeatures"];
+  let triggerFeatures: readonly string[] | undefined;
+  if (Array.isArray(rawFeatures)) {
+    for (const feature of rawFeatures) {
+      if (typeof feature !== "string" || !isFeatureFlag(feature)) {
+        throw new Error(`提炼给出的触发特征「${String(feature)}」不在闭合列表里。`);
+      }
+    }
+    triggerFeatures = rawFeatures as readonly string[];
+  }
+
   return {
     relation: relation as Relation,
     ...(criterionId === undefined ? {} : { criterionId }),
     claim: claim.trim(),
     ...(boundary === undefined ? {} : { boundary }),
+    ...(triggerFeatures === undefined ? {} : { triggerFeatures }),
   };
 }

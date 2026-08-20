@@ -22,7 +22,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
-import { stripReasoning } from "@squad/shared";
+import { stripReasoning, type AgendaSpec } from "@squad/shared";
 import type { Criterion } from "./criterion.ts";
 import {
   DELIVERY_LIMIT,
@@ -32,7 +32,7 @@ import {
   triggerMatches,
 } from "./deliver.ts";
 import { buildDistilPrompt, parseDistillation, type Distillation } from "./distil.ts";
-import type { Situation } from "./situation.ts";
+import type { Situation } from "@squad/shared";
 import { ReasoningStore } from "./store.ts";
 
 declare module "@deepseek-ai/cordis" {
@@ -136,10 +136,16 @@ export class ReasoningService extends Service {
         : candidates.find((candidate) => candidate.id === distilled.criterionId);
     const proposal: Criterion = {
       id: existing?.id ?? `c-${stamp()}`,
+      // The distillation's chosen features when it gave any, and only then
+      // the instance's. Copying the instance's makes the trigger exactly as
+      // narrow as the single case behind it, which is how a criterion ends up
+      // never being recalled — including on the very kind of decision it was
+      // learned from. The step is deliberately NOT copied: a criterion learned
+      // at one point in the framework is usually not confined to it, and a
+      // step restriction is the narrowest possible filter.
       trigger: existing?.trigger ?? {
         action: [signal.situation.action],
-        features: signal.situation.features,
-        ...(signal.situation.step === undefined ? {} : { step: [signal.situation.step] }),
+        features: (distilled.triggerFeatures ?? signal.situation.features) as typeof signal.situation.features,
       },
       claim: distilled.relation === "reinforce" && existing !== undefined ? existing.claim : distilled.claim,
       ...(distilled.boundary === undefined ? {} : { boundary: distilled.boundary }),
@@ -196,11 +202,46 @@ export class ReasoningService extends Service {
    */
   async locate(situation: Situation, parent?: Agent): Promise<readonly Criterion[]> {
     const candidates = (await this.store.criteria()).filter((criterion) => triggerMatches(criterion, situation));
-    if (candidates.length <= DELIVERY_LIMIT || parent === undefined) {
+    // Selection runs whenever there is anything to select from, not only when
+    // the list is over budget. It used to be skipped for short lists on the
+    // grounds that a call which cannot change the answer can only fail — true
+    // while the filter was strict, false now that it deliberately over-fetches.
+    // The permissive filter is only safe BECAUSE something downstream reads
+    // 適用邊界 and drops what does not apply.
+    if (candidates.length === 0 || parent === undefined) {
       return candidates.slice(0, DELIVERY_LIMIT);
     }
     const reply = await this.runTask(parent, "Lil X · 精选", buildSelectionPrompt(situation, candidates));
     return parseSelection(reply, candidates);
+  }
+
+  /**
+   * One brief per phase of an agenda, for the system channel.
+   *
+   * Delivered when the host is looking at the DRAFT, not one phase at a time
+   * as each opens. Two reasons, and neither is convenience. The table must
+   * not be able to reach this service — that is what keeps criteria out of a
+   * seat's prompt — so nothing inside a running agenda can ask for them. And
+   * confirmation is when the host can still act: a criterion about how to
+   * organise work arrives useless if it arrives after the work is organised.
+   *
+   * Phases that declared no situation are skipped rather than guessed at. A
+   * guessed label files the delivery under a situation nobody chose, and the
+   * criterion that then fires — or fails to — is unattributable.
+   */
+  async briefForAgenda(
+    agenda: AgendaSpec,
+    parent?: Agent,
+  ): Promise<readonly { readonly phase: string; readonly brief: string }[]> {
+    const briefs: { phase: string; brief: string }[] = [];
+    for (const phase of agenda.phases) {
+      if (phase.situation === undefined) continue;
+      briefs.push({
+        phase: phase.title,
+        brief: await this.brief({ action: phase.situation.action, features: phase.situation.features }, parent),
+      });
+    }
+    return briefs;
   }
 
   /**
