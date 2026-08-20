@@ -41,6 +41,16 @@ export class TeamContextService extends Service {
   private domain: Domain<typeof SQUAD_TEAMS_DOMAIN> | undefined;
   /** Teams whose fold is running. A second would cover the same ground. */
   private readonly folding = new Set<string>();
+  /**
+   * Artifact writes still in flight.
+   *
+   * `artifactWritten` returns void so the table never waits on storage, but a
+   * fold that starts before the write lands reads an empty artifact list and
+   * asks the secretary to index nothing — producing a checkpoint whose 產出
+   * index says 「无」 while the file sits on disk. Non-blocking for the
+   * writer, drained by the reader.
+   */
+  private artifactWrites: Promise<unknown> = Promise.resolve();
 
   constructor(ctx: Context) {
     super(ctx, "teamContext");
@@ -62,6 +72,7 @@ export class TeamContextService extends Service {
     const release = this.ctx.teams.useAssembler({
       windowFor: (teamId, seatId) => this.windowFor(teamId, seatId),
       roundEnded: (teamId) => this.onRoundEnded(teamId),
+      artifactWritten: (teamId, path) => this.onArtifactWritten(teamId, path),
     });
     this.ctx.effect(() => release);
   }
@@ -141,6 +152,37 @@ export class TeamContextService extends Service {
   }
 
   /**
+   * Remember a file the team wrote, so the next checkpoint can index it.
+   *
+   * Fire-and-forget from the table's side, which means nothing is waiting to
+   * hear that it failed. A lost path does not break the fold — it produces a
+   * checkpoint whose index silently omits a file that exists — so the failure
+   * is logged rather than swallowed.
+   */
+  private onArtifactWritten(teamId: string, path: string): void {
+    const write = this.artifacts()
+      .put(`${teamId}:${path}`, { teamId, path, writtenAt: Date.now() })
+      .catch((error: unknown) => {
+        this.ctx.logger.warn(
+          `团队 ${teamId}：产出路径 ${path} 没记下来，下一份检查点的产出索引会漏掉它：` +
+            `${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    // Chained, not awaited: the caller returns immediately, and a later fold
+    // waits for this instead.
+    this.artifactWrites = this.artifactWrites.then(() => write);
+  }
+
+  /** Files this team has written, in the order they were written. */
+  artifactsOf(teamId: string): readonly string[] {
+    return [...this.artifacts().entries()]
+      .map(([, record]) => record)
+      .filter((record) => record.teamId === teamId)
+      .sort((a, b) => a.writtenAt - b.writtenAt)
+      .map((record) => record.path);
+  }
+
+  /**
    * A round ended. Fold if the record has grown past this team's limit.
    *
    * Returns void and never rejects. Crossing the threshold must not make the
@@ -197,6 +239,11 @@ export class TeamContextService extends Service {
 
     this.folding.add(teamId);
     try {
+      // Drain first. The index may only list files that were really written,
+      // and a write still in flight is a file that exists on disk and not yet
+      // in the table — which would produce an index saying 「无」 next to a
+      // file the team can see.
+      await this.artifactWrites;
       const plan = planFold(this.sinceLastCheckpoint(teamId), this.liveCheckpoint(teamId)?.text);
       if (plan === undefined) throw new Error(`团队 ${teamId} 没有可折叠的记录。`);
 
@@ -205,6 +252,11 @@ export class TeamContextService extends Service {
         hostGoal: team.displayName,
         previousCheckpoint: plan.previousCheckpoint,
         turns: plan.turns,
+        // Supplied by the program, never left to the transcript. Without them
+        // the secretary invents plausible paths for the index, and an
+        // invented path is worse than an empty one: a later agent follows it
+        // and finds nothing.
+        artifactPaths: this.artifactsOf(teamId),
       });
       return await this.record({ teamId, text, coversUpTo: plan.coversUpTo });
     } finally {
@@ -239,8 +291,16 @@ export class TeamContextService extends Service {
   }
 
   private checkpoints() {
+    return this.open().table("checkpoints");
+  }
+
+  private artifacts() {
+    return this.open().table("artifacts");
+  }
+
+  private open(): Domain<typeof SQUAD_TEAMS_DOMAIN> {
     if (this.domain === undefined) throw new Error("上下文装配器尚未启动（storage domain 未打开）。");
-    return this.domain.table("checkpoints");
+    return this.domain;
   }
 }
 

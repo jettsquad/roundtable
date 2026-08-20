@@ -137,6 +137,22 @@ export function apply(ctx: Context, config: Config): void {
       const checkpoint = await ctx.teamContext.fold(team.teamId);
       line(`检查点 ${checkpoint.text.length} 字，覆盖到 ${checkpoint.coversUpTo}，标题齐全（否则已经抛错）`);
 
+      // The index must name the file the program actually wrote. Given no
+      // paths the secretary invents plausible ones, and an invented path is
+      // worse than an empty index: a later agent follows it and finds nothing.
+      // Checked against the 产出索引 SECTION, not the whole document: a path
+      // the secretary happened to mention while summarising the discussion
+      // would satisfy a whole-text search without the index containing
+      // anything, which is the state this wiring exists to fix.
+      const indexSection = checkpoint.text.slice(checkpoint.text.indexOf("## 产出索引"));
+      const indexed =
+        checkpoint.text.includes("## 产出索引") && outcome.artifacts.every((path) => indexSection.includes(path));
+      line(
+        `产出索引：记下的产出 ${ctx.teamContext.artifactsOf(team.teamId).join(", ") || "无"}，` +
+          `检查点里都提到了 = ${indexed}`,
+      );
+      line(indexed ? "✅ 产出索引接上了" : "❌ 检查点没提到已写的文件");
+
       const folded = await ctx.teamContext.windowFor(team.teamId, "seat-a");
       const joined = folded.join("\n");
       const carriesCheckpoint = joined.includes("上下文检查点");

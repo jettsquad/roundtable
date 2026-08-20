@@ -138,6 +138,14 @@ export interface TeamAssembler {
    * failures, because nobody here is listening for them.
    */
   roundEnded(teamId: string): void;
+  /**
+   * A file was just written, project-relative.
+   *
+   * Reported so the next checkpoint's index can list paths that really exist.
+   * `void` for the same reason as `roundEnded`: bookkeeping must not make the
+   * team wait, and the registrant owns reporting its own failures.
+   */
+  artifactWritten(teamId: string, path: string): void;
 }
 
 /** The provider name each backend is registered under in dsh. */
@@ -390,6 +398,18 @@ export class TeamsService extends Service {
     await mkdir(dirname(absolute), { recursive: true });
     await writeFile(absolute, text, "utf8");
     recordSpoken(record.handle.agent, "系统", `已写入 ${relative}`);
+    // Told to the assembler as data, not left to be parsed back out of that
+    // line. A checkpoint index rebuilt by reading the transcript would depend
+    // on the wording of a log message never meant to be an interface.
+    if (this.assembler !== undefined) {
+      try {
+        this.assembler.artifactWritten(record.teamId, relative);
+      } catch (error) {
+        this.ctx.logger.warn(
+          `团队 ${record.teamId}：装配器的 artifactWritten 抛错：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
   }
 
   /**

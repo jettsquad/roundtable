@@ -45,6 +45,27 @@ const checkpointRecord = z.object({
 export type CheckpointRecord = z.infer<typeof checkpointRecord>;
 
 /**
+ * One file this team actually wrote.
+ *
+ * Recorded because the checkpoint's 「产出索引」 may only list paths the
+ * program really produced. Given nothing, the secretary has only the
+ * transcript to go on and will invent plausible paths — and an invented path
+ * is worse than no index at all, because a later agent follows it and finds
+ * nothing.
+ *
+ * Durable rather than in-memory for the same reason: a fold after a restart
+ * would otherwise write an index that says 「无」 while the files sit on disk.
+ */
+const artifactRecord = z.object({
+  teamId: z.string(),
+  /** Project-relative, as the table resolved and wrote it. */
+  path: z.string(),
+  writtenAt: z.number(),
+});
+
+export type ArtifactRecord = z.infer<typeof artifactRecord>;
+
+/**
  * The domain name is `squad_teams`, not `squad.teams` as the technical design
  * first wrote it: a domain name doubles as the backend unit name and must
  * match `UNIT_NAME_RE` (`^[a-z][a-z0-9_]*$`), which a dot fails. Caught at
@@ -53,9 +74,14 @@ export type CheckpointRecord = z.infer<typeof checkpointRecord>;
  */
 export const SQUAD_TEAMS_DOMAIN = defineDomain({
   name: "squad_teams",
-  version: 1,
+  // 2: gained the `artifacts` table. A medium stamped with another version is
+  // rejected at open rather than read loosely, so a stale dev store fails
+  // loudly instead of serving a half-shape.
+  version: 2,
   tables: {
     /** checkpointId → the folded stretch it stands for. */
     checkpoints: domainTable<string, CheckpointRecord>(checkpointRecord),
+    /** `teamId:path` → one file the team wrote. */
+    artifacts: domainTable<string, ArtifactRecord>(artifactRecord),
   },
 });
