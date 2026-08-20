@@ -54,6 +54,17 @@ export interface SeatReply {
   readonly displayName: string;
   readonly text: string;
   readonly failed: boolean;
+  /**
+   * How many lines of discussion this seat was handed.
+   *
+   * Reported because "the window was empty" and "the seat ignored a full
+   * window" produce the same answer and are different failures. Every probe
+   * in this project that could not tell them apart wasted a debugging pass
+   * on plumbing that was already correct — so the plumbing states what it
+   * delivered, and reading it is no longer an inference from what a model
+   * chose to say.
+   */
+  readonly contextLines: number;
 }
 
 export interface Team {
@@ -353,14 +364,21 @@ export class TeamsService extends Service {
         // `phase-start` run in this phase is handed this same snapshot, so
         // independence is a fact of what exists rather than a rule someone
         // has to keep obeying.
+        //
+        // Only for the seats that will actually be handed it. A phase where
+        // every run takes a fresh window used to assemble an opening snapshot
+        // per seat and then discard all of them — work whose only visible
+        // effect was making the logs of a cumulative phase look like an
+        // independent one.
+        const runs = planPhase(phase);
         const opening = new Map<string, WindowAttempt>();
-        for (const task of phase.tasks) {
-          if (!opening.has(task.seatId)) {
-            opening.set(task.seatId, await this.contextFor(record.teamId, task.seatId));
+        for (const run of runs) {
+          if (run.window === "phase-start" && !opening.has(run.task.seatId)) {
+            opening.set(run.task.seatId, await this.contextFor(record.teamId, run.task.seatId));
           }
         }
 
-        for (const run of planPhase(phase)) {
+        for (const run of runs) {
           // Checked between runs, so a stop lands at a task boundary rather
           // than halfway through one. The seat already running when the host
           // stopped is cancelled through the same signal.
@@ -373,7 +391,13 @@ export class TeamsService extends Service {
             // nothing to say are the same silence.
             const text = `⚠️ 议程点名了不在名册上的席位「${run.task.seatId}」，本条未执行。`;
             recordSpoken(host, "系统", text);
-            replies.push({ seatId: run.task.seatId, displayName: run.task.seatId, text, failed: true });
+            replies.push({
+              seatId: run.task.seatId,
+              displayName: run.task.seatId,
+              text,
+              failed: true,
+              contextLines: 0,
+            });
             continue;
           }
 
@@ -513,7 +537,8 @@ export class TeamsService extends Service {
       // was given the discussion and ignored it — the failure has to be louder
       // than its symptom.
       if (window.error !== undefined) throw window.error;
-      const prompt = composeSeatPrompt({ seat, instruction, context: window.lines ?? [] });
+      const lines = window.lines ?? [];
+      const prompt = composeSeatPrompt({ seat, instruction, context: lines });
       const request: SubagentStartRequest = {
         label: seat.displayName,
         prompt: [{ type: "text", text: prompt }],
@@ -532,7 +557,7 @@ export class TeamsService extends Service {
       // that member had nothing to say.
       const failed = result.stopReason !== "completed";
       recordSpoken(host, seat.displayName, text);
-      return { seatId: seat.seatId, displayName: seat.displayName, text, failed };
+      return { seatId: seat.seatId, displayName: seat.displayName, text, failed, contextLines: lines.length };
     } catch (error) {
       // A seat that could not run is reported, never silently skipped: a round
       // that quietly loses a member looks exactly like one where the member had
@@ -540,7 +565,13 @@ export class TeamsService extends Service {
       const detail = error instanceof Error ? error.message : String(error);
       const text = `⚠️ 该席位未能执行：${detail}`;
       recordSpoken(host, seat.displayName, text);
-      return { seatId: seat.seatId, displayName: seat.displayName, text, failed: true };
+      return {
+        seatId: seat.seatId,
+        displayName: seat.displayName,
+        text,
+        failed: true,
+        contextLines: window.lines?.length ?? 0,
+      };
     }
   }
 

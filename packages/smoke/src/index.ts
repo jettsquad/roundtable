@@ -121,6 +121,91 @@ export function apply(ctx: Context, config: Config): void {
         outcome.artifacts.every((path) => existsSync(join(config.projectFolder, path)));
       line(wroteFile ? "✅ 议程走通（产出路径若有，文件确实存在）" : "❌ 产出路径报了但文件不在");
 
+      // ── contextMode 对照实验 ─────────────────────────────────────────
+      // `before-turn` had never actually executed. Testing cumulative alone
+      // would not be worth much: if BOTH modes had degenerated into
+      // cumulative, a "seat B saw seat A" check passes and says nothing. So
+      // the two modes run the same two tasks and are compared against each
+      // other — the claim is that they DIFFER, and that needs both halves.
+      const pair = await ctx.teams.create({
+        displayName: "对照团队",
+        projectFolder: config.projectFolder,
+        hostDisplayName: "主持人",
+        seats: [
+          { seatId: "seat-a", displayName: "甲", role: "通用", systemPrompt: "回答极简。", backend: "claude-code" },
+          { seatId: "seat-b", displayName: "乙", role: "通用", systemPrompt: "回答极简。", backend: "claude-code" },
+        ],
+      });
+
+      // Discriminated by WHICH word comes back, not by asking the seat to
+      // reason about phases. A seat has no reliable way to tell which phase a
+      // recorded line belongs to, and every probe in this project that asked
+      // one to ("上一轮", "本阶段", "the untrusted block") failed for reasons
+      // that had nothing to do with the wiring under test.
+      //
+      // Phase 1 plants 菠萝, phase 2 plants 香蕉, and B is asked the same
+      // neutral question both times:
+      //   cumulative  → B's window is taken before its own turn  → 菠萝
+      //   independent → B's window is the phase-start snapshot, which holds
+      //                 phase 1's 菠萝 but not phase 2's 香蕉    → 菠萝, never 香蕉
+      // So "independent did not see its own phase" is provable from the
+      // ABSENCE of 香蕉, without needing B to know what a phase is.
+      const askB = "甲刚才回答了一个水果名，把那个水果名写出来。如果讨论里没有水果名，就只回答「无」。";
+      line("对照实验：同样两个任务，先 cumulative 再 independent…");
+      const compare = await pair.runAgenda({
+        phases: [
+          {
+            title: "累积",
+            contextMode: "cumulative",
+            tasks: [
+              { seatId: "seat-a", instruction: "这一轮的水果是菠萝。只回答这个水果名，不要解释。" },
+              { seatId: "seat-b", instruction: askB },
+            ],
+          },
+          {
+            title: "独立",
+            contextMode: "independent",
+            tasks: [
+              { seatId: "seat-a", instruction: "这一轮的水果是香蕉。只回答这个水果名，不要解释。" },
+              { seatId: "seat-b", instruction: askB },
+            ],
+          },
+        ],
+      });
+
+      const [cumA, cumB, indA, indB] = compare.replies;
+      line(
+        `  累积阶段：甲收到 ${cumA?.contextLines ?? -1} 行，乙收到 ${cumB?.contextLines ?? -1} 行 → 乙答「${(cumB?.text ?? "").slice(0, 12)}」`,
+      );
+      line(
+        `  独立阶段：甲收到 ${indA?.contextLines ?? -1} 行，乙收到 ${indB?.contextLines ?? -1} 行 → 乙答「${(indB?.text ?? "").slice(0, 12)}」`,
+      );
+
+      // Gated on what the table DELIVERED, not on what the model said with it.
+      // Those are different failures, and an end-to-end check that conflates
+      // them reports a wiring bug every time a model answers oddly — which it
+      // did, three probes running, on plumbing that was already correct.
+      //
+      //   cumulative  → B's window is taken before its own turn, so it holds
+      //                 A's turn: strictly more lines than A got.
+      //   independent → both are handed the one snapshot taken when the phase
+      //                 opened: exactly equal, and there is no edge from A to
+      //                 B for anything to travel along.
+      const cumulativeGrew = (cumB?.contextLines ?? 0) > (cumA?.contextLines ?? 0);
+      const independentShared = (indA?.contextLines ?? -1) === (indB?.contextLines ?? -2);
+      line(
+        cumulativeGrew && independentShared
+          ? "✅ 两种模式确实不同：累积的窗口随发言增长，独立的两席位共用一份快照"
+          : `❌ 对照失败：累积增长=${cumulativeGrew}，独立共享=${independentShared}`,
+      );
+
+      // Informational, never a gate: whether the seat used what it was given.
+      const usedIt = (cumB?.text ?? "").includes("菠萝");
+      const stayedBlind = !(indB?.text ?? "").includes("香蕉");
+      line(`  （模型行为，仅供参考）累积席位用上了同伴发言=${usedIt}，独立席位没提到本阶段的词=${stayedBlind}`);
+
+      await pair.dispose();
+
       // ── 中止交接：停一个跑到一半的议程，把没做完的交出去 ──────────────
       // writeTermination had an implementation and tests and no path that
       // could reach it, which is how a feature quietly stops working without
