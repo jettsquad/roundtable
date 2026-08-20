@@ -43,3 +43,8 @@
     # 否则两个服务互相等待，谁都起不来。没有它时桌子发空窗口（阶段 1 的行为）。
     - id: squad-context
       name: '@squad/context'
+
+    # 秘书：唯一替主持人做判断工作的席位。无状态，只注入 subagents——
+    # 它不持有任何团队状态，材料全部由调用方投喂。
+    - id: squad-secretary
+      name: '@squad/secretary'

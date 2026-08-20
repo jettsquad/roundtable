@@ -3,7 +3,7 @@ import {
   TERMINATION_SUMMARY_HEADINGS,
   buildTeamAgendaTerminationPrompt,
   validateTeamAgendaTerminationSummary,
-} from "../src/team-agenda-termination.ts";
+} from "../src/termination.ts";
 
 const input = {
   objective: "选型数据库",

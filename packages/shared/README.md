@@ -4,11 +4,9 @@ Squad 1.x 验证过的纯逻辑，原样搬过来，连测试一起。
 
 ## 拥有
 
-- 检查点的结构、提示词与校验（`team-checkpoint`）
 - 折叠阈值：距上次检查点的累计量、CJK/拉丁分开估算（`team-checkpoint-threshold`）
 - 产出路径的规范化与多席位分文件（`team-artifact`）
 - 从回复里剥掉模型的思考过程（`agent-reply-text`）
-- 议程中止交接文档的结构与校验（`team-agenda-termination`）
 
 ## 绝不拥有
 
@@ -47,14 +45,27 @@ Squad 1.x 验证过的纯逻辑，原样搬过来，连测试一起。
 
 这条规矩自带退出条件：它预期本包**变小**，不是变大。
 
-## 待迁出
+## 迁出记录
 
-| 目前在这 | 该去哪 | 什么时候 |
+| 曾在这 | 已去 | 时间 |
 |---|---|---|
-| `buildCheckpointPrompt` · `validateCheckpoint` · `CHECKPOINT_HEADINGS` | ③ `@squad/secretary` | `packages/secretary` 建立时，跟着走 |
+| `buildCheckpointPrompt` · `validateCheckpoint` · `CHECKPOINT_HEADINGS` | ③ `@squad/secretary` | 建立 `packages/secretary` 时 |
+| `buildTeamAgendaTerminationPrompt` · `validateTeamAgendaTerminationSummary` | ③ `@squad/secretary` | 同上 |
 
-理由：它们形式上是纯函数（输入 → 字符串），三条禁令一条不犯。但 `buildCheckpointPrompt`
-的**内容是一个决定——秘书被告知要做什么**。那不是共享的判断逻辑，那是秘书插件的核心资产，
-只是碰巧用不需要 `ctx` 的方式写出来了。
+理由是同一个：它们形式上是纯函数（输入 → 字符串），三条禁令一条不犯，但**内容是决定——
+秘书被告知要做什么**。那不是共享的判断逻辑，是秘书插件的核心资产，只是碰巧用不需要 `ctx`
+的方式写出来了。测试跟着一起走。
 
-留到现在是因为阶段 1 没有秘书插件，搬无可搬。列在这里是为了它别靠「没人再看一眼」留下来。
+「只出不进」于是兑现过一次：本包**变小了**。
+
+## 现在还剩什么
+
+| 模块 | 消费者 |
+|---|---|
+| `agent-reply-text`（`stripReasoning`） | ① 桌子、③ 秘书 —— **真有两个**，留在这里名正言顺 |
+| `team-checkpoint-threshold` | ② 装配（目前唯一） |
+| `team-artifact` | ① 桌子（目前唯一） |
+
+后两个只有一个消费者，按规矩本该跟着走。留下的理由与检查点那批不同：它们是**可复用的计算**
+（token 估算、路径规范化），不是「告诉某个 LLM 做什么」的决定。第二个消费者出现时它们留在这里，
+不出现也不急着搬——但如果哪天有人为了方便往里加第三个只有单一消费者的模块，这张表就是拦它的地方。

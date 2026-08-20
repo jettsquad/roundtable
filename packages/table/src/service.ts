@@ -51,6 +51,16 @@ export interface Team {
   readonly seats: readonly SeatSpec[];
   /** The host node's session id — the team's durable record. */
   readonly hostSessionId: string;
+  /**
+   * The host node itself.
+   *
+   * Exposed because dsh requires a parent Agent for every subagent, and the
+   * secretary has none of its own — a caller asking it to fold this team's
+   * discussion passes this. Handing it out is not handing out permission to
+   * run turns on it: the host node is an anchor, and `@squad/context`'s
+   * assembler throws if it ever finds turn events in this log.
+   */
+  readonly host: Agent;
   /** Ask the named seats (or all of them) and return what they said. */
   ask(instruction: string, seatIds?: readonly string[]): Promise<readonly SeatReply[]>;
   /**
@@ -155,6 +165,7 @@ export class TeamsService extends Service {
       projectFolder: record.input.projectFolder,
       seats: record.input.seats,
       hostSessionId: String(record.handle.agent.session.id),
+      host: record.handle.agent,
       ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
       transcript: () => transcriptOf(record.handle.agent),
       dispose: () => this.dispose(record),

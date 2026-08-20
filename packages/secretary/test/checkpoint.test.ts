@@ -11,7 +11,7 @@ import {
   validateCheckpoint,
   CHECKPOINT_HEADINGS,
   CHECKPOINT_HEADING_LIST,
-} from "../src/team-checkpoint.ts";
+} from "../src/checkpoint.ts";
 
 const turns = [
   { speaker: "水户洋平", text: "契约层有三处不一致" },

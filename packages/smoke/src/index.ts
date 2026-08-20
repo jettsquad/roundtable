@@ -20,7 +20,7 @@
 import type { Context } from "@deepseek-ai/cordis";
 
 export const name = "squad-smoke";
-export const inject = ["teams", "teamContext"];
+export const inject = ["teams", "teamContext", "secretary"];
 
 export interface Config {
   readonly projectFolder: string;
@@ -83,6 +83,42 @@ export function apply(ctx: Context, config: Config): void {
       const saw = second.every(
         (reply) => !reply.failed && reply.text.includes(topic.replace("议题 ", "").replace(" 号", "")),
       );
+      // ── 折叠：讨论 → 秘书 → 检查点 → 窗口 ────────────────────────────
+      // The whole point of stages 2 and 3 together. A seat should stop seeing
+      // the original turns and start seeing the document that stands in for
+      // them — and the boundary has to hold, or history is cut with nothing
+      // put in its place, which is the failure 1.x shipped for a while.
+      const spoken = team.transcript().filter((entry) => entry.kind === "user/message" && entry.text.length > 0);
+      const coversUpTo = spoken[spoken.length - 1]?.turnId;
+      if (coversUpTo === undefined) throw new Error("没有可折叠的记录。");
+
+      line("秘书写检查点…");
+      const checkpointText = await ctx.secretary.writeCheckpoint({
+        parent: team.host,
+        hostGoal: `讨论「${topic}」`,
+        turns: spoken.map((entry) => {
+          const match = /^【(.+?)】([\s\S]*)$/.exec(entry.text);
+          return { speaker: match?.[1] ?? "记录", text: match?.[2] ?? entry.text };
+        }),
+      });
+      line(`检查点 ${checkpointText.length} 字，标题齐全（否则上一步已经抛错）`);
+
+      await ctx.teamContext.record({ teamId: team.teamId, text: checkpointText, coversUpTo });
+
+      const folded = await ctx.teamContext.windowFor(team.teamId, "seat-a");
+      const joined = folded.join("\n");
+      const carriesCheckpoint = joined.includes("上下文检查点");
+      // The original turns must be GONE, not merely accompanied. Compared
+      // against text taken from the record itself: an earlier version fell
+      // back to a placeholder when a reply was missing, and a placeholder
+      // that appears nowhere makes this assertion pass without checking
+      // anything.
+      const firstSpoken = spoken[0]?.text;
+      if (firstSpoken === undefined) throw new Error("记录里没有发言可比对。");
+      const droppedOriginals = !joined.includes(firstSpoken);
+      line(`折叠后的窗口：${folded.length} 行，含检查点 = ${carriesCheckpoint}，原文已切掉 = ${droppedOriginals}`);
+      line(carriesCheckpoint && droppedOriginals ? "✅ 折叠成立" : "❌ 折叠没成立");
+
       line(`团队记录条目数：${team.transcript().length}`);
       line(saw ? "✅ 席位看见了上一轮——装配接线成立" : "❌ 席位看不到上一轮");
 

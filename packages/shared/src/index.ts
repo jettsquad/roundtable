@@ -11,8 +11,6 @@
  * Nothing here may import a plugin or a framework. Anything that needs a
  * service belongs in the plugin that owns that service.
  */
-export * from "./team-checkpoint.ts";
 export * from "./team-checkpoint-threshold.ts";
 export * from "./team-artifact.ts";
 export * from "./agent-reply-text.ts";
-export * from "./team-agenda-termination.ts";
