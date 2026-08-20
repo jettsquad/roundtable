@@ -121,6 +121,49 @@ export function apply(ctx: Context, config: Config): void {
         outcome.artifacts.every((path) => existsSync(join(config.projectFolder, path)));
       line(wroteFile ? "✅ 议程走通（产出路径若有，文件确实存在）" : "❌ 产出路径报了但文件不在");
 
+      // ── 中止交接：停一个跑到一半的议程，把没做完的交出去 ──────────────
+      // writeTermination had an implementation and tests and no path that
+      // could reach it, which is how a feature quietly stops working without
+      // anyone noticing it ever did.
+      const twoPhase = {
+        hostGoal: "分两步看这个目录",
+        phases: [
+          {
+            title: "第一步",
+            contextMode: "independent" as const,
+            tasks: [{ seatId: "seat-a", instruction: "用一句话说 README.md 是干什么的。" }],
+          },
+          {
+            title: "第二步",
+            contextMode: "independent" as const,
+            tasks: [{ seatId: "seat-a", instruction: "再写一段详细说明。" }],
+          },
+        ],
+      };
+
+      line("跑两阶段议程，第一步一结束就叫停…");
+      const stopped = new Promise<ReturnType<typeof team.stopAgenda>>((resolve) => {
+        // Stopped from outside while it runs, which is the only way this is
+        // worth testing: a stop applied before anything started proves nothing
+        // about whether a running agenda can be interrupted.
+        setTimeout(() => resolve(team.stopAgenda("主持人改主意了")), 25_000);
+      });
+      const [outcome2, material] = await Promise.all([team.runAgenda(twoPhase), stopped]);
+      line(
+        `议程结果：跑过 ${outcome2.phasesRun.join(" → ")}，` + `stoppedBecause=${outcome2.stoppedBecause ?? "（无）"}`,
+      );
+      line(`没做完的：${material.remaining.join(" | ") || "无"}`);
+
+      line("秘书写中止交接…");
+      const handoff = await ctx.secretary.writeTermination({ parent: team.host, ...material });
+      const namesRemaining = material.remaining.every((item) => handoff.includes(item.replace(/^阶段「|」.*$/g, "")));
+      line(`交接文档 ${handoff.length} 字，五个标题齐全（否则已经抛错），` + `点到了未完成阶段 = ${namesRemaining}`);
+      line(
+        outcome2.stoppedBecause !== undefined && material.remaining.length > 0 && namesRemaining
+          ? "✅ 中止交接走通"
+          : "❌ 中止交接没走通",
+      );
+
       // What the trigger sees. The smoke cannot cross the real threshold —
       // the floor is 1M × 0.05 = 50k tokens, and getting there means actually
       // sending a 50k-token round — so what is checked here is the accounting
@@ -134,7 +177,34 @@ export function apply(ctx: Context, config: Config): void {
       if (before.accumulated === 0) line("⚠️ 累计为 0——记录没被算进去，接线有问题");
 
       line("秘书写检查点（手动触发，走的是自动折叠的同一条路）…");
-      const checkpoint = await ctx.teamContext.fold(team.teamId);
+      // One retry, and it says when it used one.
+      //
+      // Starting a subagent occasionally fails with no output at all — seen
+      // twice in a row and then not again on identical code, so it is
+      // transient rather than a defect in this path. Tolerated here because
+      // this smoke costs four minutes of real model calls, and REPORTED
+      // because a retry that hides itself turns a flaky dependency into a
+      // green light.
+      //
+      // The automatic fold needs no retry of its own: it is triggered at
+      // round end, so a failed attempt simply folds at the next one.
+      let retried = false;
+      const attempt = async (label: string) => {
+        try {
+          return await ctx.teamContext.fold(team.teamId);
+        } catch (error) {
+          line(`  折叠尝试(${label}) 失败：${error instanceof Error ? error.message : String(error)}`);
+          return undefined;
+        }
+      };
+      let checkpoint = await attempt("立即");
+      if (checkpoint === undefined) {
+        line("  等 20 秒再试一次…");
+        retried = true;
+        await new Promise((r) => setTimeout(r, 20_000));
+        checkpoint = await attempt("延迟后");
+      }
+      if (checkpoint === undefined) throw new Error("两次折叠都失败。");
       line(`检查点 ${checkpoint.text.length} 字，覆盖到 ${checkpoint.coversUpTo}，标题齐全（否则已经抛错）`);
 
       // The index must name the file the program actually wrote. Given no
@@ -165,7 +235,11 @@ export function apply(ctx: Context, config: Config): void {
       if (firstSpoken === undefined) throw new Error("记录里没有发言可比对。");
       const droppedOriginals = !joined.includes(firstSpoken);
       line(`折叠后的窗口：${folded.length} 行，含检查点 = ${carriesCheckpoint}，原文已切掉 = ${droppedOriginals}`);
-      line(carriesCheckpoint && droppedOriginals ? "✅ 折叠成立" : "❌ 折叠没成立");
+      line(
+        carriesCheckpoint && droppedOriginals
+          ? `✅ 折叠成立${retried ? "（用掉了一次重试——子进程启动失败过一次）" : ""}`
+          : "❌ 折叠没成立",
+      );
 
       line(`团队记录条目数：${team.transcript().length}`);
       line(saw ? "✅ 席位看见了上一轮——装配接线成立" : "❌ 席位看不到上一轮");

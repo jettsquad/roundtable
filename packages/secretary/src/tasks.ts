@@ -79,7 +79,16 @@ export async function writeTerminationWith(run: TextTaskRunner, input: Terminati
 async function settled(run: TextTaskRunner, label: string, prompt: string): Promise<string> {
   const result = await run(label, prompt);
   if (result.stopReason !== "completed") {
-    throw new Error(`秘书任务「${label}」未完成（${result.stopReason}），产出不予采用。`);
+    // Whatever text came back travels with the refusal. A subagent result
+    // carries no error detail — the cause goes to the harness logger and
+    // nowhere the caller can see — so the partial output is the only evidence
+    // available at this layer, and a refusal naming only a stop reason leaves
+    // a real failure with nothing to debug from.
+    const partial = result.text.trim();
+    throw new Error(
+      `秘书任务「${label}」未完成（${result.stopReason}），产出不予采用。` +
+        (partial === "" ? "（子进程没有返回任何文本。）" : `子进程返回的片段：${partial.slice(0, 300)}`),
+    );
   }
   return result.text;
 }

@@ -8,7 +8,7 @@
  * ignored what was said. So the expansion is pure and tested, and the
  * executor around it only does I/O.
  */
-import type { AgendaPhase, AgendaTask } from "@squad/shared";
+import type { AgendaPhase, AgendaSpec, AgendaTask } from "@squad/shared";
 
 /**
  * Which window a run is given.
@@ -63,3 +63,33 @@ export function planPhase(phase: AgendaPhase): readonly PlannedRun[] {
 
 /** Whether the agenda pauses for the host after this phase. */
 export const pausesAfter = (phase: AgendaPhase): boolean => phase.exit === "wait-for-host";
+
+/**
+ * What an interrupted agenda still owes.
+ *
+ * The section of a hand-off that decides whether it is useful. A document
+ * listing what was done but not what was left reads as complete to whoever
+ * picks the work up, and starts them in the wrong place — so a phase the stop
+ * cut through must contribute its unfinished tasks, not disappear because it
+ * was "in progress".
+ *
+ * A phase counts as done only when every run in it finished. Half a phase in
+ * the completed list would put its remaining tasks in neither column.
+ */
+export function outstandingWork(
+  agenda: AgendaSpec,
+  completedPhases: readonly string[],
+  completedTasks: readonly string[],
+): readonly string[] {
+  const donePhases = new Set(completedPhases);
+  const doneTasks = new Set(completedTasks);
+  const remaining: string[] = [];
+  for (const phase of agenda.phases) {
+    if (donePhases.has(phase.title)) continue;
+    const unfinished = phase.tasks.map((task) => task.instruction).filter((instruction) => !doneTasks.has(instruction));
+    remaining.push(
+      unfinished.length === 0 ? `阶段「${phase.title}」` : `阶段「${phase.title}」：${unfinished.join("；")}`,
+    );
+  }
+  return remaining;
+}

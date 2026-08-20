@@ -23,7 +23,7 @@ import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveArtifactPath, stripReasoning, type AgendaSpec } from "@squad/shared";
-import { pausesAfter, planPhase } from "./agenda.ts";
+import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
 
 declare module "@deepseek-ai/cordis" {
@@ -88,6 +88,15 @@ export interface Team {
    * afternoon.
    */
   runAgenda(agenda: AgendaSpec): Promise<AgendaOutcome>;
+  /**
+   * Stop the running agenda and return the material for its hand-off.
+   *
+   * Material, not the document. The table knows what ran and what did not;
+   * turning that into prose is judgement, and judgement is the secretary's.
+   * Splitting it this way also means stopping never depends on a model being
+   * reachable — the agenda halts whether or not anything is later written up.
+   */
+  stopAgenda(reason: string): AgendaTermination;
   /**
    * The team record, flattened — every event, in order, nothing filtered.
    *
@@ -194,7 +203,15 @@ export class TeamsService extends Service {
       meta: { cwd: input.projectFolder },
     });
 
-    const record: TeamRecord = { teamId, input, handle, roundsInFlight: 0, disposed: false };
+    const record: TeamRecord = {
+      teamId,
+      input,
+      handle,
+      roundsInFlight: 0,
+      running: undefined,
+      artifacts: [],
+      disposed: false,
+    };
     this.teams.set(teamId, record);
     return this.viewOf(record);
   }
@@ -225,6 +242,7 @@ export class TeamsService extends Service {
       ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
       transcript: () => transcriptOf(record.handle.agent),
       runAgenda: (agenda) => this.runAgenda(record, agenda),
+      stopAgenda: (reason) => this.stopAgenda(record, reason),
       dispose: () => this.dispose(record),
     };
   }
@@ -314,16 +332,23 @@ export class TeamsService extends Service {
    */
   private async runAgenda(record: TeamRecord, agenda: AgendaSpec): Promise<AgendaOutcome> {
     if (record.disposed) throw new Error("团队已销毁。");
+    if (record.running !== undefined) throw new Error("这支团队已经在跑一个议程了。");
     const host = record.handle.agent;
     const replies: SeatReply[] = [];
-    const phasesRun: string[] = [];
     const artifacts: string[] = [];
     let pausedAfter: string | undefined;
 
+    const running: RunningAgenda = {
+      agenda,
+      abort: new AbortController(),
+      completedPhases: [],
+      completedTasks: [],
+      reason: undefined,
+    };
+    record.running = running;
     record.roundsInFlight += 1;
     try {
       for (const phase of agenda.phases) {
-        phasesRun.push(phase.title);
         // Taken once, before anything in the phase speaks. Every
         // `phase-start` run in this phase is handed this same snapshot, so
         // independence is a fact of what exists rather than a rule someone
@@ -336,6 +361,10 @@ export class TeamsService extends Service {
         }
 
         for (const run of planPhase(phase)) {
+          // Checked between runs, so a stop lands at a task boundary rather
+          // than halfway through one. The seat already running when the host
+          // stopped is cancelled through the same signal.
+          if (running.abort.signal.aborted) break;
           const seat = record.input.seats.find((candidate) => candidate.seatId === run.task.seatId);
           if (seat === undefined) {
             // Vetting refuses this before confirmation, so reaching it means
@@ -354,8 +383,9 @@ export class TeamsService extends Service {
               : await this.contextFor(record.teamId, seat.seatId);
 
           recordSpoken(host, record.input.hostDisplayName, `（${phase.title}）${run.task.instruction}`);
-          const reply = await this.runSeat(record, host, seat, run.task.instruction, window);
+          const reply = await this.runSeat(record, host, seat, run.task.instruction, window, running.abort.signal);
           replies.push(reply);
+          if (!reply.failed) running.completedTasks.push(run.task.instruction);
 
           const path = resolveArtifactPath(
             run.task.artifactPath === undefined ? undefined : { path: run.task.artifactPath },
@@ -365,8 +395,15 @@ export class TeamsService extends Service {
           if (path !== undefined && !reply.failed) {
             await this.writeArtifact(record, path, reply.text);
             artifacts.push(path);
+            record.artifacts.push(path);
           }
         }
+
+        if (running.abort.signal.aborted) break;
+        // Counted complete only after every run in it finished. A phase the
+        // stop cut through is not done, and calling it done would put its
+        // unfinished tasks in neither list.
+        running.completedPhases.push(phase.title);
 
         if (pausesAfter(phase)) {
           pausedAfter = phase.title;
@@ -375,14 +412,43 @@ export class TeamsService extends Service {
       }
     } finally {
       record.roundsInFlight -= 1;
+      record.running = undefined;
     }
 
     this.signalRoundEnded(record);
     return {
       replies,
-      phasesRun,
+      ...(running.reason === undefined ? {} : { stoppedBecause: running.reason }),
+      phasesRun: running.completedPhases,
       artifacts,
       ...(pausedAfter === undefined ? {} : { pausedAfter }),
+    };
+  }
+
+  /**
+   * Stop the running agenda.
+   *
+   * Synchronous and side-effect-light on purpose: it aborts and reports, and
+   * nothing about stopping waits on a model. The running loop notices the
+   * abort between runs, and any seat mid-answer is cancelled through the same
+   * signal rather than being left to finish into a discussion nobody is
+   * having any more.
+   */
+  private stopAgenda(record: TeamRecord, reason: string): AgendaTermination {
+    const running = record.running;
+    if (running === undefined) throw new Error("这支团队现在没有在跑议程。");
+    running.reason = reason;
+    running.abort.abort(new Error(`议程已中止：${reason}`));
+
+    return {
+      objective: running.agenda.hostGoal ?? record.input.displayName,
+      reason,
+      completed: [...running.completedTasks],
+      remaining: outstandingWork(running.agenda, running.completedPhases, running.completedTasks),
+      artifacts: [...record.artifacts],
+      discussion: transcriptOf(record.handle.agent)
+        .filter((entry) => entry.kind === "user/message" && entry.text.length > 0)
+        .map((entry) => entry.text),
     };
   }
 
@@ -437,6 +503,7 @@ export class TeamsService extends Service {
     seat: SeatSpec,
     instruction: string,
     window: WindowAttempt,
+    signal?: AbortSignal,
   ): Promise<SeatReply> {
     const provider = PROVIDER_BY_BACKEND[seat.backend];
     try {
@@ -451,7 +518,10 @@ export class TeamsService extends Service {
         label: seat.displayName,
         prompt: [{ type: "text", text: prompt }],
         parent: host,
-        signal: new AbortController().signal,
+        // The agenda's signal when there is one, so stopping actually reaches
+        // the running process instead of leaving it to finish into a
+        // discussion nobody is having any more.
+        signal: signal ?? new AbortController().signal,
       };
       const run = await this.ctx.subagents.start(provider, request);
       const result = await run.result;
@@ -485,7 +555,14 @@ export class TeamsService extends Service {
 /** What one confirmed agenda did. */
 export interface AgendaOutcome {
   readonly replies: readonly SeatReply[];
-  /** Phases actually run, in order. A pause leaves the rest untouched. */
+  /**
+   * Phases that finished in full, in order.
+   *
+   * Finished, not entered. A stop lands inside a phase, and reporting that
+   * phase as run would tell the caller work happened that did not — while its
+   * unfinished tasks sit in the termination's `remaining` list, so the same
+   * phase would read as both done and outstanding.
+   */
   readonly phasesRun: readonly string[];
   /**
    * Set when a phase handed control back to the host. The remaining phases
@@ -496,6 +573,30 @@ export interface AgendaOutcome {
   readonly pausedAfter?: string;
   /** Files written, project-relative. */
   readonly artifacts: readonly string[];
+  /**
+   * Set when the host stopped the agenda. Distinct from `pausedAfter`: a
+   * pause is the agenda doing what it said it would, a stop is the agenda not
+   * finishing — and a caller that cannot tell them apart will treat an
+   * interrupted run as a completed one.
+   */
+  readonly stoppedBecause?: string;
+}
+
+/**
+ * Everything a hand-off document needs, gathered by whoever knows it.
+ *
+ * `remaining` is the part that matters. A hand-off listing what was done but
+ * not what was left reads as complete to whoever picks the work up, and
+ * starts them in the wrong place — which is the failure the secretary's
+ * validation refuses on the writing side and this gathers on the reading one.
+ */
+export interface AgendaTermination {
+  readonly objective: string;
+  readonly reason: string;
+  readonly completed: readonly string[];
+  readonly remaining: readonly string[];
+  readonly artifacts: readonly string[];
+  readonly discussion: readonly string[];
 }
 
 /** One seat's window for a round, or the failure that stopped it being built. */
@@ -510,7 +611,22 @@ interface TeamRecord {
   readonly handle: AgentHandle;
   /** Rounds currently running. Folding starts only at zero. */
   roundsInFlight: number;
+  /** Set while an agenda is running; aborting it is how the host stops one. */
+  running: RunningAgenda | undefined;
+  /** Project-relative paths this team has written, in order. */
+  readonly artifacts: string[];
   disposed: boolean;
+}
+
+/** The agenda currently executing, and the handle that stops it. */
+interface RunningAgenda {
+  readonly agenda: AgendaSpec;
+  readonly abort: AbortController;
+  /** Phase titles finished in full. */
+  readonly completedPhases: string[];
+  /** Task instructions that actually ran and produced an answer. */
+  readonly completedTasks: string[];
+  reason: string | undefined;
 }
 
 /**

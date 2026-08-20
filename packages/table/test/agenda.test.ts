@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { AgendaPhase } from "@squad/shared";
-import { pausesAfter, planPhase, roundsOf, windowPolicyOf } from "../src/agenda.ts";
+import { outstandingWork, pausesAfter, planPhase, roundsOf, windowPolicyOf } from "../src/agenda.ts";
 
 const phase = (over: Partial<AgendaPhase> = {}): AgendaPhase => ({
   title: "评审",
@@ -73,5 +73,44 @@ describe("pausesAfter", () => {
   it("stops the agenda when the phase hands control back", () => {
     expect(pausesAfter(phase({ exit: "wait-for-host" }))).toBe(true);
     expect(pausesAfter(phase())).toBe(false);
+  });
+});
+
+describe("outstandingWork", () => {
+  const agenda = {
+    hostGoal: "把评审做完",
+    phases: [
+      phase({ title: "初审", tasks: [{ seatId: "seat-a", instruction: "甲初审" }] }),
+      phase({
+        title: "复审",
+        tasks: [
+          { seatId: "seat-a", instruction: "甲复审" },
+          { seatId: "seat-b", instruction: "乙复审" },
+        ],
+      }),
+      phase({ title: "定稿", tasks: [{ seatId: "seat-a", instruction: "甲定稿" }] }),
+    ],
+  };
+
+  it("owes nothing when every phase finished", () => {
+    expect(outstandingWork(agenda, ["初审", "复审", "定稿"], [])).toEqual([]);
+  });
+
+  it("lists the unfinished tasks of a phase the stop cut through", () => {
+    // The phase is not done, so it must contribute what is left of it —
+    // disappearing because it was "in progress" would put those tasks in
+    // neither column, and the hand-off would read as complete.
+    expect(outstandingWork(agenda, ["初审"], ["甲复审"])).toEqual(["阶段「复审」：乙复审", "阶段「定稿」：甲定稿"]);
+  });
+
+  it("names a phase that never started without pretending to detail it", () => {
+    expect(outstandingWork(agenda, [], [])[0]).toBe("阶段「初审」：甲初审");
+  });
+
+  it("still lists a phase whose tasks all ran but which never completed", () => {
+    // Every task done and the phase not marked complete means the stop landed
+    // between the last task and the phase closing. Reported as a phase with
+    // nothing itemised, rather than dropped.
+    expect(outstandingWork(agenda, [], ["甲初审"])).toContain("阶段「初审」");
   });
 });
