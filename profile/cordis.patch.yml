@@ -1,0 +1,13 @@
+# Squad 2.0 —— 叠在 dsh-base 之上的插件层。
+#
+# `insert` 新增行；带 id 的裸 patch 是替换已有行的 config，不是新增。
+- insert:
+    # base 只挂进程内的两个 subagent provider，不挂 CLI 后端的，所以这里显式加上。
+    # 它读宿主自己的 Claude 设置与登录态：provider 刻意不传 settingSources，
+    # 也不创建或修改登录状态，订阅登录因此原样透传。
+    - id: subagent-claude-code
+      name: '@deepseek-ai/dsh-subagent-claude-code'
+
+    # 桌子：主持人节点 + 席位编排。
+    - id: squad-table
+      name: '@squad/table'
