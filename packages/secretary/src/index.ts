@@ -24,9 +24,11 @@ export function apply(ctx: Context): void {
 }
 
 export { SecretaryService } from "./service.ts";
-export { writeCheckpointWith, writeTerminationWith } from "./tasks.ts";
+export { draftAgendaWith, writeCheckpointWith, writeTerminationWith } from "./tasks.ts";
 export type { TerminationInput, TextTaskResult, TextTaskRunner } from "./tasks.ts";
-export type { SecretaryRun, WriteCheckpointInput, WriteTerminationInput } from "./service.ts";
+export type { DraftAgendaInput, SecretaryRun, WriteCheckpointInput, WriteTerminationInput } from "./service.ts";
+export { assertPublicHostCommand, buildAgendaPrompt, extractJson, parseAgendaReply } from "./agenda.ts";
+export type { AgendaDraftInput, RosterSeat } from "./agenda.ts";
 
 export {
   CHECKPOINT_HEADINGS,

@@ -1,0 +1,100 @@
+/**
+ * agenda.ts — turning a host's sentence into a structured agenda.
+ *
+ * The secretary proposes; it never schedules. What comes back is a draft the
+ * host confirms, which is why nothing here starts anything — the whole point
+ * of the machine-proposes/human-decides split is that a wrong agenda costs a
+ * confirmation click rather than a team's afternoon.
+ *
+ * The model's reply is JSON it wrote, so it is treated as hostile input all
+ * the way through: prose around the object is tolerated, the schema is
+ * strict, and the roster check runs afterwards because the shape being legal
+ * says nothing about the seats being real.
+ */
+import { checkAgendaAgainstRoster, parseAgendaSpec, type AgendaSpec } from "@squad/shared";
+
+/** One seat as the drafting prompt needs to see it. */
+export interface RosterSeat {
+  readonly seatId: string;
+  readonly displayName: string;
+}
+
+export interface AgendaDraftInput {
+  /** The host's own words. */
+  readonly command: string;
+  readonly topic: string;
+  readonly seats: readonly RosterSeat[];
+}
+
+/**
+ * Refuse a host command that references private material.
+ *
+ * `@something` is how the host points at material only they can see. The
+ * secretary is private-blind by design, so passing one through would either
+ * leak it or — worse, because it is silent — produce an agenda built around
+ * a reference the secretary could not read and quietly guessed at.
+ */
+export function assertPublicHostCommand(command: string): void {
+  if (/(^|\s)@[^\s]+/.test(command)) {
+    throw new Error("主持人指令里的 @ 引用不会发给秘书，请改成公开措辞后重发。");
+  }
+}
+
+/** Build the drafting instruction. English on purpose: it asks for JSON, and the schema names are English. */
+export function buildAgendaPrompt(input: AgendaDraftInput): string {
+  const roster = input.seats.map((seat) => `${seat.seatId} (${seat.displayName})`).join(", ");
+  return [
+    "You are a meeting secretary. Convert the host's instruction into a JSON team agenda.",
+    "Reply with ONLY a JSON object (no prose, no code fence) matching exactly this shape:",
+    '{"hostGoal"?: string, "phases": [{"title": string, "purpose"?: string, "contextMode": "independent"|"cumulative", "tasks": [{"seatId": string, "instruction": string, "publicContextCutoff"?: "phase-start"|"immediately-before-turn", "artifactPath"?: string}], "exit"?: "after-tasks"|"after-bounded-rounds"|"wait-for-host", "maxRounds"?: number}]}',
+    'Rules: use only the seatIds listed below; every phase needs at least one task; a phase that repeats rounds uses exit "after-bounded-rounds" WITH a positive integer maxRounds, and no other phase may set maxRounds.',
+    'Set "artifactPath" ONLY when the host explicitly asks for that task\'s answer to be written to a file, and only with a path they actually name (relative to the project folder, e.g. "docs/review.md"). Never invent one: the app writes the file itself, so a made-up path sends later turns to a file that does not exist. Omit it otherwise.',
+    'Set "contextMode" to "independent" when the host wants each member to answer without seeing the others (e.g. 各自独立评审); otherwise "cumulative".',
+    `Seats (use these exact seatIds): ${roster}.`,
+    `Topic: ${input.topic}`,
+    `Host instruction: ${input.command}`,
+  ].join("\n");
+}
+
+/**
+ * Pull the JSON object out of a reply that may carry stray prose.
+ *
+ * Tolerant on purpose: the failure mode being avoided is a perfectly good
+ * agenda rejected because the model said "Here you go:" first. Tolerance ends
+ * at the object boundary — what is inside still faces the strict schema.
+ */
+export function extractJson(text: string): unknown {
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start === -1 || end === -1 || end < start) {
+      throw new Error("秘书没有返回 JSON 对象，无法解析成议程。");
+    }
+    return JSON.parse(trimmed.slice(start, end + 1));
+  }
+}
+
+/**
+ * Parse and vet a drafting reply.
+ *
+ * Roster problems are refused rather than reported alongside a usable draft:
+ * a draft the host can confirm is a draft the table will run, and a task
+ * addressed to a seat that does not exist reads at execution time as a seat
+ * that had nothing to say.
+ */
+export function parseAgendaReply(text: string, seats: readonly RosterSeat[]): AgendaSpec {
+  const agenda = parseAgendaSpec(extractJson(text));
+  const problems = checkAgendaAgainstRoster(
+    agenda,
+    seats.map((seat) => seat.seatId),
+  );
+  if (problems.length > 0) {
+    throw new Error(
+      `秘书拟的议程有问题，未采用：\n${problems.map((p) => `- 阶段「${p.phase}」：${p.detail}`).join("\n")}`,
+    );
+  }
+  return agenda;
+}

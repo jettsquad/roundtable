@@ -7,6 +7,8 @@
  * some text. What matters is what happens when the answer comes back wrong,
  * and that is exactly the path an integration test exercises least.
  */
+import type { AgendaSpec } from "@squad/shared";
+import { assertPublicHostCommand, buildAgendaPrompt, parseAgendaReply, type AgendaDraftInput } from "./agenda.ts";
 import { buildCheckpointPrompt, validateCheckpoint, type CheckpointPromptInput } from "./checkpoint.ts";
 import { buildTeamAgendaTerminationPrompt, validateTeamAgendaTerminationSummary } from "./termination.ts";
 
@@ -80,4 +82,21 @@ async function settled(run: TextTaskRunner, label: string, prompt: string): Prom
     throw new Error(`秘书任务「${label}」未完成（${result.stopReason}），产出不予采用。`);
   }
   return result.text;
+}
+
+/**
+ * Draft an agenda from the host's instruction.
+ *
+ * The private-material check runs BEFORE the model is contacted, not after:
+ * the point is that the reference never reaches the secretary, and a check on
+ * the way back would have already sent it.
+ *
+ * A draft, never a schedule. Nothing here starts anything — the host confirms
+ * it, and that is what makes a wrong agenda cost a click instead of an
+ * afternoon.
+ */
+export async function draftAgendaWith(run: TextTaskRunner, input: AgendaDraftInput): Promise<AgendaSpec> {
+  assertPublicHostCommand(input.command);
+  const text = await settled(run, "秘书 · 议程草案", buildAgendaPrompt(input));
+  return parseAgendaReply(text, input.seats);
 }

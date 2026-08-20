@@ -22,7 +22,15 @@ import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { stripReasoning } from "@squad/shared";
 import type { CheckpointPromptInput } from "./checkpoint.ts";
-import { writeCheckpointWith, writeTerminationWith, type TerminationInput, type TextTaskRunner } from "./tasks.ts";
+import type { AgendaSpec } from "@squad/shared";
+import type { AgendaDraftInput } from "./agenda.ts";
+import {
+  draftAgendaWith,
+  writeCheckpointWith,
+  writeTerminationWith,
+  type TerminationInput,
+  type TextTaskRunner,
+} from "./tasks.ts";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -47,6 +55,8 @@ export interface SecretaryRun {
 
 export type WriteCheckpointInput = CheckpointPromptInput & SecretaryRun;
 
+export type DraftAgendaInput = AgendaDraftInput & SecretaryRun;
+
 /** Everything the hand-off needs, fed in by the caller — nothing is remembered here. */
 export type WriteTerminationInput = TerminationInput & SecretaryRun;
 
@@ -57,6 +67,10 @@ export class SecretaryService extends Service {
 
   constructor(ctx: Context) {
     super(ctx, "secretary");
+  }
+
+  async draftAgenda(input: DraftAgendaInput): Promise<AgendaSpec> {
+    return draftAgendaWith(this.runner(input), input);
   }
 
   async writeCheckpoint(input: WriteCheckpointInput): Promise<string> {

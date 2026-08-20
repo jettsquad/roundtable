@@ -20,7 +20,10 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
-import { stripReasoning } from "@squad/shared";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { resolveArtifactPath, stripReasoning, type AgendaSpec } from "@squad/shared";
+import { pausesAfter, planPhase } from "./agenda.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
 
 declare module "@deepseek-ai/cordis" {
@@ -76,6 +79,15 @@ export interface Team {
   readonly host: Agent;
   /** Ask the named seats (or all of them) and return what they said. */
   ask(instruction: string, seatIds?: readonly string[]): Promise<readonly SeatReply[]>;
+  /**
+   * Run an agenda the host has already confirmed.
+   *
+   * Confirmed, not drafted: the table executes and never proposes. The
+   * secretary drafts, the host decides, and this runs what they decided —
+   * which is what keeps a wrong agenda costing a click instead of an
+   * afternoon.
+   */
+  runAgenda(agenda: AgendaSpec): Promise<AgendaOutcome>;
   /**
    * The team record, flattened — every event, in order, nothing filtered.
    *
@@ -204,6 +216,7 @@ export class TeamsService extends Service {
       checkpointCoefficient: record.input.checkpointCoefficient,
       ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
       transcript: () => transcriptOf(record.handle.agent),
+      runAgenda: (agenda) => this.runAgenda(record, agenda),
       dispose: () => this.dispose(record),
     };
   }
@@ -284,6 +297,102 @@ export class TeamsService extends Service {
   }
 
   /**
+   * Run a confirmed agenda, phase by phase.
+   *
+   * The whole agenda counts as one stretch of work: `roundsInFlight` is held
+   * for its duration, so an automatic fold cannot start between two phases
+   * and record a boundary in the middle of something the host asked for as a
+   * unit. The round-end signal fires once, at the end.
+   */
+  private async runAgenda(record: TeamRecord, agenda: AgendaSpec): Promise<AgendaOutcome> {
+    if (record.disposed) throw new Error("团队已销毁。");
+    const host = record.handle.agent;
+    const replies: SeatReply[] = [];
+    const phasesRun: string[] = [];
+    const artifacts: string[] = [];
+    let pausedAfter: string | undefined;
+
+    record.roundsInFlight += 1;
+    try {
+      for (const phase of agenda.phases) {
+        phasesRun.push(phase.title);
+        // Taken once, before anything in the phase speaks. Every
+        // `phase-start` run in this phase is handed this same snapshot, so
+        // independence is a fact of what exists rather than a rule someone
+        // has to keep obeying.
+        const opening = new Map<string, WindowAttempt>();
+        for (const task of phase.tasks) {
+          if (!opening.has(task.seatId)) {
+            opening.set(task.seatId, await this.contextFor(record.teamId, task.seatId));
+          }
+        }
+
+        for (const run of planPhase(phase)) {
+          const seat = record.input.seats.find((candidate) => candidate.seatId === run.task.seatId);
+          if (seat === undefined) {
+            // Vetting refuses this before confirmation, so reaching it means
+            // the roster changed underneath a confirmed agenda. Recorded as a
+            // failure rather than skipped: a task nobody ran and a seat with
+            // nothing to say are the same silence.
+            const text = `⚠️ 议程点名了不在名册上的席位「${run.task.seatId}」，本条未执行。`;
+            recordSpoken(host, "系统", text);
+            replies.push({ seatId: run.task.seatId, displayName: run.task.seatId, text, failed: true });
+            continue;
+          }
+
+          const window =
+            run.window === "phase-start"
+              ? (opening.get(seat.seatId) ?? { lines: [] })
+              : await this.contextFor(record.teamId, seat.seatId);
+
+          recordSpoken(host, record.input.hostDisplayName, `（${phase.title}）${run.task.instruction}`);
+          const reply = await this.runSeat(record, host, seat, run.task.instruction, window);
+          replies.push(reply);
+
+          const path = resolveArtifactPath(
+            run.task.artifactPath === undefined ? undefined : { path: run.task.artifactPath },
+            { seatId: seat.seatId, phaseId: `${phase.title}-${run.round}` },
+            phase.tasks.filter((candidate) => candidate.artifactPath === run.task.artifactPath).length,
+          );
+          if (path !== undefined && !reply.failed) {
+            await this.writeArtifact(record, path, reply.text);
+            artifacts.push(path);
+          }
+        }
+
+        if (pausesAfter(phase)) {
+          pausedAfter = phase.title;
+          break;
+        }
+      }
+    } finally {
+      record.roundsInFlight -= 1;
+    }
+
+    this.signalRoundEnded(record);
+    return {
+      replies,
+      phasesRun,
+      artifacts,
+      ...(pausedAfter === undefined ? {} : { pausedAfter }),
+    };
+  }
+
+  /**
+   * Write one seat's answer to the file the host asked for.
+   *
+   * The program writes it, not the agent. A path an agent was merely told to
+   * write to is a path it may or may not have written to, and the checkpoint's
+   * index would then point at files that sometimes exist.
+   */
+  private async writeArtifact(record: TeamRecord, relative: string, text: string): Promise<void> {
+    const absolute = join(record.input.projectFolder, relative);
+    await mkdir(dirname(absolute), { recursive: true });
+    await writeFile(absolute, text, "utf8");
+    recordSpoken(record.handle.agent, "系统", `已写入 ${relative}`);
+  }
+
+  /**
    * Tell the assembler a round ended.
    *
    * A throwing assembler must not take the round's replies with it: the work
@@ -351,6 +460,22 @@ export class TeamsService extends Service {
     await record.handle.dispose();
     this.teams.delete(record.teamId);
   }
+}
+
+/** What one confirmed agenda did. */
+export interface AgendaOutcome {
+  readonly replies: readonly SeatReply[];
+  /** Phases actually run, in order. A pause leaves the rest untouched. */
+  readonly phasesRun: readonly string[];
+  /**
+   * Set when a phase handed control back to the host. The remaining phases
+   * were NOT run — reported rather than silently skipped, because an agenda
+   * that stopped early and an agenda that finished look identical from the
+   * outside otherwise.
+   */
+  readonly pausedAfter?: string;
+  /** Files written, project-relative. */
+  readonly artifacts: readonly string[];
 }
 
 /** One seat's window for a round, or the failure that stopped it being built. */

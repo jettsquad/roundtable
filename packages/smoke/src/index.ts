@@ -17,6 +17,8 @@
  *
  * Not part of any shipped composition.
  */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 
 export const name = "squad-smoke";
@@ -89,6 +91,35 @@ export function apply(ctx: Context, config: Config): void {
       // them — and the boundary has to hold, or history is cut with nothing
       // put in its place, which is the failure 1.x shipped for a while.
       const spoken = team.transcript().filter((entry) => entry.kind === "user/message" && entry.text.length > 0);
+
+      // ── 议程：秘书拟 → 主持人确认 → 桌子执行 ──────────────────────────
+      line("秘书拟议程…");
+      const draft = await ctx.secretary.draftAgenda({
+        parent: team.host,
+        command: "让甲用一句话说明 README.md 讲了什么，并把答案写进 docs/smoke.md",
+        topic: topic,
+        seats: [{ seatId: "seat-a", displayName: "甲" }],
+      });
+      line(
+        `草案：${draft.phases.length} 个阶段，` +
+          `任务 ${draft.phases.flatMap((p) => p.tasks).length} 条，` +
+          `产出路径 ${draft.phases
+            .flatMap((p) => p.tasks)
+            .map((t) => t.artifactPath ?? "无")
+            .join("/")}`,
+      );
+
+      // The host confirms. Nothing ran until this line — that is the whole
+      // point of drafting separately from executing.
+      const outcome = await team.runAgenda(draft);
+      line(`议程执行完：阶段 ${outcome.phasesRun.join(" → ")}，产出 ${outcome.artifacts.join(", ") || "无"}`);
+      for (const reply of outcome.replies) {
+        line(`  ← ${reply.displayName}${reply.failed ? "（失败）" : ""}：${reply.text.slice(0, 60)}`);
+      }
+      const wroteFile =
+        outcome.artifacts.length === 0 ||
+        outcome.artifacts.every((path) => existsSync(join(config.projectFolder, path)));
+      line(wroteFile ? "✅ 议程走通（产出路径若有，文件确实存在）" : "❌ 产出路径报了但文件不在");
 
       // What the trigger sees. The smoke cannot cross the real threshold —
       // the floor is 1M × 0.05 = 50k tokens, and getting there means actually
