@@ -4,6 +4,7 @@
   "dependencies": {
     "@deepseek-ai/dsh-subagent-claude-code": "file:/Users/yanwong/.local/share/roundtable/deepseek-harness/packages/subagent/subagent-claude-code",
     "@squad/context": "file:/Volumes/Jett/projects/Squad2/packages/context",
+    "@squad/reasoning": "file:/Volumes/Jett/projects/Squad2/packages/reasoning",
     "@squad/secretary": "file:/Volumes/Jett/projects/Squad2/packages/secretary",
     "@squad/table": "file:/Volumes/Jett/projects/Squad2/packages/table"
   },

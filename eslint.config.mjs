@@ -14,6 +14,12 @@ export default tseslint.config(
       // binding is usually a branch that stopped doing what it says.
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
       "@typescript-eslint/consistent-type-imports": "error",
+      // dsh runs these .ts files through Node's strip-only type removal,
+      // which rejects constructor parameter properties. tsc accepts them and
+      // vitest transpiles them, so the only thing that catches one is a real
+      // boot — the slowest and least specific signal available. Banned here
+      // instead.
+      "@typescript-eslint/parameter-properties": ["error", { prefer: "class-property" }],
       "no-console": ["error", { allow: ["error", "warn"] }],
     },
   },

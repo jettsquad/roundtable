@@ -48,3 +48,11 @@
     # 它不持有任何团队状态，材料全部由调用方投喂。
     - id: squad-secretary
       name: '@squad/secretary'
+
+    # Lil X：使用者自己的判断标准库。用户级，不属于任何一张桌子——
+    # inject 里刻意没有 teams。root 是一个目录，纯文本、git 可管、离开 Squad 仍可读。
+    # 开发态放在 DSH_HOME 下以免写坏真实资产；正式默认值应当是用户自己选的目录。
+    - id: squad-reasoning
+      name: '@squad/reasoning'
+      config:
+        root: !!js dshHomePath('lil-x')

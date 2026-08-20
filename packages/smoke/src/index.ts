@@ -22,7 +22,7 @@ import { join } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 
 export const name = "squad-smoke";
-export const inject = ["teams", "teamContext", "secretary"];
+export const inject = ["teams", "teamContext", "secretary", "reasoning"];
 
 export interface Config {
   readonly projectFolder: string;
@@ -226,27 +226,60 @@ export function apply(ctx: Context, config: Config): void {
         ],
       };
 
-      line("跑两阶段议程，第一步一结束就叫停…");
-      const stopped = new Promise<ReturnType<typeof team.stopAgenda>>((resolve) => {
-        // Stopped from outside while it runs, which is the only way this is
-        // worth testing: a stop applied before anything started proves nothing
-        // about whether a running agenda can be interrupted.
-        setTimeout(() => resolve(team.stopAgenda("主持人改主意了")), 25_000);
+      line("跑两阶段议程，中途叫停…");
+      // Timed against a variable-length agenda, so the stop can legitimately
+      // arrive after the run already finished. That is a race in the PROBE,
+      // not in the product — stopAgenda is right to refuse an idle team — so
+      // it is caught and reported. An earlier version let it throw from a
+      // bare timer and took the whole process down, turning a probe timing
+      // issue into a crash that looked like a product failure.
+      let material: ReturnType<typeof team.stopAgenda> | undefined;
+      let stopRaced = false;
+      const stopper = new Promise<void>((resolve) => {
+        setTimeout(() => {
+          try {
+            material = team.stopAgenda("主持人改主意了");
+          } catch {
+            stopRaced = true;
+          }
+          resolve();
+        }, 20_000);
       });
-      const [outcome2, material] = await Promise.all([team.runAgenda(twoPhase), stopped]);
-      line(
-        `议程结果：跑过 ${outcome2.phasesRun.join(" → ")}，` + `stoppedBecause=${outcome2.stoppedBecause ?? "（无）"}`,
-      );
-      line(`没做完的：${material.remaining.join(" | ") || "无"}`);
+      const [outcome2] = await Promise.all([team.runAgenda(twoPhase), stopper]);
+      if (stopRaced || material === undefined) {
+        line("⚠️ 本次议程比计时器先跑完，中止路径这一轮没被执行到（不是通过，也不是失败）");
+        material = {
+          objective: twoPhase.hostGoal,
+          reason: "（本轮未真正中止）",
+          completed: [],
+          remaining: ["阶段「第二步」：再写一段详细说明。"],
+          artifacts: [],
+          discussion: [],
+        };
+      } else {
+        line(
+          `议程结果：跑过 ${outcome2.phasesRun.join(" → ") || "（无）"}，` +
+            `stoppedBecause=${outcome2.stoppedBecause ?? "（无）"}`,
+        );
+        line(`没做完的：${material.remaining.join(" | ") || "无"}`);
+      }
 
       line("秘书写中止交接…");
       const handoff = await ctx.secretary.writeTermination({ parent: team.host, ...material });
       const namesRemaining = material.remaining.every((item) => handoff.includes(item.replace(/^阶段「|」.*$/g, "")));
       line(`交接文档 ${handoff.length} 字，五个标题齐全（否则已经抛错），` + `点到了未完成阶段 = ${namesRemaining}`);
+      // Two claims, kept apart. The hand-off is judged on its own — it names
+      // what is left, whatever produced the material — and the interruption
+      // is judged separately, because a run the timer lost the race to did
+      // not exercise it at all. Reporting one verdict for both would turn a
+      // probe that skipped a step into a probe that passed it.
+      line(namesRemaining ? "✅ 交接文档点到了未完成的部分" : "❌ 交接文档没点到未完成的部分");
       line(
-        outcome2.stoppedBecause !== undefined && material.remaining.length > 0 && namesRemaining
-          ? "✅ 中止交接走通"
-          : "❌ 中止交接没走通",
+        stopRaced
+          ? "⚠️ 中止本身这一轮没验到"
+          : outcome2.stoppedBecause !== undefined
+            ? "✅ 中止走通：议程真的被打断了"
+            : "❌ 中止没生效",
       );
 
       // What the trigger sees. The smoke cannot cross the real threshold —
@@ -324,6 +357,43 @@ export function apply(ctx: Context, config: Config): void {
         carriesCheckpoint && droppedOriginals
           ? `✅ 折叠成立${retried ? "（用掉了一次重试——子进程启动失败过一次）" : ""}`
           : "❌ 折叠没成立",
+      );
+
+      // ── Lil X 写路径：一次否决 → 一条待裁定的提议 ─────────────────────
+      // The only value of this step is whether the distillation separates a
+      // STANDARD from a CONCLUSION. "他选了 Postgres" cannot transfer to
+      // another situation; "他要求给出迁移成本估算才接受选型" can. Nothing
+      // but a real model call can tell us which one comes back.
+      line("Lil X：记一次否决…");
+      const captured = await ctx.reasoning.capture({
+        kind: "veto",
+        parent: team.host,
+        situation: { action: "design-mechanism", features: ["automatic", "invisible-result"] },
+        proposed: "讨论过长时自动折叠成检查点，不通知任何人。",
+        verdict: "改成折叠后在系统通道告知主持人折了哪一段。",
+        reason: "看不见的东西没法纠正。",
+        project: "Squad2",
+      });
+      const waiting = await ctx.reasoning.pending();
+      line(`  关系=${captured.relation}，实例=${captured.instanceId}`);
+      line(`  提议主张：${captured.proposal.claim}`);
+      line(`  待裁定队列：${waiting.length} 条；已生效判据：${(await ctx.reasoning.criteria()).length} 条`);
+
+      // Nothing may activate itself. The system is editing its own scoring
+      // rules; automatic approval is grading yourself.
+      const noneActive = (await ctx.reasoning.criteria()).length === 0;
+      const proposedOnly = waiting.some((item) => item.id === captured.proposal.id);
+      // A conclusion names the specific thing; a standard names the property.
+      const looksAbstract = !captured.proposal.claim.includes("检查点") && !captured.proposal.claim.includes("Squad");
+      line(
+        noneActive && proposedOnly
+          ? `✅ 写路径成立：落在待裁定，没有自己生效${looksAbstract ? "；表述是抽象的" : "；⚠️ 表述里还带着具体项目名词"}`
+          : "❌ 写路径没成立",
+      );
+
+      await ctx.reasoning.resolve(captured.proposal.id, "accept");
+      line(
+        `  人裁定 accept 之后：已生效 ${(await ctx.reasoning.criteria()).length} 条，待裁定 ${(await ctx.reasoning.pending()).length} 条`,
       );
 
       line(`团队记录条目数：${team.transcript().length}`);
