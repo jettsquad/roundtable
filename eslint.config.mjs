@@ -42,6 +42,37 @@ export default tseslint.config(
     },
   },
   {
+    // The wall between plugins. Four plugins are planned and they talk to each
+    // other through services on `ctx` — that is the whole architecture. An
+    // import is the one way to reach past that contract into a sibling's
+    // internals, and once one exists the four services degrade into four
+    // directories that happen to import each other.
+    //
+    // `@squad/shared` is the single exception, and the only package allowed
+    // more than one consumer. Deep paths (`@squad/x/src/...`) are already
+    // unresolvable — every package exports "." and nothing else — so this
+    // closes the remaining door, which is also the comfortable one to walk
+    // through by accident.
+    //
+    // shared has its own stricter rule above and is excluded here so this one
+    // does not relax it.
+    files: ["packages/*/**/*.ts"],
+    ignores: ["packages/shared/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@squad/*", "!@squad/shared"],
+              message: "插件之间只通过 ctx 上的服务说话，不互相 import。共用的纯逻辑走 @squad/shared。",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["**/test/**/*.ts"],
     rules: { "@typescript-eslint/no-explicit-any": "off" },
   },
