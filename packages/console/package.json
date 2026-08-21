@@ -5,12 +5,22 @@
   "type": "module",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./client": "./client/client.js",
+    "./package.json": "./package.json"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*"
   },
   "dependencies": {
     "@squad/shared": "*"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
+    }
   }
 }
