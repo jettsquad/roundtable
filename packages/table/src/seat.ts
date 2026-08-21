@@ -1,3 +1,4 @@
+import type { SeatCaps } from "@squad/shared";
 /**
  * seat.ts — a seat's configuration, and how it becomes a subagent request.
  *
@@ -28,6 +29,19 @@ export interface SeatSpec {
   readonly backend: SeatBackend;
   /** Marks the one seat allowed to do judgement work for the host. */
   readonly isSecretary?: boolean;
+  /**
+   * Which connection this seat runs on.
+   *
+   * A reference, not a copy. Copying the endpoint and model into every seat
+   * would mean rotating one gateway touches each of them — and the seat that
+   * was missed fails weeks later for a reason nobody connects to the edit.
+   *
+   * Absent means the host's own CLI login with the backend's default model,
+   * which is what a seat did before connections existed.
+   */
+  readonly connectionId?: string | undefined;
+  /** Spend limits. Which ones can bind depends on the connection's auth mode. */
+  readonly caps?: SeatCaps | undefined;
 }
 
 /** What a seat is asked in one round, before it becomes prompt text. */

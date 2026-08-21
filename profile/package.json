@@ -3,6 +3,7 @@
   "private": true,
   "dependencies": {
     "@deepseek-ai/dsh-subagent-claude-code": "file:/Users/yanwong/.local/share/roundtable/deepseek-harness/packages/subagent/subagent-claude-code",
+    "@squad/connections": "file:/Volumes/Jett/projects/Squad2/packages/connections",
     "@squad/console": "file:/Volumes/Jett/projects/Squad2/packages/console",
     "@squad/context": "file:/Volumes/Jett/projects/Squad2/packages/context",
     "@squad/reasoning": "file:/Volumes/Jett/projects/Squad2/packages/reasoning",

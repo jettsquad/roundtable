@@ -45,6 +45,7 @@ const NEEDED = [
   "dsh-commands",
   "dsh-subprocess",
   "dsh-host-webserver",
+  "dsh-credentials",
 ];
 
 /**

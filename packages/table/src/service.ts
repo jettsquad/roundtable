@@ -25,6 +25,8 @@ import { dirname, join } from "node:path";
 import {
   EMPTY_TOTALS,
   SEAT_PROVIDER,
+  capExceeded,
+  providerNameFor,
   addUsage,
   resolveArtifactPath,
   stripReasoning,
@@ -248,7 +250,7 @@ const PROVIDER_BY_BACKEND: Record<SeatSpec["backend"], string> = {
 };
 
 export class TeamsService extends Service {
-  static readonly inject = ["agents", "subagents"];
+  static readonly inject = ["agents", "subagents", "seatConnections"];
 
   private readonly teams = new Map<string, TeamRecord>();
   private assembler: TeamAssembler | undefined;
@@ -295,6 +297,8 @@ export class TeamsService extends Service {
       running: undefined,
       artifacts: [],
       usage: EMPTY_TOTALS,
+      perSeat: new Map(),
+      authModes: new Map(),
       seats: [...input.seats],
       speaking: new Map(),
       disposed: false,
@@ -387,6 +391,7 @@ export class TeamsService extends Service {
     // `contextMode: independent` means — every seat sees the discussion as it
     // stood when the round opened, not as the seats ahead of it left it.
     // (Cumulative mode will need this taken per seat, mid-loop, instead.)
+    this.refreshAuthModes(record);
     const windows = new Map<string, WindowAttempt>();
     for (const seat of seats) {
       windows.set(seat.seatId, await this.contextFor(record.teamId, seat.seatId));
@@ -462,6 +467,7 @@ export class TeamsService extends Service {
       },
     };
     record.running = running;
+    this.refreshAuthModes(record);
     record.roundsInFlight += 1;
     try {
       for (const [phaseIndex, phase] of agenda.phases.entries()) {
@@ -669,6 +675,37 @@ export class TeamsService extends Service {
     }
   }
 
+  /**
+   * Note each seat's auth mode before the round starts.
+   *
+   * Read once here rather than per turn: which caps can bind is decided by
+   * it, and that decision sits on the path a turn takes — a lookup there
+   * would put the connection library between a person's instruction and the
+   * seat answering it.
+   *
+   * A seat naming no connection runs on the host's own CLI login, which is a
+   * subscription: it bills nothing, so cost ceilings do not apply to it.
+   */
+  private refreshAuthModes(record: TeamRecord): void {
+    for (const seat of record.seats) {
+      const connectionId = (seat.connectionId ?? "").trim();
+      const connection = connectionId === "" ? undefined : this.ctx.seatConnections.get(connectionId);
+      record.authModes.set(seat.seatId, connection?.authMode ?? "subscription");
+    }
+  }
+
+  /**
+   * Which provider serves this seat.
+   *
+   * A seat naming a connection goes to that connection's provider; one that
+   * names none goes to the default, which injects nothing and uses the host's
+   * own login.
+   */
+  private providerFor(seat: SeatSpec): string {
+    const connectionId = (seat.connectionId ?? "").trim();
+    return connectionId === "" ? PROVIDER_BY_BACKEND[seat.backend] : providerNameFor(connectionId);
+  }
+
   private async runSeat(
     record: TeamRecord,
     host: Agent,
@@ -677,7 +714,7 @@ export class TeamsService extends Service {
     window: WindowAttempt,
     signal?: AbortSignal,
   ): Promise<SeatReply> {
-    const provider = PROVIDER_BY_BACKEND[seat.backend];
+    const provider = this.providerFor(seat);
     try {
       // Rethrown inside the try, so a broken assembler becomes a visible
       // failed seat instead of a silently empty window. A seat handed nothing
@@ -688,6 +725,21 @@ export class TeamsService extends Service {
       // Marked before the child starts and cleared in `finally`, so a seat
       // that throws does not stay "speaking" forever — a stuck indicator is
       // worse than none, because it is a claim.
+      // Checked BEFORE the child starts. Checking afterwards would report a
+      // limit as reached by the very turn that spent past it — which is the
+      // one turn a limit exists to prevent.
+      const reached = capReached(record, seat);
+      if (reached !== undefined) {
+        const text = `⚠️ ${seat.displayName} ${reached}`;
+        recordSpoken(host, "系统", text);
+        return {
+          seatId: seat.seatId,
+          displayName: seat.displayName,
+          text,
+          failed: true,
+          contextLines: 0,
+        };
+      }
       record.speaking.set(seat.seatId, instruction);
       const lines = window.lines ?? [];
       const prompt = composeSeatPrompt({ seat, instruction, context: lines });
@@ -713,6 +765,7 @@ export class TeamsService extends Service {
       // a turn that burned tokens and then errored still cost what it cost.
       const usage = usageOfResult(result);
       record.usage = addUsage(record.usage, usage);
+      record.perSeat.set(seat.seatId, addUsage(record.perSeat.get(seat.seatId) ?? EMPTY_TOTALS, usage));
       return {
         seatId: seat.seatId,
         displayName: seat.displayName,
@@ -815,6 +868,16 @@ interface TeamRecord {
   readonly artifacts: string[];
   /** Everything this team's seats have consumed. */
   usage: UsageTotals;
+  /** seatId → what that seat alone has consumed. Caps bind per seat. */
+  readonly perSeat: Map<string, UsageTotals>;
+  /**
+   * seatId → the auth mode of its connection.
+   *
+   * Cached at round start rather than looked up mid-turn: the connection
+   * library is async and this decision sits on the path that must not wait.
+   * A seat with no connection is a subscription — the host's own login.
+   */
+  readonly authModes: Map<string, "subscription" | "api-key">;
   /**
    * The roster, mutable.
    *
@@ -921,6 +984,33 @@ function transcriptOf(host: Agent): readonly TranscriptEvent[] {
       turnId: typeof data?.id === "string" ? data.id : `seq-${event.seq}`,
     };
   });
+}
+
+/**
+ * Whether this seat has reached a limit it was given.
+ *
+ * Which limits can bind depends on the connection's auth mode: a subscription
+ * seat bills nothing, so only turns and tokens constrain it. Enforcing a cost
+ * ceiling there would stop a seat for a reason that cannot be true.
+ *
+ * The mode is read from the seat's connection when it names one; a seat with
+ * no connection runs on the host's own login, which is a subscription.
+ */
+function capReached(record: TeamRecord, seat: SeatSpec): string | undefined {
+  const caps = seat.caps;
+  if (caps === undefined) return undefined;
+  const used = record.perSeat.get(seat.seatId) ?? EMPTY_TOTALS;
+  return capExceeded(
+    caps,
+    {
+      turns: used.turns,
+      // Cache tokens count: they are billed, and a limit that ignored them
+      // would let a seat spend six figures while reporting four.
+      tokens: used.inputTokens + used.outputTokens + used.cacheReadTokens + used.cacheCreationTokens,
+      ...(used.costUsd === undefined ? {} : { costUsd: used.costUsd }),
+    },
+    record.authModes.get(seat.seatId) ?? "subscription",
+  );
 }
 
 const textOf = (blocks: readonly ContentBlock[]): string =>

@@ -19,3 +19,13 @@ export const SEAT_PROVIDER = "claude-code-fenced";
 
 /** The stock provider, kept reachable for comparison and for fallback. */
 export const STOCK_SEAT_PROVIDER = "claude-code";
+
+/**
+ * The provider name serving one connection.
+ *
+ * The seam carries no per-request environment, so credentials attach at
+ * registration — and the only thing a request carries that can select among
+ * registrations is the provider name. Encoding the connection into it is what
+ * lets one seat use a gateway while another uses the host's login.
+ */
+export const providerNameFor = (connectionId: string): string => `${SEAT_PROVIDER}/${connectionId}`;

@@ -1,0 +1,10 @@
+{
+  "name": "@squad/conn-probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts", "./package.json": "./package.json" },
+  "peerDependencies": { "@deepseek-ai/cordis": "*" },
+  "dependencies": { "@squad/shared": "*" }
+}

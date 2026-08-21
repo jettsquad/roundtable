@@ -11,7 +11,8 @@
     "dsh-storage-domain",
     "dsh-commands",
     "dsh-subprocess",
-    "dsh-host-webserver"
+    "dsh-host-webserver",
+    "dsh-credentials"
   ],
-  "linkedAt": "2026-08-21T13:58:20.268Z"
+  "linkedAt": "2026-08-21T15:00:16.743Z"
 }

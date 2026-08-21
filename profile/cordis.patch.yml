@@ -24,6 +24,12 @@
     - id: subagent-claude-code
       name: '@deepseek-ai/dsh-subagent-claude-code'
 
+    # 连接库：席位跑在什么上面。用户级，与团队分开——同一个网关服务所有团队。
+    # 它从不持有密钥：配置里只有凭据的名字，值在 ctx.credentials 那边按次解析。
+    # 必须排在席位后端之前：后端要为每个连接注册一个 provider 实例。
+    - id: squad-connections
+      name: '@squad/connections'
+
     # 带工具围栏的席位后端，注册名 claude-code-fenced。
     # 与上面那个并存而不是替换它——选哪个是组合的决定，写在这里看得见。
     #

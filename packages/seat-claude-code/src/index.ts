@@ -33,13 +33,14 @@ import {
 // Imported for the `Context.subprocess` declaration merging it carries: an
 // augmentation applies only where its module is in the compilation.
 import type { SubprocessHandle } from "@deepseek-ai/dsh-subprocess";
+import { providerNameFor } from "@squad/shared";
 import { DELEGATION_TOOLS, buildArgv, type PermissionMode } from "./argv.ts";
 import { readStream } from "./stream.ts";
 
 export const name = "squad-seat-claude-code";
 
 /** `subprocess` to spawn, `subagents` to register with. */
-export const inject = ["subagents", "subprocess"];
+export const inject = ["subagents", "subprocess", "seatConnections"];
 
 export interface Config {
   /** Registry name. Distinct from the stock `claude-code` so both can coexist. */
@@ -75,9 +76,11 @@ export function apply(ctx: Context, config?: Config): void {
 }
 
 export class FencedClaudeCodeSeats extends Service {
-  static readonly inject = ["subagents", "subprocess"];
+  static readonly inject = ["subagents", "subprocess", "seatConnections"];
 
   private readonly config: Config;
+  /** connectionId → its provider registration disposer. */
+  private readonly perConnection = new Map<string, () => void>();
 
   constructor(ctx: Context, config?: Config) {
     super(ctx, "squadSeatClaudeCode");
@@ -91,14 +94,53 @@ export class FencedClaudeCodeSeats extends Service {
   }
 
   async [Service.init](): Promise<void> {
+    // The unconfigured default: the host's own CLI login, nothing injected.
     this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider()));
+    this.syncConnections();
+    this.ctx.effect(() => this.ctx.seatConnections.watch(() => this.syncConnections()));
+    this.ctx.effect(() => () => {
+      for (const dispose of this.perConnection.values()) dispose();
+      this.perConnection.clear();
+    });
   }
 
-  private provider(): SubagentProvider {
+  /**
+   * Keep one provider registration per connection.
+   *
+   * The seam has no per-request environment, so a seat's credentials cannot
+   * ride along with its turn — the registration is the only place they can
+   * attach. Naming each provider after its connection turns "which
+   * credentials" into "which provider", which the request already carries.
+   *
+   * The environment itself is still resolved per START, not baked in here: a
+   * rotated key has to reach the next turn, not the next restart.
+   */
+  private syncConnections(): void {
+    const wanted = new Set<string>();
+    for (const connection of this.ctx.seatConnections.list()) {
+      if (connection.backend !== "claude-code") continue;
+      wanted.add(connection.connectionId);
+      if (this.perConnection.has(connection.connectionId)) continue;
+      this.perConnection.set(
+        connection.connectionId,
+        this.ctx.subagents.registerProvider(this.provider(connection.connectionId)),
+      );
+    }
+    for (const [connectionId, dispose] of [...this.perConnection]) {
+      if (wanted.has(connectionId)) continue;
+      // Withdrawn rather than left behind: a provider for a deleted
+      // connection would still start seats, using an environment nobody can
+      // see any more.
+      dispose();
+      this.perConnection.delete(connectionId);
+    }
+  }
+
+  private provider(connectionId?: string): SubagentProvider {
     const config = this.config;
     const ctx = this.ctx;
     return {
-      name: config.provider ?? DEFAULTS.provider,
+      name: connectionId === undefined ? (config.provider ?? DEFAULTS.provider) : providerNameFor(connectionId),
       // Declared honestly: this provider really does apply a tool filter and
       // really does append a persona. The service checks these before
       // dispatching, so declaring one we did not implement would turn a
@@ -148,7 +190,11 @@ export class FencedClaudeCodeSeats extends Service {
           },
           graceMs: config.disposeGraceMs ?? DEFAULTS.disposeGraceMs,
           signal: controller.signal,
-          env: config.env ?? {},
+          // Resolved per start, so a rotated key reaches this turn.
+          env: {
+            ...(config.env ?? {}),
+            ...(connectionId === undefined ? {} : await ctx.seatConnections.envFor(connectionId)),
+          },
         });
 
         let output = "";

@@ -18,3 +18,4 @@ export * from "./agenda.ts";
 export * from "./situation.ts";
 export * from "./seat-provider.ts";
 export * from "./seat-usage.ts";
+export * from "./connection.ts";
