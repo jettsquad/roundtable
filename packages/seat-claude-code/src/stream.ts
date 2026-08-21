@@ -11,13 +11,26 @@
  * Every fallback is a real case seen in production, which is why they are
  * ordered rather than collapsed into "take whatever is there".
  */
+import type { SeatUsage } from "@squad/shared";
 
+export type { SeatUsage };
+
+// The shape lives in @squad/shared: the provider measures it and the table
+// records it, and those two may not import each other.
 export interface StreamOutcome {
   readonly text: string;
   /** The CLI reported an error result, or the process failed. */
   readonly failed: boolean;
   /** Present when the envelope carried one. */
   readonly subtype?: string | undefined;
+  /**
+   * What the run consumed, when the envelope carried accounting.
+   *
+   * Absent rather than zeroed when unknown: a turn that reported nothing and a
+   * turn that genuinely cost nothing are different facts, and a total built
+   * from zeroes reads as "cheap" instead of "unmeasured".
+   */
+  readonly usage?: SeatUsage | undefined;
 }
 
 interface StreamEvent {
@@ -26,6 +39,34 @@ interface StreamEvent {
   readonly is_error?: unknown;
   readonly result?: unknown;
   readonly message?: { readonly content?: unknown } | undefined;
+  readonly usage?: unknown;
+  readonly total_cost_usd?: unknown;
+  readonly duration_ms?: unknown;
+}
+
+const count = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+
+/**
+ * Read the accounting off a result envelope.
+ *
+ * Field names verified against a live run rather than carried over from 1.x,
+ * whose parser was written for an older CLI: the envelope now also holds
+ * `modelUsage`, `iterations`, cache-creation breakdowns and timing that were
+ * not there before. Only the four token counters plus cost and duration are
+ * taken — the rest is real but not ours to interpret.
+ */
+function usageOf(envelope: StreamEvent): SeatUsage | undefined {
+  const usage = envelope.usage;
+  if (typeof usage !== "object" || usage === null) return undefined;
+  const record = usage as Record<string, unknown>;
+  return {
+    inputTokens: count(record["input_tokens"]),
+    outputTokens: count(record["output_tokens"]),
+    cacheReadTokens: count(record["cache_read_input_tokens"]),
+    cacheCreationTokens: count(record["cache_creation_input_tokens"]),
+    ...(typeof envelope.total_cost_usd === "number" ? { costUsd: envelope.total_cost_usd } : {}),
+    ...(typeof envelope.duration_ms === "number" ? { durationMs: envelope.duration_ms } : {}),
+  };
 }
 
 const parseLines = (output: string): StreamEvent[] => {
@@ -78,9 +119,13 @@ export function readStream(output: string): StreamOutcome {
 
   const failed = envelope.is_error === true || envelope.subtype !== "success";
   const fromEnvelope = typeof envelope.result === "string" ? envelope.result.trim() : "";
+  const usage = usageOf(envelope);
   return {
     text: streamed !== "" ? streamed : fromEnvelope,
     failed,
     ...(typeof envelope.subtype === "string" ? { subtype: envelope.subtype } : {}),
+    // Carried even on a failed run: a turn that burned tokens and then errored
+    // still cost what it cost, and dropping it would make failures look free.
+    ...(usage === undefined ? {} : { usage }),
   };
 }

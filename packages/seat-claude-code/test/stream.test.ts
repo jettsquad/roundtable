@@ -53,3 +53,66 @@ describe("readStream", () => {
     expect(readStream("{not json\n" + assistant("还在") + result()).text).toBe("还在");
   });
 });
+
+describe("usage", () => {
+  const envelope = (over: Record<string, unknown> = {}) =>
+    line({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: "ok",
+      usage: {
+        input_tokens: 2,
+        output_tokens: 4,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 83625,
+      },
+      total_cost_usd: 0.501816,
+      duration_ms: 5888,
+      ...over,
+    });
+
+  it("reads the four counters, cost and duration", () => {
+    // Field names taken from a live run, not from 1.x's parser — that one was
+    // written for an older CLI whose envelope had none of modelUsage,
+    // iterations or the cache-creation breakdown.
+    expect(readStream(envelope()).usage).toEqual({
+      inputTokens: 2,
+      outputTokens: 4,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 83625,
+      costUsd: 0.501816,
+      durationMs: 5888,
+    });
+  });
+
+  it("keeps cache tokens apart from input", () => {
+    // The measurement this separation exists for: a turn whose entire prompt
+    // was 「只回答 OK」 billed 2 input tokens and 83,625 of cache creation —
+    // the host's own global CLAUDE.md, inherited by every seat. One summed
+    // "input" number would bury that.
+    const usage = readStream(envelope()).usage;
+    expect(usage?.inputTokens).toBe(2);
+    expect(usage?.cacheCreationTokens).toBeGreaterThan(80_000);
+  });
+
+  it("reports usage for a failed run too", () => {
+    // A turn that burned tokens and then errored still cost what it cost.
+    // Dropping it would make failures look free.
+    const outcome = readStream(envelope({ is_error: true, subtype: "error_during_execution" }));
+    expect(outcome.failed).toBe(true);
+    expect(outcome.usage?.cacheCreationTokens).toBe(83625);
+  });
+
+  it("leaves usage absent when the envelope carried none", () => {
+    // Absent, not zeroed: a turn that reported nothing and a turn that cost
+    // nothing are different facts, and a total built from zeroes reads as
+    // "cheap" rather than "unmeasured".
+    expect(readStream(line({ type: "result", subtype: "success", result: "ok" })).usage).toBeUndefined();
+  });
+
+  it("treats a missing counter as zero rather than failing the whole read", () => {
+    const partial = readStream(envelope({ usage: { input_tokens: 5 } }));
+    expect(partial.usage).toMatchObject({ inputTokens: 5, outputTokens: 0, cacheReadTokens: 0 });
+  });
+});

@@ -170,7 +170,12 @@ export class FencedClaudeCodeSeats extends Service {
             return {
               output: parsed.text === "" ? [] : [{ type: "text", text: parsed.text }],
               stopReason: failed ? "error" : "completed",
-            };
+              // `SubagentResult` declares no usage field, and dsh does not
+              // need one: `observeRun` attaches an observer and returns our
+              // object unchanged, so an extra property survives to the caller.
+              // Verified in the harness source before relying on it.
+              ...(parsed.usage === undefined ? {} : { squadUsage: parsed.usage }),
+            } as SubagentResult;
           } finally {
             idle.stop();
           }

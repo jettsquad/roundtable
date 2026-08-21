@@ -78,6 +78,30 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * One team's consumption, in a line.
+       *
+       * Cache tokens are shown separately rather than summed into input.
+       * Measured here: a turn whose whole prompt was 「只回答 OK」 billed 2
+       * input and 83,625 of cache creation — the host's own global CLAUDE.md,
+       * which every CLI seat inherits. A single "input" figure hides exactly
+       * the number worth acting on.
+       *
+       * "尚未计量" is not "0": a backend that reported nothing and a turn that
+       * cost nothing are different facts, and only one of them is good news.
+       */
+      function usageLine(usage) {
+        if (usage === undefined || usage.turns === 0) return "用量：尚未计量";
+        const parts = [
+          "用量：" + usage.turns + " 轮",
+          "入 " + usage.inputTokens,
+          "出 " + usage.outputTokens,
+          "缓存 " + (usage.cacheCreationTokens + usage.cacheReadTokens),
+        ];
+        if (usage.costUsd !== undefined) parts.push("$" + usage.costUsd.toFixed(4));
+        return parts.join(" · ");
+      }
+
+      /**
        * Read the host's snapshot.
        *
        * Plain fetch, not a Typert Remote: the Remote path generates its
@@ -148,6 +172,8 @@ window.__ModuleLoader__.load({
                           team.seats.map((seat) => seat.displayName + "（" + seat.role + "）").join("、"),
                           h("br", null),
                           "记录 " + team.recorded + " 条 · " + team.projectFolder,
+                          h("br", null),
+                          usageLine(team.usage),
                         ),
                       ),
                     ),

@@ -22,7 +22,17 @@ import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { SEAT_PROVIDER, resolveArtifactPath, stripReasoning, type AgendaSpec } from "@squad/shared";
+import {
+  EMPTY_TOTALS,
+  SEAT_PROVIDER,
+  addUsage,
+  resolveArtifactPath,
+  stripReasoning,
+  usageOfResult,
+  type AgendaSpec,
+  type SeatUsage,
+  type UsageTotals,
+} from "@squad/shared";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
 
@@ -65,6 +75,13 @@ export interface SeatReply {
    * chose to say.
    */
   readonly contextLines: number;
+  /**
+   * What this turn consumed, when the backend reported it.
+   *
+   * Absent rather than zeroed when the backend said nothing: a turn that
+   * reported no accounting and a turn that cost nothing are different facts.
+   */
+  readonly usage?: SeatUsage | undefined;
 }
 
 export interface Team {
@@ -76,6 +93,8 @@ export interface Team {
   readonly hostSessionId: string;
   /** A round is running right now; folding waits for this to clear. */
   readonly busy: boolean;
+  /** Everything this team's seats have consumed so far. */
+  readonly usage: UsageTotals;
   /** The team's checkpoint coefficient, if it set one. */
   readonly checkpointCoefficient?: number | undefined;
   /**
@@ -238,6 +257,7 @@ export class TeamsService extends Service {
       roundsInFlight: 0,
       running: undefined,
       artifacts: [],
+      usage: EMPTY_TOTALS,
       disposed: false,
     };
     this.teams.set(teamId, record);
@@ -265,6 +285,11 @@ export class TeamsService extends Service {
       // round started must not keep reporting the team as idle.
       get busy() {
         return record.roundsInFlight > 0;
+      },
+      // Read through the record, not captured: a view handed out before a
+      // round must not keep reporting the total as it was then.
+      get usage() {
+        return record.usage;
       },
       checkpointCoefficient: record.input.checkpointCoefficient,
       ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
@@ -575,7 +600,18 @@ export class TeamsService extends Service {
       // that member had nothing to say.
       const failed = result.stopReason !== "completed";
       recordSpoken(host, seat.displayName, text);
-      return { seatId: seat.seatId, displayName: seat.displayName, text, failed, contextLines: lines.length };
+      // Counted before the reply is returned, and counted on failures too:
+      // a turn that burned tokens and then errored still cost what it cost.
+      const usage = usageOfResult(result);
+      record.usage = addUsage(record.usage, usage);
+      return {
+        seatId: seat.seatId,
+        displayName: seat.displayName,
+        text,
+        failed,
+        contextLines: lines.length,
+        ...(usage === undefined ? {} : { usage }),
+      };
     } catch (error) {
       // A seat that could not run is reported, never silently skipped: a round
       // that quietly loses a member looks exactly like one where the member had
@@ -664,6 +700,8 @@ interface TeamRecord {
   running: RunningAgenda | undefined;
   /** Project-relative paths this team has written, in order. */
   readonly artifacts: string[];
+  /** Everything this team's seats have consumed. */
+  usage: UsageTotals;
   disposed: boolean;
 }
 

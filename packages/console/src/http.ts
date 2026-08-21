@@ -19,6 +19,7 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
+import type { UsageTotals } from "@squad/shared";
 // Imported for the `Context.webServer` declaration merging it carries; an
 // augmentation applies only where its module is part of the compilation.
 import type {} from "@deepseek-ai/dsh-host-webserver";
@@ -35,6 +36,8 @@ export interface TeamSummary {
   readonly seats: readonly { readonly seatId: string; readonly displayName: string; readonly role: string }[];
   /** Lines of recorded discussion. */
   readonly recorded: number;
+  /** What this team's seats have consumed, when any backend reported it. */
+  readonly usage: UsageTotals;
 }
 
 export interface SquadSnapshot {
@@ -60,6 +63,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
         role: seat.role,
       })),
       recorded: team.transcript().filter((entry) => entry.kind === "user/message" && entry.text !== "").length,
+      usage: team.usage,
     });
   }
   const [active, pending] = await Promise.all([ctx.reasoning.criteria(), ctx.reasoning.pending()]);
