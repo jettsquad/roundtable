@@ -24,6 +24,8 @@ import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { stripReasoning, type AgendaSpec } from "@squad/shared";
 import { decideActivation, type ActivationDecision } from "./activation.ts";
+import { checkAbstractness, type AbstractnessReport } from "./decontextualise.ts";
+import { exportToPool, importAsCandidates, type ExportResult, type PoolEntry } from "./pool.ts";
 import { healthOf, type Health } from "./usage.ts";
 import type { Criterion } from "./criterion.ts";
 import {
@@ -77,6 +79,16 @@ export interface CaptureResult {
    */
   readonly activation: ActivationDecision;
   readonly applied: boolean;
+  /**
+   * Whether the distilled claim is actually an abstract.
+   *
+   * §7.4's test, run where it pays: a claim that stops holding once its
+   * context is stripped was never an abstract, it is an instance that got
+   * mistaken for one. Reported rather than enforced — the human still rules,
+   * and the useful response is a rewrite that finds the principle underneath,
+   * which no check can do for them.
+   */
+  readonly abstractness: AbstractnessReport;
 }
 
 export type Verdict = "accept" | "reject";
@@ -177,6 +189,10 @@ export class ReasoningService extends Service {
     // Only a reinforcement is ever eligible. Everything else edits what the
     // library claims, and a system approving its own edits to its scoring
     // rules is grading itself.
+    const abstractness = checkAbstractness(`${proposal.claim}\n${proposal.boundary ?? ""}`, {
+      names: signal.project === undefined ? [] : [signal.project],
+    });
+
     const usage = await this.store.usage(proposal.id);
     const activation =
       distilled.relation === "reinforce"
@@ -194,10 +210,10 @@ export class ReasoningService extends Service {
 
     if (activation.auto) {
       await this.store.putCriterion(proposal);
-      return { instanceId, proposal, relation: distilled.relation, activation, applied: true };
+      return { instanceId, proposal, relation: distilled.relation, activation, applied: true, abstractness };
     }
     await this.store.putProposal(proposal);
-    return { instanceId, proposal, relation: distilled.relation, activation, applied: false };
+    return { instanceId, proposal, relation: distilled.relation, activation, applied: false, abstractness };
   }
 
   /** Proposals waiting on the human. */
@@ -231,6 +247,37 @@ export class ReasoningService extends Service {
   /** Everything currently active. */
   async criteria(): Promise<readonly Criterion[]> {
     return this.store.criteria();
+  }
+
+  /**
+   * Prepare named criteria for the shared pool.
+   *
+   * Named, never "everything active": opting in one at a time is the whole
+   * defence against averaging, and a method that took no argument would make
+   * opting in the default.
+   */
+  async exportForPool(ids: readonly string[], names: readonly string[] = []): Promise<ExportResult> {
+    const all = await this.store.criteria();
+    const chosen = ids.map((id) => {
+      const found = all.find((criterion) => criterion.id === id);
+      if (found === undefined) throw new Error(`要导出的判据 ${id} 不在库里。`);
+      return found;
+    });
+    return exportToPool(chosen, { names });
+  }
+
+  /**
+   * Take arriving abstracts in as CANDIDATES.
+   *
+   * They land in `proposals/`, the same queue a locally distilled proposal
+   * waits in. There is no code path from an import to an active criterion —
+   * which is what makes "not a sync, not a replacement" a property of the
+   * system rather than a promise in a document.
+   */
+  async importFromPool(entries: readonly PoolEntry[]): Promise<readonly Criterion[]> {
+    const candidates = importAsCandidates(entries);
+    for (const candidate of candidates) await this.store.putProposal(candidate);
+    return candidates;
   }
 
   /**

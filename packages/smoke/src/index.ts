@@ -404,6 +404,12 @@ export function apply(ctx: Context, config: Config): void {
       line(
         `  自动生效？${captured.applied ? "是" : "否"}（${captured.activation.reason}：${captured.activation.detail}）`,
       );
+      line(
+        `  去情景化检查：是抽象=${captured.abstractness.abstract}` +
+          (captured.abstractness.markers.length === 0
+            ? ""
+            : `，还绑着 ${captured.abstractness.markers.map((m) => m.text).join("、")}`),
+      );
       line(`  提议主张：${captured.proposal.claim}`);
       line(`  待裁定队列：${waiting.length} 条；已生效判据：${(await ctx.reasoning.criteria()).length} 条`);
 
@@ -462,6 +468,42 @@ export function apply(ctx: Context, config: Config): void {
       // judged, never how a participant thinks — and that has to be true of
       // the topology, not of anyone's discipline. So: assert the claim is
       // nowhere in what a seat would actually be handed.
+      // ── §7 共享池：导出只带抽象，导入只当候选 ──────────────────────────
+      await step("共享池", async () => {
+        const active = await ctx.reasoning.criteria();
+        const exported = await ctx.reasoning.exportForPool(
+          active.map((c) => c.id),
+          ["Squad2"],
+        );
+        const carriesInstances = JSON.stringify(exported.entries).includes("i-");
+        line(
+          `  导出 ${exported.entries.length} 条、拒绝 ${exported.refused.length} 条；导出内容里带实例=${carriesInstances}`,
+        );
+        for (const refusal of exported.refused) {
+          line(`    拒绝 ${refusal.criterionId}：还绑着 ${refusal.markers.map((m) => m.text).join("、")}`);
+        }
+
+        const before = (await ctx.reasoning.criteria()).length;
+        const arrived = await ctx.reasoning.importFromPool([
+          {
+            trigger: { action: ["adjudicate"], features: [] },
+            claim: "分歧不许压成共识：有几种立场就列几种。",
+            support: { users: 9, instances: 31 },
+          },
+        ]);
+        const afterActive = (await ctx.reasoning.criteria()).length;
+        const waiting = await ctx.reasoning.pending();
+        const landedAsCandidate = afterActive === before && waiting.some((item) => item.id === arrived[0]?.id);
+        line(
+          `  导入 1 条：已生效 ${before}→${afterActive}，待裁定 ${waiting.length} 条，带进来的证据 ${arrived[0]?.evidence.length ?? -1} 条`,
+        );
+        line(
+          !carriesInstances && landedAsCandidate && (arrived[0]?.evidence.length ?? -1) === 0
+            ? "✅ 共享池成立：导出不带实例，导入只是候选、不带别人的证据"
+            : "❌ 共享池边界没守住",
+        );
+      });
+
       // ── S6 三个刻度 ──────────────────────────────────────────────────
       // Deliveries have actually happened by now, so the counters have real
       // numbers rather than defaults.

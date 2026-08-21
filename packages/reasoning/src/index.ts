@@ -48,6 +48,12 @@ export {
   triggerMatches,
 } from "./deliver.ts";
 
+export { checkAbstractness, findContextMarkers } from "./decontextualise.ts";
+export type { AbstractnessReport, ContextMarker, MarkerKind, MarkerOptions } from "./decontextualise.ts";
+
+export { exportToPool, importAsCandidates, mergeIntoPool } from "./pool.ts";
+export type { ExportRefusal, ExportResult, PoolEntry } from "./pool.ts";
+
 export { buildDistilPrompt, parseDistillation } from "./distil.ts";
 export type { DistilInput, Distillation, Relation } from "./distil.ts";
 
