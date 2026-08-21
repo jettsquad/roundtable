@@ -9,6 +9,7 @@
     "postinstall": "node scripts/link-dsh.mjs",
     "link-dsh": "node scripts/link-dsh.mjs",
     "install-profile": "node scripts/install-profile.mjs",
+    "ui": "node scripts/ui.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "lint": "eslint . && prettier --check \"packages/**/*.ts\" \"scripts/*.mjs\"",
