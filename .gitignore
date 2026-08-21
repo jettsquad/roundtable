@@ -4,3 +4,9 @@ lib/
 *.tsbuildinfo
 package-lock.json
 .DS_Store
+
+# Browser bundles: build output from packages/*/src/client/. Not committed,
+# because a checked-in artifact next to its source drifts from it silently —
+# you edit the tsx, nothing changes, and the file that is actually loaded
+# still looks plausible.
+packages/*/client/

@@ -3,12 +3,15 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/node_modules/**", "**/dist/**", "**/lib/**"] },
+  // `packages/*/client/` is build OUTPUT now, not source. Linting a minified
+  // bundle reports nothing useful and hides the fact that its source is
+  // `src/client/`.
+  { ignores: ["**/node_modules/**", "**/dist/**", "**/lib/**", "packages/*/client/**"] },
   js.configs.recommended,
   { languageOptions: { globals: globals.node } },
   ...tseslint.configs.recommended,
   {
-    files: ["**/*.ts"],
+    files: ["**/*.ts", "**/*.tsx"],
     rules: {
       // A silent drop is this project's recurring bug family: an unused
       // binding is usually a branch that stopped doing what it says.
@@ -81,11 +84,16 @@ export default tseslint.config(
   {
     // Client bundles run in a browser, not in Node. Their globals are
     // different, and so is what they may import: only the platform module
-    // table (react, ui-slots, cordis, …) is resolvable at runtime, which is
-    // why these files pull everything else through the injected `require`
-    // rather than importing it.
-    files: ["packages/*/client/**/*.{js,ts,tsx}"],
+    // table (react, ui-slots, cordis, …) is resolvable at runtime. Everything
+    // else is bundled in, which the build's purity gate enforces — a
+    // cross-plugin value import fails there rather than in the page.
+    files: ["packages/*/src/client/**/*.{ts,tsx}"],
     languageOptions: { globals: globals.browser },
+    rules: {
+      // A plugin's console.log lands in the user's devtools alongside the
+      // shell's own output, with nothing saying which plugin wrote it.
+      "no-console": ["error", { allow: ["error", "warn"] }],
+    },
   },
   {
     files: ["**/test/**/*.ts"],

@@ -31,7 +31,15 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
-import type { ConnectionView, SeatCaps, SeatConnection, UsageTotals } from "@squad/shared";
+
+import type {
+  ConnectionRequest,
+  CreateTeamRequest,
+  SeatPatch,
+  SeatRequest,
+  SquadSnapshot,
+  TeamSummary,
+} from "./wire.ts";
 import { parseNewTeam } from "./parse.ts";
 // Imported for the `Context.webServer` declaration merging it carries; an
 // augmentation applies only where its module is part of the compilation.
@@ -41,37 +49,6 @@ import type {} from "@deepseek-ai/dsh-host-webserver";
 export const SQUAD_API_PREFIX = "/api/squad";
 
 /** One team, flattened for the wire. */
-export interface TeamSummary {
-  readonly teamId: string;
-  readonly displayName: string;
-  readonly projectFolder: string;
-  readonly busy: boolean;
-  readonly seats: readonly {
-    readonly seatId: string;
-    readonly displayName: string;
-    readonly role: string;
-    readonly isSecretary: boolean;
-    /** Speaking right now. */
-    readonly running: boolean;
-    readonly connectionId?: string | undefined;
-    readonly caps?: SeatCaps | undefined;
-  }[];
-  /** Where a running agenda has got to, when one is running. */
-  readonly progress?: { readonly phase: string; readonly phaseIndex: number; readonly phaseCount: number } | undefined;
-  /** Lines of recorded discussion. */
-  readonly recorded: number;
-  /** What this team's seats have consumed, when any backend reported it. */
-  readonly usage: UsageTotals;
-}
-
-export interface SquadSnapshot {
-  readonly teams: readonly TeamSummary[];
-  /** Lil X: how many criteria are live, and how many wait on a human. */
-  readonly criteria: { readonly active: number; readonly pending: number };
-  /** Seat connections, with credential STATUS and never a credential value. */
-  readonly connections: readonly ConnectionView[];
-}
-
 /** Build the snapshot the panel renders. Pure read; nothing here starts anything. */
 export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   const teams: TeamSummary[] = [];
@@ -116,14 +93,6 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   return { teams, criteria: { active: active.length, pending: pending.length }, connections };
 }
 
-/** What the panel posts to create a team. */
-export interface CreateTeamRequest {
-  readonly displayName: string;
-  readonly projectFolder: string;
-  /** Same one-line grammar the `/squad-new` command takes. */
-  readonly roster: string;
-}
-
 /**
  * Create a team from the panel.
  *
@@ -153,19 +122,6 @@ export async function createTeamFrom(ctx: Context, raw: string): Promise<string>
     })),
   });
   return team.teamId;
-}
-
-/** Adding or removing one seat. */
-export interface SeatRequest {
-  readonly teamId: string;
-  /** Adding: the new seat. */
-  readonly displayName?: string;
-  readonly role?: string;
-  readonly isSecretary?: boolean;
-  /** Removing: which seat. */
-  readonly seatId?: string;
-  /** Removing the secretary takes a deliberate confirmation. */
-  readonly confirmSecretary?: boolean;
 }
 
 const teamOf = (ctx: Context, teamId: string) => {
@@ -200,18 +156,6 @@ export function removeSeatFrom(ctx: Context, request: SeatRequest): void {
   teamOf(ctx, request.teamId).removeSeat(request.seatId ?? "", {
     ...(request.confirmSecretary === undefined ? {} : { confirmSecretary: request.confirmSecretary }),
   });
-}
-
-/** Saving a connection. The credential value, when present, is stored and dropped. */
-export type ConnectionRequest = SeatConnection & { readonly credential?: string };
-
-/** Changing an existing seat's connection or caps. */
-export interface SeatPatch {
-  readonly teamId: string;
-  readonly seatId: string;
-  /** Empty string clears it back to the host's own login. */
-  readonly connectionId?: string;
-  readonly caps?: SeatCaps;
 }
 
 /**
@@ -348,3 +292,5 @@ async function readJson<T>(req: IncomingMessage): Promise<T> {
   if (typeof parsed !== "object" || parsed === null) throw new Error("请求体不是 JSON 对象。");
   return parsed as T;
 }
+
+export type { ConnectionRequest, CreateTeamRequest, SeatPatch, SeatRequest, SquadSnapshot, TeamSummary };

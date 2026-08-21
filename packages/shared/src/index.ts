@@ -10,6 +10,14 @@
  *
  * Nothing here may import a plugin or a framework. Anything that needs a
  * service belongs in the plugin that owns that service.
+ *
+ * `package.json` declares `"sideEffects": false`, and that declaration is
+ * load-bearing rather than decorative: the browser bundle imports one
+ * function from here, and without it the whole barrel comes along —
+ * `agenda.ts` pulls zod, and the panel's bundle went from 12 KB to 333 KB.
+ * The claim is true by construction (this package is pure functions, which
+ * the lint wall enforces), so anything added here that runs at import time
+ * breaks it silently.
  */
 export * from "./team-checkpoint-threshold.ts";
 export * from "./team-artifact.ts";

@@ -46,6 +46,19 @@ const NEEDED = [
   "dsh-subprocess",
   "dsh-host-webserver",
   "dsh-credentials",
+  // Browser half. Linked for TYPES, not for bundling: `ctx.slots` on the
+  // client Context is a declaration merge that only exists if this package is
+  // resolvable, and the bundle keeps it external because it is a platform
+  // module the shell already holds.
+  "dsh-client-ui-slots",
+  "dsh-client-runtime",
+  // The two slot OWNERS. A slot name is only a legal argument if the package
+  // that declares it has merged it into `SlotMap`; without these,
+  // `ctx.slots.register({ name: "shell.overlay" })` does not type-check —
+  // which is the check the hand-written bundle never got, because nothing
+  // type-checked it at all.
+  "dsh-client-ui-sidebar",
+  "dsh-client-ui-layout",
 ];
 
 /**
