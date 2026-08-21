@@ -8,7 +8,7 @@ export function apply(ctx: Context): void {
   ctx.plugin(TeamsService);
 }
 
-export { TeamsService } from "./service.ts";
+export { TeamsService, spokenMessage } from "./service.ts";
 export type {
   AgendaOutcome,
   AgendaTermination,

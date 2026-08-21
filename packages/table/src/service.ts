@@ -691,19 +691,45 @@ interface RunningAgenda {
 function recordSpoken(host: Agent, speaker: string, text: string, turnId?: string): void {
   host.session.append(
     "user/message",
-    {
-      message: {
-        // A supplied id is a restored one; see `Team.recordSpoken`.
-        id: turnId ?? `squad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-        source: { kind: "host" },
-        content: [{ type: "text", text: `【${speaker}】${text}` }],
-      },
-    } as never,
+    spokenMessage(speaker, text, turnId) as never,
     // `SurfaceOp` is the literal 'append', not an object. Every
     // surface-eligible event must declare how it joins the ordered surface
     // that model history is derived from.
     { surfaceOp: "append" } as never,
   );
+}
+
+/**
+ * One line of the team record, in the shape storage requires.
+ *
+ * Exported so a test can hand it to dsh's own `adoptSessionEvent` — the
+ * function whose validator rejected the earlier shape. Restating the
+ * requirement in an assertion would have been worth nothing here: the reason
+ * the bug survived is that this package's writer and reader agreed with each
+ * other and neither agreed with storage.
+ */
+export function spokenMessage(speaker: string, text: string, turnId?: string): Record<string, unknown> {
+  return {
+    // For `user/message` the event's data IS the message — `data.id`,
+    // `data.role`, `data.source`, `data.content` — not `data.message.*`.
+    // The nested shape was written here first and read back by this
+    // package's own transcript reader, so both halves agreed and the record
+    // looked correct for weeks. It was only unreadable from STORAGE:
+    // reloading threw "lacks an identified message", which nothing in
+    // process ever did, because nothing in process ever reloaded.
+    //
+    // (`assistant/message` and `tool/result` DO nest under `.message`.
+    // `user/message` is the exception, and copying its neighbours is what
+    // produced the bug.)
+    id: turnId ?? `squad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    role: "user",
+    // `host` is not a legal source kind — the map is user/plugin/model/tool.
+    // `user` is the truthful one: every line here is input arriving at the
+    // host's session from outside any model, and who said it is already in
+    // the text.
+    source: { kind: "user" },
+    content: [{ type: "text", text: `【${speaker}】${text}` }],
+  };
 }
 
 /**
@@ -716,15 +742,18 @@ function recordSpoken(host: Agent, speaker: string, text: string, turnId?: strin
  */
 function transcriptOf(host: Agent): readonly TranscriptEvent[] {
   return host.session.events.map((event) => {
-    const data = event.data as { message?: { id?: unknown; content?: unknown } } | undefined;
-    const message = data?.message;
-    const content = Array.isArray(message?.content) ? (message.content as ContentBlock[]) : undefined;
+    // Flat, matching what `recordSpoken` writes and what the persistence layer
+    // requires. Reading `.message` here is what let the wrong write shape go
+    // unnoticed: the reader agreed with the writer, and neither agreed with
+    // storage.
+    const data = event.data as { id?: unknown; content?: unknown } | undefined;
+    const content = Array.isArray(data?.content) ? (data.content as ContentBlock[]) : undefined;
     return {
       kind: event.type,
       text: content === undefined ? "" : textOf(content),
       // The message id when there is one; otherwise the sequence number, which
       // is contiguous and unique by the log's own contract.
-      turnId: typeof message?.id === "string" ? message.id : `seq-${event.seq}`,
+      turnId: typeof data?.id === "string" ? data.id : `seq-${event.seq}`,
     };
   });
 }

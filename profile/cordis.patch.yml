@@ -6,25 +6,16 @@
 # 惰性解析的 form，在 storage-domain 挂上之前读它会抛 `form-not-mounted`。
 - insert:
     # ── 存储 ──────────────────────────────────────────────────────────
-    # base 不挂 storage。Squad 需要它是因为**团队级记录不能进 session 日志**：
-    # 读路径的 assertEventsSupported 会拒绝任何不在 KNOWN_SESSION_EVENT_TYPES
-    # 里、又没标 ignorable 的事件类型，而 out-of-repo 插件的事件按设计就在名单
-    # 之外（known-event-types.ts 的注释：registration surface「deferred until
-    # such a consumer exists」）。标 ignorable 则会在重载时被跳过——检查点悄悄
-    # 消失，正是 1.x 花一整轮修掉的那个 bug 换个楼层重演。
-    # 所以检查点这类 Squad 自有记录走 storage，session 日志只用 dsh 原生词汇。
-    - id: storage
-      name: '@deepseek-ai/dsh-storage'
-
-    - id: storage-json
-      name: '@deepseek-ai/dsh-storage-json'
-      config:
-        root: !!js dshHomePath('squad-storage')
-
-    - id: storage-domain
-      name: '@deepseek-ai/dsh-storage-domain'
-      config:
-        backend: json
+    # 不在这里挂。`dsh-web-app` 自带 storage / storage-json / storage-domain
+    # 三行，配置与我们当初写的一模一样（json 后端 + dshHomePath），重复 insert
+    # 会以 `duplicate loader entry id: storage` 硬失败。
+    #
+    # 保留这段说明是因为「为什么需要 storage」这件事没变：dsh 的持久化读路径
+    # 会拒绝任何不在 KNOWN_SESSION_EVENT_TYPES 里、又没标 ignorable 的事件类型，
+    # 而 out-of-repo 插件的事件按设计就在名单之外。所以检查点这类 Squad 自有的
+    # 团队级记录走 storage domain，session 日志只用 dsh 原生词汇。详见技术设计 §5。
+    #
+    # 只叠 dsh-base 的组合（没有 app 层）仍然要自己挂这三行。
 
     # ── 席位后端 ──────────────────────────────────────────────────────
     # base 只挂进程内的两个 subagent provider，不挂 CLI 后端的，所以这里显式加上。
@@ -48,6 +39,12 @@
     # 它不持有任何团队状态，材料全部由调用方投喂。
     - id: squad-secretary
       name: '@squad/secretary'
+
+    # 控制台：把团队暴露成斜杠命令。
+    # 是命令而不是工具——命令由人敲、由代码跑，结果不进模型历史。
+    # 做成工具的话，一个 agent 就能决定叫谁发言，那就是让 LLM 当主持人。
+    - id: squad-console
+      name: '@squad/console'
 
     # Lil X：使用者自己的判断标准库。用户级，不属于任何一张桌子——
     # inject 里刻意没有 teams。root 是一个目录，纯文本、git 可管、离开 Squad 仍可读。

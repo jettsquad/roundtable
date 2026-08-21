@@ -34,7 +34,16 @@ const farmRoot = join(homedir(), ".dsh", "profiles", "node_modules");
 const farm = join(farmRoot, "@deepseek-ai");
 
 /** Only what our plugins import directly. Add here, never guess at runtime. */
-const NEEDED = ["cordis", "dsh-agent", "dsh-subagent", "dsh-llm", "dsh-session", "dsh-storage", "dsh-storage-domain"];
+const NEEDED = [
+  "cordis",
+  "dsh-agent",
+  "dsh-subagent",
+  "dsh-llm",
+  "dsh-session",
+  "dsh-storage",
+  "dsh-storage-domain",
+  "dsh-commands",
+];
 
 /**
  * Unscoped packages needing the same treatment.

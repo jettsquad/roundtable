@@ -3,6 +3,7 @@
   "private": true,
   "dependencies": {
     "@deepseek-ai/dsh-subagent-claude-code": "file:/Users/yanwong/.local/share/roundtable/deepseek-harness/packages/subagent/subagent-claude-code",
+    "@squad/console": "file:/Volumes/Jett/projects/Squad2/packages/console",
     "@squad/context": "file:/Volumes/Jett/projects/Squad2/packages/context",
     "@squad/reasoning": "file:/Volumes/Jett/projects/Squad2/packages/reasoning",
     "@squad/secretary": "file:/Volumes/Jett/projects/Squad2/packages/secretary",
@@ -11,7 +12,8 @@
   "dsh": {
     "profile": {
       "bundles": [
-        "@deepseek-ai/dsh-base"
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app"
       ]
     }
   }
