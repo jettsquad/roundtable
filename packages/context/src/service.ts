@@ -271,6 +271,10 @@ export class TeamContextService extends Service {
 
       const text = await this.ctx.secretary.writeCheckpoint({
         parent: team.host,
+        // The designated secretary's standing instructions, when the team
+        // named one. This is what turns `isSecretary` from a stored flag into
+        // a fact about who does the judgement work.
+        ...(team.secretary === undefined ? {} : { persona: team.secretary.systemPrompt }),
         hostGoal: team.displayName,
         previousCheckpoint: plan.previousCheckpoint,
         turns: plan.turns,

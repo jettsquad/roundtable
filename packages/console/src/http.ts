@@ -46,7 +46,16 @@ export interface TeamSummary {
   readonly displayName: string;
   readonly projectFolder: string;
   readonly busy: boolean;
-  readonly seats: readonly { readonly seatId: string; readonly displayName: string; readonly role: string }[];
+  readonly seats: readonly {
+    readonly seatId: string;
+    readonly displayName: string;
+    readonly role: string;
+    readonly isSecretary: boolean;
+    /** Speaking right now. */
+    readonly running: boolean;
+  }[];
+  /** Where a running agenda has got to, when one is running. */
+  readonly progress?: { readonly phase: string; readonly phaseIndex: number; readonly phaseCount: number } | undefined;
   /** Lines of recorded discussion. */
   readonly recorded: number;
   /** What this team's seats have consumed, when any backend reported it. */
@@ -70,11 +79,25 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       displayName: team.displayName,
       projectFolder: team.projectFolder,
       busy: team.busy,
-      seats: team.seats.map((seat) => ({
-        seatId: seat.seatId,
-        displayName: seat.displayName,
-        role: seat.role,
-      })),
+      seats: team.seats.map((seat) => {
+        const state = team.seatStates.find((candidate) => candidate.seatId === seat.seatId);
+        return {
+          seatId: seat.seatId,
+          displayName: seat.displayName,
+          role: seat.role,
+          isSecretary: seat.isSecretary === true,
+          running: state?.running === true,
+        };
+      }),
+      ...(team.progress === undefined
+        ? {}
+        : {
+            progress: {
+              phase: team.progress.phase,
+              phaseIndex: team.progress.phaseIndex,
+              phaseCount: team.progress.phaseCount,
+            },
+          }),
       recorded: team.transcript().filter((entry) => entry.kind === "user/message" && entry.text !== "").length,
       usage: team.usage,
     });
@@ -118,6 +141,53 @@ export async function createTeamFrom(ctx: Context, request: CreateTeamRequest): 
   return team.teamId;
 }
 
+/** Adding or removing one seat. */
+export interface SeatRequest {
+  readonly teamId: string;
+  /** Adding: the new seat. */
+  readonly displayName?: string;
+  readonly role?: string;
+  readonly isSecretary?: boolean;
+  /** Removing: which seat. */
+  readonly seatId?: string;
+  /** Removing the secretary takes a deliberate confirmation. */
+  readonly confirmSecretary?: boolean;
+}
+
+const teamOf = (ctx: Context, teamId: string) => {
+  const team = ctx.teams.get(teamId);
+  if (team === undefined) throw new Error(`没有这支团队：${teamId}。`);
+  return team;
+};
+
+/**
+ * Add a seat to a live team.
+ *
+ * Configuring, not behaviour: an agent that adds a seat has not decided who
+ * speaks. The seat id is minted here rather than accepted from the caller —
+ * a client-chosen id could collide with one already in the record, and two
+ * seats sharing an id are indistinguishable in every later reading of it.
+ */
+export function addSeatFrom(ctx: Context, request: SeatRequest): void {
+  const team = teamOf(ctx, request.teamId);
+  const role = (request.role ?? "").trim() === "" ? "通用" : (request.role as string).trim();
+  team.addSeat({
+    seatId: `seat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    displayName: (request.displayName ?? "").trim(),
+    role,
+    systemPrompt: `你的角色是${role}。回答简明，有依据。`,
+    backend: "claude-code",
+    ...(request.isSecretary === true ? { isSecretary: true } : {}),
+  });
+}
+
+/** Remove a seat. Its past words stay in the record — the discussion happened. */
+export function removeSeatFrom(ctx: Context, request: SeatRequest): void {
+  teamOf(ctx, request.teamId).removeSeat(request.seatId ?? "", {
+    ...(request.confirmSecretary === undefined ? {} : { confirmSecretary: request.confirmSecretary }),
+  });
+}
+
 /**
  * Register the read route.
  *
@@ -132,8 +202,19 @@ export function registerSquadApi(ctx: Context): () => void {
     path: SQUAD_API_PREFIX,
     handler: async (req: IncomingMessage, res: ServerResponse) => {
       try {
+        // Dispatched on the path suffix; the route is a prefix registration,
+        // so one entry serves the whole surface.
+        const suffix = (req.url ?? "").split("?")[0]?.slice(SQUAD_API_PREFIX.length) ?? "";
+        if (suffix === "/seats" && (req.method === "POST" || req.method === "DELETE")) {
+          const body = await readJson<SeatRequest>(req);
+          if (req.method === "POST") addSeatFrom(ctx, body);
+          else removeSeatFrom(ctx, body);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
         if (req.method === "POST") {
-          const created = await createTeamFrom(ctx, await readJson(req));
+          const created = await createTeamFrom(ctx, await readJson<CreateTeamRequest>(req));
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ teamId: created }));
           return;
@@ -161,7 +242,7 @@ export function registerSquadApi(ctx: Context): () => void {
  * Bounded, because this route is reachable by anything on localhost and an
  * unbounded read is a way to take the host down with a single POST.
  */
-async function readJson(req: IncomingMessage): Promise<CreateTeamRequest> {
+async function readJson<T>(req: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -171,5 +252,5 @@ async function readJson(req: IncomingMessage): Promise<CreateTeamRequest> {
   }
   const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   if (typeof parsed !== "object" || parsed === null) throw new Error("请求体不是 JSON 对象。");
-  return parsed as CreateTeamRequest;
+  return parsed as T;
 }

@@ -34,6 +34,7 @@ import {
   type UsageTotals,
 } from "@squad/shared";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
+import { checkRemoval, checkRoster, secretaryOf } from "./roster.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
 
 declare module "@deepseek-ai/cordis" {
@@ -95,6 +96,16 @@ export interface Team {
   readonly busy: boolean;
   /** Everything this team's seats have consumed so far. */
   readonly usage: UsageTotals;
+  /** The seat doing judgement work for the host, when one is designated. */
+  readonly secretary: SeatSpec | undefined;
+  /** Which seats are speaking right now, and what they were last asked. */
+  readonly seatStates: readonly SeatState[];
+  /** Where a running agenda has got to, or nothing when none is running. */
+  readonly progress: AgendaProgress | undefined;
+  /** Add a seat. Refused while a round is running — see `addSeat`. */
+  addSeat(seat: SeatSpec): void;
+  /** Remove a seat. The secretary needs `confirmSecretary`. */
+  removeSeat(seatId: string, options?: { readonly confirmSecretary?: boolean }): void;
   /** The team's checkpoint coefficient, if it set one. */
   readonly checkpointCoefficient?: number | undefined;
   /**
@@ -153,6 +164,31 @@ export interface Team {
    */
   recordSpoken(speaker: string, text: string, turnId?: string): void;
   dispose(): Promise<void>;
+}
+
+/** Whether one seat is speaking right now. */
+export interface SeatState {
+  readonly seatId: string;
+  readonly displayName: string;
+  readonly running: boolean;
+  /** What it is answering, while it is answering. */
+  readonly instruction?: string | undefined;
+}
+
+/**
+ * Where a running agenda has got to.
+ *
+ * Reported while it runs, not only afterwards. An agenda that takes minutes
+ * and says nothing until it finishes is indistinguishable from one that hung,
+ * and the difference matters most exactly when someone is deciding whether to
+ * stop it.
+ */
+export interface AgendaProgress {
+  readonly phase: string;
+  /** 1-based, so it reads the way a person counts. */
+  readonly phaseIndex: number;
+  readonly phaseCount: number;
+  readonly completedPhases: number;
 }
 
 /** One recorded event of a team, in the flat shape assembly reads. */
@@ -240,7 +276,8 @@ export class TeamsService extends Service {
   }
 
   async create(input: CreateTeamInput): Promise<Team> {
-    if (input.seats.length === 0) throw new Error("一支团队至少要有一个席位。");
+    const problems = checkRoster(input.seats);
+    if (problems.length > 0) throw new Error(problems.map((problem) => problem.detail).join("\n"));
     const teamId = `team-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
     // The host node. Its cwd is the team's project folder, which every seat
@@ -258,6 +295,8 @@ export class TeamsService extends Service {
       running: undefined,
       artifacts: [],
       usage: EMPTY_TOTALS,
+      seats: [...input.seats],
+      speaking: new Map(),
       disposed: false,
     };
     this.teams.set(teamId, record);
@@ -278,7 +317,7 @@ export class TeamsService extends Service {
       teamId: record.teamId,
       displayName: record.input.displayName,
       projectFolder: record.input.projectFolder,
-      seats: record.input.seats,
+      seats: record.seats,
       hostSessionId: String(record.handle.agent.session.id),
       host: record.handle.agent,
       // Read through the record, not captured: a view handed out before a
@@ -291,6 +330,23 @@ export class TeamsService extends Service {
       get usage() {
         return record.usage;
       },
+      get secretary() {
+        return secretaryOf(record.seats);
+      },
+      get seatStates() {
+        return record.seats.map((seat) => ({
+          seatId: seat.seatId,
+          displayName: seat.displayName,
+          ...(record.speaking.get(seat.seatId) === undefined
+            ? { running: false }
+            : { running: true, instruction: record.speaking.get(seat.seatId) }),
+        }));
+      },
+      get progress() {
+        return record.running === undefined ? undefined : record.running.progress;
+      },
+      addSeat: (seat) => this.addSeat(record, seat),
+      removeSeat: (seatId, options) => this.removeSeat(record, seatId, options),
       checkpointCoefficient: record.input.checkpointCoefficient,
       ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
       transcript: () => transcriptOf(record.handle.agent),
@@ -318,8 +374,8 @@ export class TeamsService extends Service {
     if (record.disposed) throw new Error("团队已销毁。");
     const seats =
       seatIds === undefined || seatIds.length === 0
-        ? record.input.seats
-        : record.input.seats.filter((seat) => seatIds.includes(seat.seatId));
+        ? record.seats
+        : record.seats.filter((seat) => seatIds.includes(seat.seatId));
     if (seats.length === 0) throw new Error("点名的席位都不在这支团队里。");
 
     const host = record.handle.agent;
@@ -398,11 +454,23 @@ export class TeamsService extends Service {
       completedPhases: [],
       completedTasks: [],
       reason: undefined,
+      progress: {
+        phase: agenda.phases[0]?.title ?? "",
+        phaseIndex: 1,
+        phaseCount: agenda.phases.length,
+        completedPhases: 0,
+      },
     };
     record.running = running;
     record.roundsInFlight += 1;
     try {
-      for (const phase of agenda.phases) {
+      for (const [phaseIndex, phase] of agenda.phases.entries()) {
+        running.progress = {
+          phase: phase.title,
+          phaseIndex: phaseIndex + 1,
+          phaseCount: agenda.phases.length,
+          completedPhases: running.completedPhases.length,
+        };
         // Taken once, before anything in the phase speaks. Every
         // `phase-start` run in this phase is handed this same snapshot, so
         // independence is a fact of what exists rather than a rule someone
@@ -426,7 +494,7 @@ export class TeamsService extends Service {
           // than halfway through one. The seat already running when the host
           // stopped is cancelled through the same signal.
           if (running.abort.signal.aborted) break;
-          const seat = record.input.seats.find((candidate) => candidate.seatId === run.task.seatId);
+          const seat = record.seats.find((candidate) => candidate.seatId === run.task.seatId);
           if (seat === undefined) {
             // Vetting refuses this before confirmation, so reaching it means
             // the roster changed underneath a confirmed agenda. Recorded as a
@@ -546,6 +614,43 @@ export class TeamsService extends Service {
   }
 
   /**
+   * Add a seat.
+   *
+   * Refused while a round is running: the windows for that round were already
+   * taken, so a seat arriving mid-round would either be skipped (looking like
+   * it had nothing to say) or handed a window nobody else got. Neither is a
+   * state worth being able to reach.
+   */
+  private addSeat(record: TeamRecord, seat: SeatSpec): void {
+    if (record.disposed) throw new Error("团队已销毁。");
+    if (record.roundsInFlight > 0) throw new Error("这一轮还在跑，等它结束再改名册。");
+    const problems = checkRoster([...record.seats, seat]);
+    if (problems.length > 0) throw new Error(problems.map((problem) => problem.detail).join("\n"));
+    record.seats.push(seat);
+  }
+
+  /**
+   * Remove a seat.
+   *
+   * The seat's past words STAY in the record. A discussion it took part in
+   * happened, and rewriting history to match the current roster would leave
+   * later readers — the assembler and the secretary among them — reading a
+   * conversation with a participant edited out of it.
+   */
+  private removeSeat(record: TeamRecord, seatId: string, options: { readonly confirmSecretary?: boolean } = {}): void {
+    if (record.disposed) throw new Error("团队已销毁。");
+    if (record.roundsInFlight > 0) throw new Error("这一轮还在跑，等它结束再改名册。");
+    const problems = checkRemoval(record.seats, seatId, {
+      ...(options.confirmSecretary === undefined ? {} : { allowSecretary: options.confirmSecretary }),
+    });
+    if (problems.length > 0) throw new Error(problems.map((problem) => problem.detail).join("\n"));
+    record.seats.splice(
+      record.seats.findIndex((seat) => seat.seatId === seatId),
+      1,
+    );
+  }
+
+  /**
    * Tell the assembler a round ended.
    *
    * A throwing assembler must not take the round's replies with it: the work
@@ -580,6 +685,10 @@ export class TeamsService extends Service {
       // was given the discussion and ignored it — the failure has to be louder
       // than its symptom.
       if (window.error !== undefined) throw window.error;
+      // Marked before the child starts and cleared in `finally`, so a seat
+      // that throws does not stay "speaking" forever — a stuck indicator is
+      // worse than none, because it is a claim.
+      record.speaking.set(seat.seatId, instruction);
       const lines = window.lines ?? [];
       const prompt = composeSeatPrompt({ seat, instruction, context: lines });
       const request: SubagentStartRequest = {
@@ -626,6 +735,10 @@ export class TeamsService extends Service {
         failed: true,
         contextLines: window.lines?.length ?? 0,
       };
+    } finally {
+      // Cleared on every path. A seat left marked as speaking is a claim, and
+      // a stuck claim is worse than no indicator: it says work is happening.
+      record.speaking.delete(seat.seatId);
     }
   }
 
@@ -702,6 +815,16 @@ interface TeamRecord {
   readonly artifacts: string[];
   /** Everything this team's seats have consumed. */
   usage: UsageTotals;
+  /**
+   * The roster, mutable.
+   *
+   * Held apart from `input.seats` because a team's membership changes and its
+   * creation request does not — reading the roster off the original request
+   * would make an added seat invisible to everything that consults it.
+   */
+  readonly seats: SeatSpec[];
+  /** seatId → what it is answering right now. */
+  readonly speaking: Map<string, string>;
   disposed: boolean;
 }
 
@@ -714,6 +837,7 @@ interface RunningAgenda {
   /** Task instructions that actually ran and produced an answer. */
   readonly completedTasks: string[];
   reason: string | undefined;
+  progress: AgendaProgress;
 }
 
 /**

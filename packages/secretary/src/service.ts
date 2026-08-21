@@ -51,6 +51,18 @@ export interface SecretaryRun {
    */
   readonly provider?: string;
   readonly signal?: AbortSignal;
+  /**
+   * The designated secretary seat's standing instructions.
+   *
+   * This is what makes `isSecretary` mean something. Without it the flag was
+   * declared, migrated, and read by nothing — a setting that looks like it
+   * works. With it, designating a seat changes the standing instructions the
+   * judgement work is done under, which is the whole point of choosing one.
+   *
+   * Passed as `persona`, which the fenced provider appends to the CLI's own
+   * system prompt rather than replacing it.
+   */
+  readonly persona?: string | undefined;
 }
 
 export type WriteCheckpointInput = CheckpointPromptInput & SecretaryRun;
@@ -91,6 +103,7 @@ export class SecretaryService extends Service {
         prompt: [{ type: "text", text: prompt }],
         parent: run.parent,
         signal: run.signal ?? new AbortController().signal,
+        ...(run.persona === undefined || run.persona.trim() === "" ? {} : { persona: run.persona }),
       };
       const started = await this.ctx.subagents.start(run.provider ?? DEFAULT_PROVIDER, request);
       const result = await started.result;

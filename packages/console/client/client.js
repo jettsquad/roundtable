@@ -228,6 +228,123 @@ window.__ModuleLoader__.load({
         );
       }
 
+      const seatInput = {
+        flex: 1,
+        minWidth: 0,
+        padding: "2px 6px",
+        background: "#111",
+        color: "#eee",
+        border: "1px solid #333",
+        borderRadius: "4px",
+        fontSize: "11px",
+      };
+
+      /**
+       * One team's roster: remove each seat, add one.
+       *
+       * Configuring, which the route allows — an agent that adds a seat has
+       * not decided who speaks. Starting a round stays on the commands.
+       */
+      function SeatEditor(props) {
+        const [name, setName] = React.useState("");
+        const [role, setRole] = React.useState("");
+        const [error, setError] = React.useState(undefined);
+
+        const call = async (method, body) => {
+          setError(undefined);
+          try {
+            const response = await fetch("/api/squad/seats", {
+              method: method,
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(Object.assign({ teamId: props.teamId }, body)),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error ?? "HTTP " + response.status);
+            props.onChanged();
+          } catch (failure) {
+            // Shown beside the thing that failed. A roster edit that silently
+            // does nothing reads as a UI that ignored the click.
+            setError(String(failure.message ?? failure));
+          }
+        };
+
+        return h(
+          "div",
+          { style: { marginTop: "6px" } },
+          h(
+            "div",
+            { style: { display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "4px" } },
+            props.seats.map((seat) =>
+              h(
+                "button",
+                {
+                  key: seat.seatId,
+                  type: "button",
+                  title: seat.isSecretary ? "秘书，移除需要确认" : "移除这个席位",
+                  onClick: () =>
+                    call("DELETE", {
+                      seatId: seat.seatId,
+                      // The secretary takes meaning it: judgement work would
+                      // otherwise keep being requested and land on a default
+                      // nobody chose.
+                      confirmSecretary: seat.isSecretary
+                        ? window.confirm(seat.displayName + " 是秘书，确定移除？")
+                        : undefined,
+                    }),
+                  style: {
+                    all: "unset",
+                    cursor: "pointer",
+                    fontSize: "11px",
+                    padding: "2px 6px",
+                    borderRadius: "4px",
+                    border: "1px solid #444",
+                    opacity: 0.85,
+                  },
+                },
+                seat.displayName + " ×",
+              ),
+            ),
+          ),
+          h(
+            "div",
+            { style: { display: "flex", gap: "4px" } },
+            h("input", {
+              value: name,
+              placeholder: "新席位名",
+              onChange: (event) => setName(event.target.value),
+              style: seatInput,
+            }),
+            h("input", {
+              value: role,
+              placeholder: "角色",
+              onChange: (event) => setRole(event.target.value),
+              style: seatInput,
+            }),
+            h(
+              "button",
+              {
+                type: "button",
+                onClick: async () => {
+                  await call("POST", { displayName: name, role: role });
+                  setName("");
+                  setRole("");
+                },
+                style: {
+                  all: "unset",
+                  cursor: "pointer",
+                  fontSize: "11px",
+                  padding: "2px 8px",
+                  borderRadius: "4px",
+                  border: "1px solid #444",
+                },
+              },
+              "+",
+            ),
+          ),
+          error === undefined ? null : h("div", { style: { color: "#f88", marginTop: "4px" } }, error),
+        );
+      }
+
       function TeamPanel() {
         const isOpen = useOpen();
         // Bumped after a create so the list refreshes at once instead of
@@ -263,12 +380,41 @@ window.__ModuleLoader__.load({
                         h(
                           "div",
                           { style: { opacity: 0.65, fontSize: "12px", lineHeight: 1.6 } },
-                          team.seats.map((seat) => seat.displayName + "（" + seat.role + "）").join("、"),
+                          team.seats
+                            .map(
+                              (seat) =>
+                                (seat.running ? "▶ " : "") +
+                                seat.displayName +
+                                "（" +
+                                seat.role +
+                                (seat.isSecretary ? " · 秘书" : "") +
+                                "）",
+                            )
+                            .join("、"),
                           h("br", null),
+                          team.progress === undefined
+                            ? null
+                            : h(
+                                "span",
+                                { style: { color: "#7c7" } },
+                                "议程：" +
+                                  team.progress.phase +
+                                  "（" +
+                                  team.progress.phaseIndex +
+                                  "/" +
+                                  team.progress.phaseCount +
+                                  "）",
+                                h("br", null),
+                              ),
                           "记录 " + team.recorded + " 条 · " + team.projectFolder,
                           h("br", null),
                           usageLine(team.usage),
                         ),
+                        h(SeatEditor, {
+                          teamId: team.teamId,
+                          seats: team.seats,
+                          onChanged: () => setNonce((value) => value + 1),
+                        }),
                       ),
                     ),
                 h(
