@@ -110,7 +110,7 @@ window.__ModuleLoader__.load({
        * package has no seat there. `ctx.webServer.register` is open by
        * contract; this is the other side of it.
        */
-      function useSnapshot(active) {
+      function useSnapshot(active, nonce) {
         const [state, setState] = React.useState({ loading: true });
         React.useEffect(() => {
           if (!active) return undefined;
@@ -134,13 +134,107 @@ window.__ModuleLoader__.load({
             alive = false;
             clearInterval(timer);
           };
-        }, [active]);
+        }, [active, nonce]);
         return state;
+      }
+
+      /**
+       * The create form.
+       *
+       * Here rather than only on `/squad-new`, because reaching that command
+       * needs a session, and a session needs a message that fails for want of
+       * a model key. Making the first team require passing through a broken
+       * step is not an onboarding path.
+       *
+       * Creating is allowed over the route; starting a round is not — see the
+       * host side for why the line is drawn at "who can reach it" rather than
+       * at the verb.
+       */
+      function CreateForm(props) {
+        const [name, setName] = React.useState("");
+        const [folder, setFolder] = React.useState("");
+        const [roster, setRoster] = React.useState("");
+        const [busy, setBusy] = React.useState(false);
+        const [error, setError] = React.useState(undefined);
+
+        const field = (value, onChange, placeholder) =>
+          h("input", {
+            value: value,
+            placeholder: placeholder,
+            onChange: (event) => onChange(event.target.value),
+            style: {
+              width: "100%",
+              boxSizing: "border-box",
+              marginBottom: "6px",
+              padding: "5px 7px",
+              background: "#111",
+              color: "#eee",
+              border: "1px solid #333",
+              borderRadius: "5px",
+              fontSize: "12px",
+            },
+          });
+
+        const submit = async () => {
+          setBusy(true);
+          setError(undefined);
+          try {
+            const response = await fetch("/api/squad/teams", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ displayName: name, projectFolder: folder, roster: roster }),
+            });
+            const data = await response.json();
+            // The host answers 500 with `{error}`; showing it verbatim is what
+            // makes 「项目文件夹要写绝对路径」 reach the person who typed one.
+            if (!response.ok) throw new Error(data.error ?? "HTTP " + response.status);
+            setName("");
+            setFolder("");
+            setRoster("");
+            props.onCreated();
+          } catch (failure) {
+            setError(String(failure.message ?? failure));
+          } finally {
+            setBusy(false);
+          }
+        };
+
+        return h(
+          "div",
+          { style: { marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #333" } },
+          h("div", { style: { fontWeight: 600, marginBottom: "8px" } }, "建一支团队"),
+          field(name, setName, "团队名"),
+          field(folder, setFolder, "项目文件夹（绝对路径）"),
+          field(roster, setRoster, "甲=架构, 乙=测试"),
+          error === undefined ? null : h("div", { style: { color: "#f88", margin: "4px 0" } }, error),
+          h(
+            "button",
+            {
+              type: "button",
+              disabled: busy,
+              onClick: submit,
+              style: {
+                all: "unset",
+                cursor: busy ? "default" : "pointer",
+                padding: "5px 12px",
+                background: busy ? "#333" : "#2a4",
+                color: "#fff",
+                borderRadius: "5px",
+                fontSize: "12px",
+              },
+            },
+            busy ? "建团中…" : "建团",
+          ),
+        );
       }
 
       function TeamPanel() {
         const isOpen = useOpen();
-        const snapshot = useSnapshot(isOpen);
+        // Bumped after a create so the list refreshes at once instead of
+        // waiting out the poll — a team that does not appear reads as a
+        // create that failed.
+        const [nonce, setNonce] = React.useState(0);
+        const snapshot = useSnapshot(isOpen, nonce);
         if (!isOpen) return null;
 
         const body = snapshot.error !== undefined
@@ -205,6 +299,7 @@ window.__ModuleLoader__.load({
           },
           h("div", { style: { fontWeight: 600, marginBottom: "10px" } }, "Squad 工作台"),
           body,
+          h(CreateForm, { onCreated: () => setNonce((value) => value + 1) }),
         );
       }
 

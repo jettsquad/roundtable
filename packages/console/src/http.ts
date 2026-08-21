@@ -13,13 +13,26 @@
  * cancellation. We own this contract instead, on both sides, and it is small
  * enough that owning it is cheaper than not having data at all.
  *
- * Read-only, deliberately. Every mutation stays on the slash commands, where
- * a person typed it — a route that could start a round would put the team's
- * behaviour behind an HTTP call with no human in it.
+ * What may cross this route, and what may not, is decided by WHO CAN REACH
+ * IT — not by the verb. A slash command cannot be invoked by a model: the
+ * registry never submits one, so a person typed it by construction. An HTTP
+ * route on localhost is reachable by anything with a shell, including an
+ * agent holding a Bash tool.
+ *
+ * So the line is:
+ *
+ *   CREATING and CONFIGURING — a team, its seats, later its connections —
+ *   crosses. An agent that creates a team has not become the host.
+ *
+ *   The team's BEHAVIOUR — starting a round, stopping an agenda, folding —
+ *   does not. Those stay on the commands. A route that could start a round
+ *   would let a model decide who speaks, which is the one thing this product
+ *   must not be, arriving by the back door after the front one was shut.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
 import type { UsageTotals } from "@squad/shared";
+import { parseNewTeam } from "./parse.ts";
 // Imported for the `Context.webServer` declaration merging it carries; an
 // augmentation applies only where its module is part of the compilation.
 import type {} from "@deepseek-ai/dsh-host-webserver";
@@ -70,6 +83,41 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   return { teams, criteria: { active: active.length, pending: pending.length } };
 }
 
+/** What the panel posts to create a team. */
+export interface CreateTeamRequest {
+  readonly displayName: string;
+  readonly projectFolder: string;
+  /** Same one-line grammar the `/squad-new` command takes. */
+  readonly roster: string;
+}
+
+/**
+ * Create a team from the panel.
+ *
+ * Reuses the command's parser rather than validating again here. The rules it
+ * enforces — absolute project folder, no duplicate seat names — were written
+ * against a person typing, and a second copy would drift: the surface that
+ * kept the weaker rules would be the one people found first.
+ */
+export async function createTeamFrom(ctx: Context, request: CreateTeamRequest): Promise<string> {
+  const input = parseNewTeam(
+    [request.displayName ?? "", request.projectFolder ?? "", request.roster ?? ""].join(" | "),
+  );
+  const team = await ctx.teams.create({
+    displayName: input.displayName,
+    projectFolder: input.projectFolder,
+    hostDisplayName: "主持人",
+    seats: input.seats.map((seat) => ({
+      seatId: seat.seatId,
+      displayName: seat.displayName,
+      role: seat.role,
+      systemPrompt: `你的角色是${seat.role}。回答简明，有依据。`,
+      backend: "claude-code" as const,
+    })),
+  });
+  return team.teamId;
+}
+
 /**
  * Register the read route.
  *
@@ -84,6 +132,12 @@ export function registerSquadApi(ctx: Context): () => void {
     path: SQUAD_API_PREFIX,
     handler: async (req: IncomingMessage, res: ServerResponse) => {
       try {
+        if (req.method === "POST") {
+          const created = await createTeamFrom(ctx, await readJson(req));
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ teamId: created }));
+          return;
+        }
         const snapshot = await snapshotOf(ctx);
         const body = JSON.stringify(snapshot);
         res.writeHead(200, {
@@ -99,4 +153,23 @@ export function registerSquadApi(ctx: Context): () => void {
       }
     },
   });
+}
+
+/**
+ * Read a JSON request body.
+ *
+ * Bounded, because this route is reachable by anything on localhost and an
+ * unbounded read is a way to take the host down with a single POST.
+ */
+async function readJson(req: IncomingMessage): Promise<CreateTeamRequest> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > 64 * 1024) throw new Error("请求体过大。");
+    chunks.push(chunk as Buffer);
+  }
+  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (typeof parsed !== "object" || parsed === null) throw new Error("请求体不是 JSON 对象。");
+  return parsed as CreateTeamRequest;
 }
