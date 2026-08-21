@@ -119,6 +119,20 @@ export interface Team {
    * notice would be the one component that never sees them.
    */
   transcript(): readonly TranscriptEvent[];
+  /**
+   * Append one line to the team record directly.
+   *
+   * For replaying a history that already happened — the 1.x migration — where
+   * the turns are facts to be restored rather than work to be done. A live
+   * round never uses this: it goes through `ask`, which assembles windows,
+   * runs seats and records what they actually said.
+   *
+   * `turnId` is preservable because a migrated checkpoint's `coversUpTo`
+   * points at a 1.x turn id. Regenerating ids here would leave every carried
+   * checkpoint covering a boundary that no longer exists, and the merge layer
+   * would read them as checkpoints whose coverage is missing from the log.
+   */
+  recordSpoken(speaker: string, text: string, turnId?: string): void;
   dispose(): Promise<void>;
 }
 
@@ -252,6 +266,7 @@ export class TeamsService extends Service {
       checkpointCoefficient: record.input.checkpointCoefficient,
       ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
       transcript: () => transcriptOf(record.handle.agent),
+      recordSpoken: (speaker, text, turnId) => recordSpoken(record.handle.agent, speaker, text, turnId),
       runAgenda: (agenda) => this.runAgenda(record, agenda),
       stopAgenda: (reason) => this.stopAgenda(record, reason),
       dispose: () => this.dispose(record),
@@ -673,12 +688,13 @@ interface RunningAgenda {
  * seat is shown next round is assembled from that log rather than from
  * anything queued on an agent.
  */
-function recordSpoken(host: Agent, speaker: string, text: string): void {
+function recordSpoken(host: Agent, speaker: string, text: string, turnId?: string): void {
   host.session.append(
     "user/message",
     {
       message: {
-        id: `squad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        // A supplied id is a restored one; see `Team.recordSpoken`.
+        id: turnId ?? `squad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
         source: { kind: "host" },
         content: [{ type: "text", text: `【${speaker}】${text}` }],
       },

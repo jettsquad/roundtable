@@ -33,6 +33,14 @@ export interface RecordCheckpointInput {
   readonly text: string;
   /** Identity of the last recorded entry this checkpoint summarises. */
   readonly coversUpTo: string;
+  /**
+   * Already retired when it arrived — only ever set by the 1.x migration,
+   * which restores checkpoints the host had revoked. Dropping their
+   * revocation would silently reinstate boundaries the host had rejected,
+   * which is worse than not migrating them at all: the team would come back
+   * with history cut at a point its owner had already overruled.
+   */
+  readonly revokedAt?: number | undefined;
 }
 
 export class TeamContextService extends Service {
@@ -98,6 +106,7 @@ export class TeamContextService extends Service {
       text: input.text,
       coversUpTo: input.coversUpTo,
       createdAt: Date.now(),
+      ...(input.revokedAt === undefined ? {} : { revokedAt: input.revokedAt }),
     };
     await this.checkpoints().put(checkpointId, record);
     return record;
@@ -171,6 +180,19 @@ export class TeamContextService extends Service {
     // Chained, not awaited: the caller returns immediately, and a later fold
     // waits for this instead.
     this.artifactWrites = this.artifactWrites.then(() => write);
+  }
+
+  /**
+   * Record a file the team wrote, when nothing is running to report it.
+   *
+   * The live path is the table telling the assembler as it writes. This is
+   * for the 1.x migration, which is restoring files that were written long
+   * ago: without it a migrated team's next checkpoint would index nothing
+   * while the files sit in the project folder, and the index would be wrong
+   * in the direction that looks like "there were no outputs".
+   */
+  async recordArtifact(teamId: string, path: string): Promise<void> {
+    await this.artifacts().put(`${teamId}:${path}`, { teamId, path, writtenAt: Date.now() });
   }
 
   /** Files this team has written, in the order they were written. */
