@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "lint": "eslint . && prettier --check \"packages/**/*.ts\" \"scripts/*.mjs\"",
-    "format": "prettier --write \"packages/**/*.ts\" \"scripts/*.mjs\""
+    "format": "prettier --write \"packages/**/*.ts\" \"scripts/*.mjs\"",
+    "smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
