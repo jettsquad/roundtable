@@ -23,6 +23,7 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { stripReasoning, type AgendaSpec } from "@squad/shared";
+import { decideActivation, type ActivationDecision } from "./activation.ts";
 import { healthOf, type Health } from "./usage.ts";
 import type { Criterion } from "./criterion.ts";
 import {
@@ -69,6 +70,13 @@ export interface CaptureResult {
   readonly instanceId: string;
   readonly proposal: Criterion;
   readonly relation: Distillation["relation"];
+  /**
+   * Whether this went straight into the library or is waiting on the human,
+   * and why. Always reported: a proposal that applied itself must not be
+   * something the host discovers later by noticing the library changed.
+   */
+  readonly activation: ActivationDecision;
+  readonly applied: boolean;
 }
 
 export type Verdict = "accept" | "reject";
@@ -166,8 +174,30 @@ export class ReasoningService extends Service {
       }));
     }
 
+    // Only a reinforcement is ever eligible. Everything else edits what the
+    // library claims, and a system approving its own edits to its scoring
+    // rules is grading itself.
+    const usage = await this.store.usage(proposal.id);
+    const activation =
+      distilled.relation === "reinforce"
+        ? decideActivation({
+            accepted: usage.accepted,
+            rejected: usage.rejected,
+            guardsIrreversible: proposal.trigger.features.includes("irreversible"),
+          })
+        : {
+            auto: false,
+            lowerBound: 0,
+            reason: "below-confidence" as const,
+            detail: `关系是「${distilled.relation}」，它改动了判据本身的表述，一律由人裁定。`,
+          };
+
+    if (activation.auto) {
+      await this.store.putCriterion(proposal);
+      return { instanceId, proposal, relation: distilled.relation, activation, applied: true };
+    }
     await this.store.putProposal(proposal);
-    return { instanceId, proposal, relation: distilled.relation };
+    return { instanceId, proposal, relation: distilled.relation, activation, applied: false };
   }
 
   /** Proposals waiting on the human. */
@@ -187,6 +217,15 @@ export class ReasoningService extends Service {
     if (proposal === undefined) throw new Error(`没有待裁定的提议 ${id}。`);
     if (verdict === "accept") await this.store.putCriterion(edited ?? proposal);
     await this.store.dropProposal(id);
+    // The record the confidence bound is computed from. An edit counts as an
+    // acceptance: the human kept the criterion and changed its wording, which
+    // is agreement about the substance — counting it as a rejection would
+    // make every improvement look like a failure.
+    await this.store.updateUsage(id, (current) => ({
+      ...current,
+      accepted: current.accepted + (verdict === "accept" ? 1 : 0),
+      rejected: current.rejected + (verdict === "reject" ? 1 : 0),
+    }));
   }
 
   /** Everything currently active. */

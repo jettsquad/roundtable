@@ -31,6 +31,9 @@ export interface UsageRecord {
   /** Human marks: it changed what I did / it did not. */
   readonly helpful: number;
   readonly unhelpful: number;
+  /** The human's adjudications of proposals for this criterion. */
+  readonly accepted: number;
+  readonly rejected: number;
   readonly lastDeliveredAt?: string | undefined;
 }
 
@@ -40,6 +43,8 @@ export const emptyUsage = (criterionId: string): UsageRecord => ({
   counterExamples: 0,
   helpful: 0,
   unhelpful: 0,
+  accepted: 0,
+  rejected: 0,
 });
 
 /**
@@ -106,6 +111,8 @@ export function usageToMarkdown(usage: UsageRecord): string {
     `counterExamples: ${usage.counterExamples}`,
     `helpful: ${usage.helpful}`,
     `unhelpful: ${usage.unhelpful}`,
+    `accepted: ${usage.accepted}`,
+    `rejected: ${usage.rejected}`,
     ...(usage.lastDeliveredAt === undefined ? [] : [`lastDeliveredAt: ${usage.lastDeliveredAt}`]),
     FENCE,
     "",
@@ -132,6 +139,8 @@ export function usageFromMarkdown(text: string, sourceName = "usage"): UsageReco
     counterExamples: number(fields.get("counterExamples")),
     helpful: number(fields.get("helpful")),
     unhelpful: number(fields.get("unhelpful")),
+    accepted: number(fields.get("accepted")),
+    rejected: number(fields.get("rejected")),
     ...(lastDeliveredAt === undefined || lastDeliveredAt === "" ? {} : { lastDeliveredAt }),
   };
 }

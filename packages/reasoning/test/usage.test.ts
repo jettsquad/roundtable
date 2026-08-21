@@ -64,6 +64,8 @@ describe("usage round trip", () => {
       counterExamples: 1,
       helpful: 2,
       unhelpful: 0,
+      accepted: 3,
+      rejected: 1,
       lastDeliveredAt: "2026-08-21T00:00:00.000Z",
     };
     expect(usageFromMarkdown(usageToMarkdown(record))).toEqual(record);

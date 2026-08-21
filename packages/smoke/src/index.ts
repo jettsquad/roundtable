@@ -32,6 +32,29 @@ export interface Config {
 export function apply(ctx: Context, config: Config): void {
   void (async () => {
     const line = (text: string) => process.stdout.write(`[smoke] ${text}\n`);
+
+    /**
+     * Run one independent check, and let the rest run whatever it does.
+     *
+     * These sections do not depend on each other, but a single try/catch
+     * around all of them meant one transient subagent failure — a child that
+     * starts and returns nothing, seen intermittently — threw away the signal
+     * from every check after it. Losing the answer to five questions because
+     * the sixth flaked is a probe design problem, not a product one. Failures
+     * are still reported in full; they just stop being fatal to their
+     * neighbours.
+     */
+    const failures: string[] = [];
+    const step = async (name: string, run: () => Promise<void>): Promise<void> => {
+      try {
+        await run();
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        failures.push(name);
+        line(`❌ 「${name}」这一段失败了：${detail}`);
+        line("   （后面的检查继续跑——它们不依赖这一段）");
+      }
+    };
     try {
       line("建团…");
       const team = await ctx.teams.create({
@@ -206,81 +229,83 @@ export function apply(ctx: Context, config: Config): void {
 
       await pair.dispose();
 
-      // ── 中止交接：停一个跑到一半的议程，把没做完的交出去 ──────────────
-      // writeTermination had an implementation and tests and no path that
-      // could reach it, which is how a feature quietly stops working without
-      // anyone noticing it ever did.
-      const twoPhase = {
-        hostGoal: "分两步看这个目录",
-        phases: [
-          {
-            title: "第一步",
-            contextMode: "independent" as const,
-            tasks: [{ seatId: "seat-a", instruction: "用一句话说 README.md 是干什么的。" }],
-          },
-          {
-            title: "第二步",
-            contextMode: "independent" as const,
-            tasks: [{ seatId: "seat-a", instruction: "再写一段详细说明。" }],
-          },
-        ],
-      };
-
-      line("跑两阶段议程，中途叫停…");
-      // Timed against a variable-length agenda, so the stop can legitimately
-      // arrive after the run already finished. That is a race in the PROBE,
-      // not in the product — stopAgenda is right to refuse an idle team — so
-      // it is caught and reported. An earlier version let it throw from a
-      // bare timer and took the whole process down, turning a probe timing
-      // issue into a crash that looked like a product failure.
-      let material: ReturnType<typeof team.stopAgenda> | undefined;
-      let stopRaced = false;
-      const stopper = new Promise<void>((resolve) => {
-        setTimeout(() => {
-          try {
-            material = team.stopAgenda("主持人改主意了");
-          } catch {
-            stopRaced = true;
-          }
-          resolve();
-        }, 20_000);
-      });
-      const [outcome2] = await Promise.all([team.runAgenda(twoPhase), stopper]);
-      if (stopRaced || material === undefined) {
-        line("⚠️ 本次议程比计时器先跑完，中止路径这一轮没被执行到（不是通过，也不是失败）");
-        material = {
-          objective: twoPhase.hostGoal,
-          reason: "（本轮未真正中止）",
-          completed: [],
-          remaining: ["阶段「第二步」：再写一段详细说明。"],
-          artifacts: [],
-          discussion: [],
+      await step("中止交接", async () => {
+        // ── 中止交接：停一个跑到一半的议程，把没做完的交出去 ──────────────
+        // writeTermination had an implementation and tests and no path that
+        // could reach it, which is how a feature quietly stops working without
+        // anyone noticing it ever did.
+        const twoPhase = {
+          hostGoal: "分两步看这个目录",
+          phases: [
+            {
+              title: "第一步",
+              contextMode: "independent" as const,
+              tasks: [{ seatId: "seat-a", instruction: "用一句话说 README.md 是干什么的。" }],
+            },
+            {
+              title: "第二步",
+              contextMode: "independent" as const,
+              tasks: [{ seatId: "seat-a", instruction: "再写一段详细说明。" }],
+            },
+          ],
         };
-      } else {
-        line(
-          `议程结果：跑过 ${outcome2.phasesRun.join(" → ") || "（无）"}，` +
-            `stoppedBecause=${outcome2.stoppedBecause ?? "（无）"}`,
-        );
-        line(`没做完的：${material.remaining.join(" | ") || "无"}`);
-      }
 
-      line("秘书写中止交接…");
-      const handoff = await ctx.secretary.writeTermination({ parent: team.host, ...material });
-      const namesRemaining = material.remaining.every((item) => handoff.includes(item.replace(/^阶段「|」.*$/g, "")));
-      line(`交接文档 ${handoff.length} 字，五个标题齐全（否则已经抛错），` + `点到了未完成阶段 = ${namesRemaining}`);
-      // Two claims, kept apart. The hand-off is judged on its own — it names
-      // what is left, whatever produced the material — and the interruption
-      // is judged separately, because a run the timer lost the race to did
-      // not exercise it at all. Reporting one verdict for both would turn a
-      // probe that skipped a step into a probe that passed it.
-      line(namesRemaining ? "✅ 交接文档点到了未完成的部分" : "❌ 交接文档没点到未完成的部分");
-      line(
-        stopRaced
-          ? "⚠️ 中止本身这一轮没验到"
-          : outcome2.stoppedBecause !== undefined
-            ? "✅ 中止走通：议程真的被打断了"
-            : "❌ 中止没生效",
-      );
+        line("跑两阶段议程，中途叫停…");
+        // Timed against a variable-length agenda, so the stop can legitimately
+        // arrive after the run already finished. That is a race in the PROBE,
+        // not in the product — stopAgenda is right to refuse an idle team — so
+        // it is caught and reported. An earlier version let it throw from a
+        // bare timer and took the whole process down, turning a probe timing
+        // issue into a crash that looked like a product failure.
+        let material: ReturnType<typeof team.stopAgenda> | undefined;
+        let stopRaced = false;
+        const stopper = new Promise<void>((resolve) => {
+          setTimeout(() => {
+            try {
+              material = team.stopAgenda("主持人改主意了");
+            } catch {
+              stopRaced = true;
+            }
+            resolve();
+          }, 20_000);
+        });
+        const [outcome2] = await Promise.all([team.runAgenda(twoPhase), stopper]);
+        if (stopRaced || material === undefined) {
+          line("⚠️ 本次议程比计时器先跑完，中止路径这一轮没被执行到（不是通过，也不是失败）");
+          material = {
+            objective: twoPhase.hostGoal,
+            reason: "（本轮未真正中止）",
+            completed: [],
+            remaining: ["阶段「第二步」：再写一段详细说明。"],
+            artifacts: [],
+            discussion: [],
+          };
+        } else {
+          line(
+            `议程结果：跑过 ${outcome2.phasesRun.join(" → ") || "（无）"}，` +
+              `stoppedBecause=${outcome2.stoppedBecause ?? "（无）"}`,
+          );
+          line(`没做完的：${material.remaining.join(" | ") || "无"}`);
+        }
+
+        line("秘书写中止交接…");
+        const handoff = await ctx.secretary.writeTermination({ parent: team.host, ...material });
+        const namesRemaining = material.remaining.every((item) => handoff.includes(item.replace(/^阶段「|」.*$/g, "")));
+        line(`交接文档 ${handoff.length} 字，五个标题齐全（否则已经抛错），` + `点到了未完成阶段 = ${namesRemaining}`);
+        // Two claims, kept apart. The hand-off is judged on its own — it names
+        // what is left, whatever produced the material — and the interruption
+        // is judged separately, because a run the timer lost the race to did
+        // not exercise it at all. Reporting one verdict for both would turn a
+        // probe that skipped a step into a probe that passed it.
+        line(namesRemaining ? "✅ 交接文档点到了未完成的部分" : "❌ 交接文档没点到未完成的部分");
+        line(
+          stopRaced
+            ? "⚠️ 中止本身这一轮没验到"
+            : outcome2.stoppedBecause !== undefined
+              ? "✅ 中止走通：议程真的被打断了"
+              : "❌ 中止没生效",
+        );
+      });
 
       // What the trigger sees. The smoke cannot cross the real threshold —
       // the floor is 1M × 0.05 = 50k tokens, and getting there means actually
@@ -376,12 +401,17 @@ export function apply(ctx: Context, config: Config): void {
       });
       const waiting = await ctx.reasoning.pending();
       line(`  关系=${captured.relation}，实例=${captured.instanceId}`);
+      line(
+        `  自动生效？${captured.applied ? "是" : "否"}（${captured.activation.reason}：${captured.activation.detail}）`,
+      );
       line(`  提议主张：${captured.proposal.claim}`);
       line(`  待裁定队列：${waiting.length} 条；已生效判据：${(await ctx.reasoning.criteria()).length} 条`);
 
       // Nothing may activate itself. The system is editing its own scoring
       // rules; automatic approval is grading yourself.
-      const noneActive = (await ctx.reasoning.criteria()).length === 0;
+      // A first capture must never apply itself: it has no adjudication record
+      // at all, and a `new` relation edits what the library claims.
+      const noneActive = (await ctx.reasoning.criteria()).length === 0 && !captured.applied;
       const proposedOnly = waiting.some((item) => item.id === captured.proposal.id);
       // A conclusion names the specific thing; a standard names the property.
       const looksAbstract = !captured.proposal.claim.includes("检查点") && !captured.proposal.claim.includes("Squad");
@@ -457,6 +487,11 @@ export function apply(ctx: Context, config: Config): void {
       line(saw ? "✅ 席位看见了上一轮——装配接线成立" : "❌ 席位看不到上一轮");
 
       await team.dispose();
+      line(
+        failures.length === 0
+          ? "—— 全部检查跑完，没有失败的段落 ——"
+          : `—— 全部检查跑完，失败的段落：${failures.join("、")} ——`,
+      );
     } catch (error) {
       line(`失败：${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
     }
