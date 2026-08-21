@@ -79,6 +79,15 @@ export default tseslint.config(
     },
   },
   {
+    // Client bundles run in a browser, not in Node. Their globals are
+    // different, and so is what they may import: only the platform module
+    // table (react, ui-slots, cordis, …) is resolvable at runtime, which is
+    // why these files pull everything else through the injected `require`
+    // rather than importing it.
+    files: ["packages/*/client/**/*.{js,ts,tsx}"],
+    languageOptions: { globals: globals.browser },
+  },
+  {
     files: ["**/test/**/*.ts"],
     rules: { "@typescript-eslint/no-explicit-any": "off" },
   },
