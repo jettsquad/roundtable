@@ -20,6 +20,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 // compilation, so without this `ctx.commands` does not exist as far as tsc is
 // concerned — while working perfectly at runtime, which is the worst of both.
 import type { CommandInvocation } from "@deepseek-ai/dsh-commands";
+import { registerSquadApi } from "./http.ts";
 import { parseNewTeam, parseSay } from "./parse.ts";
 
 /**
@@ -47,7 +48,7 @@ export const name = "squad-console";
  * rest of the system unreachable, which is the state this package exists to
  * end.
  */
-export const inject = ["commands", "teams", "teamContext", "secretary", "reasoning"];
+export const inject = ["commands", "teams", "teamContext", "secretary", "reasoning", "webServer"];
 
 export function apply(ctx: Context): void {
   ctx.plugin(SquadConsole);
@@ -57,7 +58,7 @@ const ok = (text: string) => ({ kind: "success" as const, text });
 const bad = (text: string) => ({ kind: "error" as const, text });
 
 export class SquadConsole extends Service {
-  static readonly inject = ["commands", "teams", "teamContext", "secretary", "reasoning"];
+  static readonly inject = ["commands", "teams", "teamContext", "secretary", "reasoning", "webServer"];
 
   /** The team commands act on. One console, one table at a time. */
   private current: string | undefined;
@@ -67,6 +68,10 @@ export class SquadConsole extends Service {
   }
 
   async [Service.init](): Promise<void> {
+    // The browser half reads through this; every mutation stays on the
+    // commands, where a person typed it.
+    this.ctx.effect(() => registerSquadApi(this.ctx));
+
     const register = (
       commandName: string,
       description: string,
@@ -216,3 +221,6 @@ export class SquadConsole extends Service {
 
 export { parseNewTeam, parseSay } from "./parse.ts";
 export type { NewTeamInput, SayInput, SeatDraft } from "./parse.ts";
+
+export { SQUAD_API_PREFIX, snapshotOf, registerSquadApi } from "./http.ts";
+export type { SquadSnapshot, TeamSummary } from "./http.ts";

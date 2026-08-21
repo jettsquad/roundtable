@@ -77,8 +77,87 @@ window.__ModuleLoader__.load({
         );
       }
 
+      /**
+       * Read the host's snapshot.
+       *
+       * Plain fetch, not a Typert Remote: the Remote path generates its
+       * artifacts inside the harness repository and the client facade mounts
+       * only the contributions that application selected, so an out-of-repo
+       * package has no seat there. `ctx.webServer.register` is open by
+       * contract; this is the other side of it.
+       */
+      function useSnapshot(active) {
+        const [state, setState] = React.useState({ loading: true });
+        React.useEffect(() => {
+          if (!active) return undefined;
+          let alive = true;
+          const read = async () => {
+            try {
+              const response = await fetch("/api/squad/teams", { headers: { accept: "application/json" } });
+              if (!response.ok) throw new Error("HTTP " + response.status);
+              const data = await response.json();
+              if (alive) setState({ loading: false, data: data });
+            } catch (error) {
+              // Shown, not swallowed: a panel that renders an empty team list
+              // when the read failed says "you have no teams", which is a
+              // different and wrong statement.
+              if (alive) setState({ loading: false, error: String(error) });
+            }
+          };
+          void read();
+          const timer = setInterval(read, 3000);
+          return () => {
+            alive = false;
+            clearInterval(timer);
+          };
+        }, [active]);
+        return state;
+      }
+
       function TeamPanel() {
-        if (!useOpen()) return null;
+        const isOpen = useOpen();
+        const snapshot = useSnapshot(isOpen);
+        if (!isOpen) return null;
+
+        const body = snapshot.error !== undefined
+          ? h("div", { style: { color: "#f88" } }, "读不到数据：" + snapshot.error)
+          : snapshot.loading
+            ? h("div", { style: { opacity: 0.6 } }, "读取中…")
+            : h(
+                "div",
+                null,
+                snapshot.data.teams.length === 0
+                  ? h(
+                      "div",
+                      { style: { opacity: 0.6, lineHeight: 1.6 } },
+                      "还没有团队。到会话里敲 /squad-new 团队名 | 项目文件夹 | 甲=角色",
+                    )
+                  : snapshot.data.teams.map((team) =>
+                      h(
+                        "div",
+                        { key: team.teamId, style: { marginBottom: "10px" } },
+                        h(
+                          "div",
+                          { style: { fontWeight: 600 } },
+                          team.displayName,
+                          team.busy ? h("span", { style: { color: "#7c7", marginLeft: "6px" } }, "● 进行中") : null,
+                        ),
+                        h(
+                          "div",
+                          { style: { opacity: 0.65, fontSize: "12px", lineHeight: 1.6 } },
+                          team.seats.map((seat) => seat.displayName + "（" + seat.role + "）").join("、"),
+                          h("br", null),
+                          "记录 " + team.recorded + " 条 · " + team.projectFolder,
+                        ),
+                      ),
+                    ),
+                h(
+                  "div",
+                  { style: { marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #333", opacity: 0.75 } },
+                  "判据：已生效 " + snapshot.data.criteria.active + " 条，待裁定 " + snapshot.data.criteria.pending + " 条",
+                ),
+              );
+
         return h(
           "div",
           {
@@ -86,7 +165,9 @@ window.__ModuleLoader__.load({
               position: "fixed",
               right: "24px",
               bottom: "24px",
-              width: "320px",
+              width: "340px",
+              maxHeight: "60vh",
+              overflowY: "auto",
               padding: "16px",
               borderRadius: "10px",
               background: "#1b1b1f",
@@ -96,12 +177,8 @@ window.__ModuleLoader__.load({
               zIndex: 60,
             },
           },
-          h("div", { style: { fontWeight: 600, marginBottom: "8px" } }, "Squad 工作台"),
-          h(
-            "div",
-            { style: { opacity: 0.7, lineHeight: 1.6 } },
-            "探针：客户端插件链路已通——被发现、被加载、注册进了两个 slot、渲染出来了。",
-          ),
+          h("div", { style: { fontWeight: 600, marginBottom: "10px" } }, "Squad 工作台"),
+          body,
         );
       }
 
