@@ -22,7 +22,7 @@ import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { resolveArtifactPath, stripReasoning, type AgendaSpec } from "@squad/shared";
+import { SEAT_PROVIDER, resolveArtifactPath, stripReasoning, type AgendaSpec } from "@squad/shared";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
 
@@ -184,7 +184,10 @@ export interface TeamAssembler {
 
 /** The provider name each backend is registered under in dsh. */
 const PROVIDER_BY_BACKEND: Record<SeatSpec["backend"], string> = {
-  "claude-code": "claude-code",
+  // The fenced provider, not the stock one: a seat that can spawn its own
+  // subagents turns one accountable participant into an unlogged crowd, and
+  // every reader downstream sees the same reply either way.
+  "claude-code": SEAT_PROVIDER,
   codex: "codex",
   dsh: "dsh-sdk",
 };

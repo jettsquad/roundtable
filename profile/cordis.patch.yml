@@ -24,6 +24,16 @@
     - id: subagent-claude-code
       name: '@deepseek-ai/dsh-subagent-claude-code'
 
+    # 带工具围栏的席位后端，注册名 claude-code-fenced。
+    # 与上面那个并存而不是替换它——选哪个是组合的决定，写在这里看得见。
+    #
+    # 它存在的理由：现成的 provider 把工具策略写死了（只禁 AskUserQuestion），
+    # 配置里只有 env 和 disposeGraceMs，加不进去。于是席位可以自己起 subagent
+    # 去干活——1.x 里秘书不知道名册、自己造了一队 agent，就是这么来的。
+    # 这个默认禁掉 Task/Agent，并支持 seam 上的 toolFilter 与 persona。
+    - id: squad-seat-claude-code
+      name: '@squad/seat-claude-code'
+
     # ── Squad ────────────────────────────────────────────────────────
     # 桌子：主持人节点 + 席位编排。
     - id: squad-table

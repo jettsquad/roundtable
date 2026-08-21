@@ -6,6 +6,7 @@
     "@squad/console": "file:/Volumes/Jett/projects/Squad2/packages/console",
     "@squad/context": "file:/Volumes/Jett/projects/Squad2/packages/context",
     "@squad/reasoning": "file:/Volumes/Jett/projects/Squad2/packages/reasoning",
+    "@squad/seat-claude-code": "file:/Volumes/Jett/projects/Squad2/packages/seat-claude-code",
     "@squad/secretary": "file:/Volumes/Jett/projects/Squad2/packages/secretary",
     "@squad/table": "file:/Volumes/Jett/projects/Squad2/packages/table"
   },

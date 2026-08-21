@@ -20,7 +20,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
-import { stripReasoning } from "@squad/shared";
+import { SEAT_PROVIDER, stripReasoning } from "@squad/shared";
 import type { CheckpointPromptInput } from "./checkpoint.ts";
 import type { AgendaSpec } from "@squad/shared";
 import type { AgendaDraftInput } from "./agenda.ts";
@@ -60,7 +60,9 @@ export type DraftAgendaInput = AgendaDraftInput & SecretaryRun;
 /** Everything the hand-off needs, fed in by the caller — nothing is remembered here. */
 export type WriteTerminationInput = TerminationInput & SecretaryRun;
 
-const DEFAULT_PROVIDER = "claude-code";
+// Fenced by default: the secretary is exactly where 1.x went wrong, drafting
+// an agenda by spawning its own agents instead of naming the seats it had.
+const DEFAULT_PROVIDER = SEAT_PROVIDER;
 
 export class SecretaryService extends Service {
   static readonly inject = ["subagents"];

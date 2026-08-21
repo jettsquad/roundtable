@@ -16,3 +16,4 @@ export * from "./team-artifact.ts";
 export * from "./agent-reply-text.ts";
 export * from "./agenda.ts";
 export * from "./situation.ts";
+export * from "./seat-provider.ts";

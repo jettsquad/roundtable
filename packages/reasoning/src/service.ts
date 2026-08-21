@@ -22,7 +22,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
-import { stripReasoning, type AgendaSpec } from "@squad/shared";
+import { SEAT_PROVIDER, stripReasoning, type AgendaSpec } from "@squad/shared";
 import { decideActivation, type ActivationDecision } from "./activation.ts";
 import { checkAbstractness, type AbstractnessReport } from "./decontextualise.ts";
 import { exportToPool, importAsCandidates, type ExportResult, type PoolEntry } from "./pool.ts";
@@ -449,7 +449,7 @@ export class ReasoningService extends Service {
       parent,
       signal: new AbortController().signal,
     };
-    const started = await this.ctx.subagents.start(this.config.provider ?? "claude-code", request);
+    const started = await this.ctx.subagents.start(this.config.provider ?? SEAT_PROVIDER, request);
     const result = await started.result;
     if (result.stopReason !== "completed") {
       throw new Error(`提炼任务未完成（${result.stopReason}），不采用。`);

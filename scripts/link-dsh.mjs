@@ -43,6 +43,7 @@ const NEEDED = [
   "dsh-storage",
   "dsh-storage-domain",
   "dsh-commands",
+  "dsh-subprocess",
 ];
 
 /**
