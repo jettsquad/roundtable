@@ -71,3 +71,18 @@ export function checkRemoval(
   }
   return [];
 }
+
+/**
+ * Where a seat goes in the roster.
+ *
+ * Roster order is speaking order in a round, so this is not cosmetic: an edit
+ * that re-appends a seat silently changes who answers first, and the person
+ * who edited a connection did not decide that. `at === undefined` means the
+ * end, which is what adding a genuinely new seat wants.
+ */
+export function placeSeat<T>(seats: readonly T[], seat: T, at?: number): readonly T[] {
+  if (at === undefined) return [...seats, seat];
+  const next = [...seats];
+  next.splice(Math.max(0, Math.min(at, next.length)), 0, seat);
+  return next;
+}

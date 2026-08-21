@@ -14,21 +14,13 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Domain } from "@deepseek-ai/dsh-storage-domain";
 import { credentialRef } from "@deepseek-ai/dsh-credentials";
-import { checkConnection, envForConnection, type SeatConnection } from "@squad/shared";
+import { checkConnection, envForConnection, type ConnectionView, type SeatConnection } from "@squad/shared";
 import { SQUAD_CONNECTIONS_DOMAIN } from "./domain.ts";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
     seatConnections: SeatConnectionsService;
   }
-}
-
-/** A connection as a configuration screen may see it: no secret, ever. */
-export interface ConnectionView extends SeatConnection {
-  /** Whether the referenced credential resolves right now. */
-  readonly credentialConfigured: boolean;
-  /** Whether this surface could write it, or a read-only source shadows it. */
-  readonly credentialWritable: boolean;
 }
 
 export class SeatConnectionsService extends Service {

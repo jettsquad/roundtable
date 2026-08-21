@@ -31,7 +31,7 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
-import type { UsageTotals } from "@squad/shared";
+import type { ConnectionView, SeatCaps, SeatConnection, UsageTotals } from "@squad/shared";
 import { parseNewTeam } from "./parse.ts";
 // Imported for the `Context.webServer` declaration merging it carries; an
 // augmentation applies only where its module is part of the compilation.
@@ -53,6 +53,8 @@ export interface TeamSummary {
     readonly isSecretary: boolean;
     /** Speaking right now. */
     readonly running: boolean;
+    readonly connectionId?: string | undefined;
+    readonly caps?: SeatCaps | undefined;
   }[];
   /** Where a running agenda has got to, when one is running. */
   readonly progress?: { readonly phase: string; readonly phaseIndex: number; readonly phaseCount: number } | undefined;
@@ -66,6 +68,8 @@ export interface SquadSnapshot {
   readonly teams: readonly TeamSummary[];
   /** Lil X: how many criteria are live, and how many wait on a human. */
   readonly criteria: { readonly active: number; readonly pending: number };
+  /** Seat connections, with credential STATUS and never a credential value. */
+  readonly connections: readonly ConnectionView[];
 }
 
 /** Build the snapshot the panel renders. Pure read; nothing here starts anything. */
@@ -87,6 +91,8 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           role: seat.role,
           isSecretary: seat.isSecretary === true,
           running: state?.running === true,
+          ...(seat.connectionId === undefined ? {} : { connectionId: seat.connectionId }),
+          ...(seat.caps === undefined ? {} : { caps: seat.caps }),
         };
       }),
       ...(team.progress === undefined
@@ -102,8 +108,12 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       usage: team.usage,
     });
   }
-  const [active, pending] = await Promise.all([ctx.reasoning.criteria(), ctx.reasoning.pending()]);
-  return { teams, criteria: { active: active.length, pending: pending.length } };
+  const [active, pending, connections] = await Promise.all([
+    ctx.reasoning.criteria(),
+    ctx.reasoning.pending(),
+    ctx.seatConnections.views(),
+  ]);
+  return { teams, criteria: { active: active.length, pending: pending.length }, connections };
 }
 
 /** What the panel posts to create a team. */
@@ -122,10 +132,13 @@ export interface CreateTeamRequest {
  * against a person typing, and a second copy would drift: the surface that
  * kept the weaker rules would be the one people found first.
  */
-export async function createTeamFrom(ctx: Context, request: CreateTeamRequest): Promise<string> {
-  const input = parseNewTeam(
-    [request.displayName ?? "", request.projectFolder ?? "", request.roster ?? ""].join(" | "),
-  );
+/** The three fields the panel collects, in the grammar the command uses. */
+export function commandLineFor(request: CreateTeamRequest): string {
+  return [request.displayName ?? "", request.projectFolder ?? "", request.roster ?? ""].join(" | ");
+}
+
+export async function createTeamFrom(ctx: Context, raw: string): Promise<string> {
+  const input = parseNewTeam(raw);
   const team = await ctx.teams.create({
     displayName: input.displayName,
     projectFolder: input.projectFolder,
@@ -136,6 +149,7 @@ export async function createTeamFrom(ctx: Context, request: CreateTeamRequest): 
       role: seat.role,
       systemPrompt: `你的角色是${seat.role}。回答简明，有依据。`,
       backend: "claude-code" as const,
+      ...(seat.isSecretary ? { isSecretary: true } : {}),
     })),
   });
   return team.teamId;
@@ -188,6 +202,56 @@ export function removeSeatFrom(ctx: Context, request: SeatRequest): void {
   });
 }
 
+/** Saving a connection. The credential value, when present, is stored and dropped. */
+export type ConnectionRequest = SeatConnection & { readonly credential?: string };
+
+/** Changing an existing seat's connection or caps. */
+export interface SeatPatch {
+  readonly teamId: string;
+  readonly seatId: string;
+  /** Empty string clears it back to the host's own login. */
+  readonly connectionId?: string;
+  readonly caps?: SeatCaps;
+}
+
+/**
+ * Change one seat in place.
+ *
+ * Implemented as remove-then-add on the live roster so the roster rules run
+ * again: a patch that could bypass them would be the surface with the weaker
+ * checks, and that is the one people reach for.
+ */
+export function patchSeat(ctx: Context, patch: SeatPatch): void {
+  const team = teamOf(ctx, patch.teamId);
+  const seat = team.seats.find((candidate) => candidate.seatId === patch.seatId);
+  if (seat === undefined) throw new Error(`这支团队里没有席位 ${patch.seatId}。`);
+  // A connection that does not exist is accepted by the roster — it is just a
+  // string — and then fails at start time as "no subagent provider registered
+  // for claude-code-fenced:nope", a message that names a provider id nobody
+  // typed, minutes after the click that caused it. Checked here, where the id
+  // came from.
+  if (patch.connectionId !== undefined && patch.connectionId !== "") {
+    if (ctx.seatConnections.get(patch.connectionId) === undefined) {
+      throw new Error(`没有这个连接：${patch.connectionId}。`);
+    }
+  }
+  const next = {
+    ...seat,
+    ...(patch.connectionId === undefined
+      ? {}
+      : patch.connectionId === ""
+        ? { connectionId: undefined }
+        : { connectionId: patch.connectionId }),
+    ...(patch.caps === undefined ? {} : { caps: patch.caps }),
+  };
+  // Remove-then-add so the roster rules run again on the result; `at` keeps
+  // the seat where it was, because roster order is the order seats speak in
+  // and changing a connection is not a decision about who goes first.
+  const at = team.seats.findIndex((candidate) => candidate.seatId === patch.seatId);
+  team.removeSeat(seat.seatId, { confirmSecretary: true });
+  team.addSeat(next, { at });
+}
+
 /**
  * Register the read route.
  *
@@ -205,6 +269,36 @@ export function registerSquadApi(ctx: Context): () => void {
         // Dispatched on the path suffix; the route is a prefix registration,
         // so one entry serves the whole surface.
         const suffix = (req.url ?? "").split("?")[0]?.slice(SQUAD_API_PREFIX.length) ?? "";
+        if (suffix === "/connections") {
+          if (req.method === "POST") {
+            const body = await readJson<ConnectionRequest>(req);
+            // A credential value may arrive with the connection, and it is
+            // stored through the credential service and then dropped — it is
+            // never written into the connection record, which is the whole
+            // reason that record is safe to read and render.
+            const { credential, ...connection } = body;
+            await ctx.seatConnections.save(connection);
+            if (credential !== undefined && credential !== "") {
+              await ctx.seatConnections.setCredential(connection.connectionId, credential);
+            }
+            res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          if (req.method === "DELETE") {
+            await ctx.seatConnections.remove((await readJson<{ connectionId: string }>(req)).connectionId);
+            res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+        }
+        if (suffix === "/seats" && req.method === "PATCH") {
+          const body = await readJson<SeatPatch>(req);
+          patchSeat(ctx, body);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
         if (suffix === "/seats" && (req.method === "POST" || req.method === "DELETE")) {
           const body = await readJson<SeatRequest>(req);
           if (req.method === "POST") addSeatFrom(ctx, body);
@@ -214,7 +308,7 @@ export function registerSquadApi(ctx: Context): () => void {
           return;
         }
         if (req.method === "POST") {
-          const created = await createTeamFrom(ctx, await readJson<CreateTeamRequest>(req));
+          const created = await createTeamFrom(ctx, commandLineFor(await readJson<CreateTeamRequest>(req)));
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ teamId: created }));
           return;

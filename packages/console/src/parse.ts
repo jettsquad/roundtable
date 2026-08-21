@@ -17,6 +17,7 @@ export interface SeatDraft {
   readonly seatId: string;
   readonly displayName: string;
   readonly role: string;
+  readonly isSecretary: boolean;
 }
 
 export interface NewTeamInput {
@@ -26,17 +27,22 @@ export interface NewTeamInput {
 }
 
 /**
- * `名称 | 项目文件夹 | 甲=架构, 乙=测试`
+ * `名称 | 项目文件夹 | 甲*=架构, 乙=测试`
  *
  * Pipes rather than positional whitespace, because a project folder can
  * contain spaces and a role certainly can. Roles are optional; the name alone
  * is a seat.
+ *
+ * A trailing `*` on a name designates the secretary. Designating one at
+ * creation matters because it is the only seat that can be told to plan an
+ * agenda; a team built without one has to be edited before it can do the
+ * thing teams exist for, and nothing in the create form said so.
  */
 export function parseNewTeam(raw: string): NewTeamInput {
   const parts = raw.split("|").map((part) => part.trim());
   const [displayName = "", projectFolder = "", roster = ""] = parts;
   if (parts.length < 3 || displayName === "" || projectFolder === "" || roster === "") {
-    throw new Error("用法：/squad-new 团队名 | 项目文件夹 | 甲=角色, 乙=角色");
+    throw new Error("用法：/squad-new 团队名 | 项目文件夹 | 甲*=角色, 乙=角色（* 标记秘书）");
   }
   if (!projectFolder.startsWith("/")) {
     // Relative paths would resolve against whatever the harness's cwd happens
@@ -51,11 +57,19 @@ export function parseNewTeam(raw: string): NewTeamInput {
     .map((s) => s.trim())
     .filter((s) => s !== "")
     .entries()) {
-    const [name = "", role = ""] = entry.split(/[=＝:：]/).map((s) => s.trim());
+    const [marked = "", role = ""] = entry.split(/[=＝:：]/).map((s) => s.trim());
+    const isSecretary = marked.endsWith("*") || marked.endsWith("＊");
+    const name = isSecretary ? marked.slice(0, -1).trim() : marked;
     if (name === "") throw new Error(`第 ${index + 1} 个席位没有名字。`);
     if (seen.has(name)) throw new Error(`席位名「${name}」重复了——同名席位在记录里分不开。`);
     seen.add(name);
-    seats.push({ seatId: `seat-${index + 1}`, displayName: name, role: role === "" ? "通用" : role });
+    // Refused here as well as in `checkRoster`, because this message can
+    // point at what was typed. The roster rule stays: it guards the seats
+    // that never came through this grammar.
+    if (isSecretary && seats.some((seat) => seat.isSecretary)) {
+      throw new Error(`只能有一位秘书，「${name}」是第二个带 * 的。`);
+    }
+    seats.push({ seatId: `seat-${index + 1}`, displayName: name, role: role === "" ? "通用" : role, isSecretary });
   }
   if (seats.length === 0) throw new Error("至少要有一个席位。");
   return { displayName, projectFolder, seats };

@@ -20,8 +20,8 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 // compilation, so without this `ctx.commands` does not exist as far as tsc is
 // concerned — while working perfectly at runtime, which is the worst of both.
 import type { CommandInvocation } from "@deepseek-ai/dsh-commands";
-import { registerSquadApi } from "./http.ts";
-import { parseNewTeam, parseSay } from "./parse.ts";
+import { createTeamFrom, registerSquadApi } from "./http.ts";
+import { parseSay } from "./parse.ts";
 
 /**
  * Derived from the context rather than imported from `@squad/table`.
@@ -48,7 +48,7 @@ export const name = "squad-console";
  * rest of the system unreachable, which is the state this package exists to
  * end.
  */
-export const inject = ["commands", "teams", "teamContext", "secretary", "reasoning", "webServer"];
+export const inject = ["commands", "teams", "teamContext", "secretary", "reasoning", "seatConnections", "webServer"];
 
 export function apply(ctx: Context): void {
   ctx.plugin(SquadConsole);
@@ -58,7 +58,15 @@ const ok = (text: string) => ({ kind: "success" as const, text });
 const bad = (text: string) => ({ kind: "error" as const, text });
 
 export class SquadConsole extends Service {
-  static readonly inject = ["commands", "teams", "teamContext", "secretary", "reasoning", "webServer"];
+  static readonly inject = [
+    "commands",
+    "teams",
+    "teamContext",
+    "secretary",
+    "reasoning",
+    "seatConnections",
+    "webServer",
+  ];
 
   /** The team commands act on. One console, one table at a time. */
   private current: string | undefined;
@@ -96,20 +104,14 @@ export class SquadConsole extends Service {
       );
     };
 
-    register("squad-new", "建一支团队", "团队名 | 项目文件夹 | 甲=角色, 乙=角色", async (raw) => {
-      const input = parseNewTeam(raw);
-      const team = await this.ctx.teams.create({
-        displayName: input.displayName,
-        projectFolder: input.projectFolder,
-        hostDisplayName: "主持人",
-        seats: input.seats.map((seat) => ({
-          seatId: seat.seatId,
-          displayName: seat.displayName,
-          role: seat.role,
-          systemPrompt: `你的角色是${seat.role}。回答简明，有依据。`,
-          backend: "claude-code" as const,
-        })),
-      });
+    register("squad-new", "建一支团队", "团队名 | 项目文件夹 | 甲*=角色, 乙=角色（* 标记秘书）", async (raw) => {
+      // Through the same function the panel uses. The mapping used to be
+      // written twice, and when creation learned to designate a secretary
+      // only one copy learned it — the slash command would have gone on
+      // building teams with no secretary and saying nothing.
+      const teamId = await createTeamFrom(this.ctx, raw);
+      const team = this.ctx.teams.get(teamId);
+      if (team === undefined) throw new Error(`团队 ${teamId} 建好了却读不回来。`);
       this.current = team.teamId;
       return (
         `已建团队「${team.displayName}」（${team.teamId}），已设为当前团队。\n` +

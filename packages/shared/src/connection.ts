@@ -124,6 +124,23 @@ export function envForConnection(
 }
 
 /**
+ * A connection as a configuration screen may see it.
+ *
+ * Here rather than in the library because it crosses the wall: ④ the
+ * connection library builds it, the console renders it, and neither may
+ * import the other.
+ *
+ * There is no field for the credential VALUE and there never will be. The two
+ * booleans are what `ctx.credentials.describe()` answers — configured, and
+ * writable-from-here — which is the whole reason a settings screen can show a
+ * badge without a secret entering the browser.
+ */
+export interface ConnectionView extends SeatConnection {
+  readonly credentialConfigured: boolean;
+  readonly credentialWritable: boolean;
+}
+
+/**
  * Spend limits for one seat.
  *
  * Which of these can bind depends on the auth mode, and showing a limit that

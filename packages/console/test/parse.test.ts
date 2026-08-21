@@ -12,8 +12,8 @@ describe("parseNewTeam", () => {
     expect(input.displayName).toBe("评审组");
     expect(input.projectFolder).toBe("/Users/me/proj");
     expect(input.seats).toEqual([
-      { seatId: "seat-1", displayName: "甲", role: "架构" },
-      { seatId: "seat-2", displayName: "乙", role: "测试" },
+      { seatId: "seat-1", displayName: "甲", role: "架构", isSecretary: false },
+      { seatId: "seat-2", displayName: "乙", role: "测试", isSecretary: false },
     ]);
   });
 
@@ -82,5 +82,27 @@ describe("parseSay", () => {
 
   it("refuses an empty instruction", () => {
     expect(() => parseSay("   ", roster)).toThrow(/用法/);
+  });
+});
+
+describe("秘书标记", () => {
+  it("* 指派秘书", () => {
+    const input = parseNewTeam("组 | /p | 甲*=架构, 乙=测试");
+    expect(input.seats.map((seat) => seat.isSecretary)).toEqual([true, false]);
+    // The marker must not survive into the name — a seat called 「甲*」 would
+    // fail every roll-call the person then types.
+    expect(input.seats[0]?.displayName).toBe("甲");
+  });
+
+  it("全角 ＊ 也算", () => {
+    expect(parseNewTeam("组 | /p | 甲＊").seats[0]?.isSecretary).toBe(true);
+  });
+
+  it("没有 * 就没有秘书", () => {
+    expect(parseNewTeam("组 | /p | 甲, 乙").seats.some((seat) => seat.isSecretary)).toBe(false);
+  });
+
+  it("两个 * 被拒", () => {
+    expect(() => parseNewTeam("组 | /p | 甲*, 乙*")).toThrow(/只能有一位秘书/);
   });
 });

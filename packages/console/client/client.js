@@ -205,7 +205,7 @@ window.__ModuleLoader__.load({
           h("div", { style: { fontWeight: 600, marginBottom: "8px" } }, "建一支团队"),
           field(name, setName, "团队名"),
           field(folder, setFolder, "项目文件夹（绝对路径）"),
-          field(roster, setRoster, "甲=架构, 乙=测试"),
+          field(roster, setRoster, "甲*=架构, 乙=测试（* 是秘书）"),
           error === undefined ? null : h("div", { style: { color: "#f88", margin: "4px 0" } }, error),
           h(
             "button",
@@ -305,6 +305,36 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
+          // Which connection a seat runs on. "（本机登录）" is the empty
+          // value, not a missing one: a seat naming no connection uses the
+          // host's own login, which is a real choice rather than an unset
+          // field.
+          props.connections.length === 0
+            ? null
+            : h(
+                "div",
+                { style: { display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "4px" } },
+                props.seats.map((seat) =>
+                  h(
+                    "select",
+                    {
+                      key: seat.seatId + "-conn",
+                      value: seat.connectionId ?? "",
+                      onChange: (event) =>
+                        call("PATCH", { seatId: seat.seatId, connectionId: event.target.value }),
+                      style: Object.assign({}, seatInput, { flex: "0 1 auto" }),
+                    },
+                    h("option", { value: "" }, seat.displayName + "：本机登录"),
+                    props.connections.map((connection) =>
+                      h(
+                        "option",
+                        { key: connection.connectionId, value: connection.connectionId },
+                        seat.displayName + "：" + connection.displayName,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           h(
             "div",
             { style: { display: "flex", gap: "4px" } },
@@ -345,6 +375,177 @@ window.__ModuleLoader__.load({
         );
       }
 
+      /**
+       * The connection library.
+       *
+       * The API key field is write-only. It posts a value and never receives
+       * one — the snapshot carries `credentialConfigured`, a boolean from
+       * `describe()`, so the badge can say 「已配置」 without a secret ever
+       * reaching this browser. A field that showed the current key would put
+       * one here for no reason anybody needs.
+       */
+      function Connections(props) {
+        const [open, setOpen] = React.useState(false);
+        const [name, setName] = React.useState("");
+        const [mode, setMode] = React.useState("subscription");
+        const [model, setModel] = React.useState("");
+        const [endpoint, setEndpoint] = React.useState("");
+        const [ref, setRef] = React.useState("");
+        const [key, setKey] = React.useState("");
+        const [error, setError] = React.useState(undefined);
+
+        const call = async (method, body) => {
+          setError(undefined);
+          try {
+            const response = await fetch("/api/squad/connections", {
+              method: method,
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error ?? "HTTP " + response.status);
+            props.onChanged();
+            return true;
+          } catch (failure) {
+            // Verbatim: the host refuses 「订阅模式不使用自定义端点」 and
+            // 「订阅模式下只能用自己的模型」 with reasons, and a generic
+            // "save failed" would throw the reason away.
+            setError(String(failure.message ?? failure));
+            return false;
+          }
+        };
+
+        const save = async () => {
+          const ok = await call("POST", {
+            connectionId: "conn-" + Date.now().toString(36),
+            displayName: name,
+            authMode: mode,
+            backend: "claude-code",
+            modelId: model === "" ? undefined : model,
+            endpoint: mode === "api-key" && endpoint !== "" ? endpoint : undefined,
+            credentialRef: mode === "api-key" && ref !== "" ? ref : undefined,
+            credential: mode === "api-key" && key !== "" ? key : undefined,
+          });
+          if (!ok) return;
+          setName("");
+          setModel("");
+          setEndpoint("");
+          setRef("");
+          setKey("");
+        };
+
+        return h(
+          "div",
+          { style: { marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #333" } },
+          h(
+            "button",
+            {
+              type: "button",
+              onClick: () => setOpen(!open),
+              style: { all: "unset", cursor: "pointer", fontWeight: 600 },
+            },
+            (open ? "▾ " : "▸ ") + "连接（" + props.connections.length + "）",
+          ),
+          !open
+            ? null
+            : h(
+                "div",
+                { style: { marginTop: "8px" } },
+                props.connections.map((connection) =>
+                  h(
+                    "div",
+                    { key: connection.connectionId, style: { marginBottom: "6px", fontSize: "12px" } },
+                    h("span", { style: { fontWeight: 600 } }, connection.displayName),
+                    h(
+                      "span",
+                      { style: { opacity: 0.6 } },
+                      " · " +
+                        (connection.authMode === "subscription" ? "订阅" : "API key") +
+                        (connection.modelId ? " · " + connection.modelId : "") +
+                        (connection.authMode === "api-key"
+                          ? connection.credentialConfigured
+                            ? " · 密钥已配置"
+                            : " · ⚠️ 密钥未配置"
+                          : ""),
+                    ),
+                    h(
+                      "button",
+                      {
+                        type: "button",
+                        onClick: () => call("DELETE", { connectionId: connection.connectionId }),
+                        style: { all: "unset", cursor: "pointer", marginLeft: "6px", opacity: 0.6 },
+                      },
+                      "×",
+                    ),
+                  ),
+                ),
+                h("input", { value: name, placeholder: "连接名", onChange: (e) => setName(e.target.value), style: seatInput }),
+                h(
+                  "select",
+                  {
+                    value: mode,
+                    onChange: (e) => setMode(e.target.value),
+                    style: Object.assign({}, seatInput, { marginTop: "4px" }),
+                  },
+                  h("option", { value: "subscription" }, "订阅（用本机 CLI 登录）"),
+                  h("option", { value: "api-key" }, "API key"),
+                ),
+                h("input", {
+                  value: model,
+                  placeholder: mode === "subscription" ? "模型（只能是自家的，如 sonnet）" : "模型",
+                  onChange: (e) => setModel(e.target.value),
+                  style: Object.assign({}, seatInput, { marginTop: "4px" }),
+                }),
+                // Endpoint and key exist only in api-key mode, because in
+                // subscription mode the host REFUSES them — showing fields
+                // that will be rejected teaches the wrong thing.
+                mode !== "api-key"
+                  ? null
+                  : h(
+                      "div",
+                      null,
+                      h("input", {
+                        value: endpoint,
+                        placeholder: "端点（留空用默认）",
+                        onChange: (e) => setEndpoint(e.target.value),
+                        style: Object.assign({}, seatInput, { marginTop: "4px" }),
+                      }),
+                      h("input", {
+                        value: ref,
+                        placeholder: "凭据名，如 MY_GATEWAY_KEY",
+                        onChange: (e) => setRef(e.target.value),
+                        style: Object.assign({}, seatInput, { marginTop: "4px" }),
+                      }),
+                      h("input", {
+                        value: key,
+                        type: "password",
+                        placeholder: "API key（只写入，永不回显）",
+                        onChange: (e) => setKey(e.target.value),
+                        style: Object.assign({}, seatInput, { marginTop: "4px" }),
+                      }),
+                    ),
+                error === undefined ? null : h("div", { style: { color: "#f88", marginTop: "4px" } }, error),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: save,
+                    style: {
+                      all: "unset",
+                      cursor: "pointer",
+                      marginTop: "6px",
+                      padding: "4px 10px",
+                      border: "1px solid #444",
+                      borderRadius: "4px",
+                      fontSize: "12px",
+                    },
+                  },
+                  "保存连接",
+                ),
+              ),
+        );
+      }
+
       function TeamPanel() {
         const isOpen = useOpen();
         // Bumped after a create so the list refreshes at once instead of
@@ -365,7 +566,7 @@ window.__ModuleLoader__.load({
                   ? h(
                       "div",
                       { style: { opacity: 0.6, lineHeight: 1.6 } },
-                      "还没有团队。到会话里敲 /squad-new 团队名 | 项目文件夹 | 甲=角色",
+                      "还没有团队。到会话里敲 /squad-new 团队名 | 项目文件夹 | 甲*=角色",
                     )
                   : snapshot.data.teams.map((team) =>
                       h(
@@ -413,6 +614,7 @@ window.__ModuleLoader__.load({
                         h(SeatEditor, {
                           teamId: team.teamId,
                           seats: team.seats,
+                          connections: snapshot.data.connections,
                           onChanged: () => setNonce((value) => value + 1),
                         }),
                       ),
@@ -445,6 +647,10 @@ window.__ModuleLoader__.load({
           },
           h("div", { style: { fontWeight: 600, marginBottom: "10px" } }, "Squad 工作台"),
           body,
+          h(Connections, {
+            connections: snapshot.loading || snapshot.error !== undefined ? [] : snapshot.data.connections,
+            onChanged: () => setNonce((value) => value + 1),
+          }),
           h(CreateForm, { onCreated: () => setNonce((value) => value + 1) }),
         );
       }

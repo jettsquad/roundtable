@@ -3,7 +3,7 @@
  * they are checked rather than trusted.
  */
 import { describe, expect, it } from "vitest";
-import { checkRemoval, checkRoster, secretaryOf } from "../src/roster.ts";
+import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "../src/roster.ts";
 import type { SeatSpec } from "../src/seat.ts";
 
 const seat = (over: Partial<SeatSpec> = {}): SeatSpec => ({
@@ -79,5 +79,28 @@ describe("checkRemoval", () => {
     // requested and start landing on a default nobody chose.
     expect(checkRemoval(roster, "s2")[0]?.detail).toMatch(/是这支团队的秘书/);
     expect(checkRemoval(roster, "s2", { allowSecretary: true })).toEqual([]);
+  });
+});
+
+describe("placeSeat", () => {
+  it("没给位置就放末尾", () => {
+    expect(placeSeat(["a", "b"], "c")).toEqual(["a", "b", "c"]);
+  });
+
+  it("放回原来的位置", () => {
+    // 这是改连接的路径：先删后加，位置不变。
+    expect(placeSeat(["a", "c"], "b", 1)).toEqual(["a", "b", "c"]);
+    expect(placeSeat(["b", "c"], "a", 0)).toEqual(["a", "b", "c"]);
+  });
+
+  it("越界的位置被夹到两端，而不是产生空洞", () => {
+    expect(placeSeat(["a"], "x", 9)).toEqual(["a", "x"]);
+    expect(placeSeat(["a"], "x", -3)).toEqual(["x", "a"]);
+  });
+
+  it("不改原数组", () => {
+    const seats = ["a", "b"];
+    placeSeat(seats, "c", 0);
+    expect(seats).toEqual(["a", "b"]);
   });
 });

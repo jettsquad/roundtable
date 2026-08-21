@@ -20,6 +20,6 @@ export function apply(ctx: Context): void {
 }
 
 export { SeatConnectionsService } from "./service.ts";
-export type { ConnectionView } from "./service.ts";
+
 export { SQUAD_CONNECTIONS_DOMAIN } from "./domain.ts";
 export type { ConnectionRecord } from "./domain.ts";

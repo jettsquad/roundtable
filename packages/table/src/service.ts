@@ -36,7 +36,7 @@ import {
   type UsageTotals,
 } from "@squad/shared";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
-import { checkRemoval, checkRoster, secretaryOf } from "./roster.ts";
+import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "./roster.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
 
 declare module "@deepseek-ai/cordis" {
@@ -104,8 +104,15 @@ export interface Team {
   readonly seatStates: readonly SeatState[];
   /** Where a running agenda has got to, or nothing when none is running. */
   readonly progress: AgendaProgress | undefined;
-  /** Add a seat. Refused while a round is running — see `addSeat`. */
-  addSeat(seat: SeatSpec): void;
+  /**
+   * Add a seat. Refused while a round is running — see `addSeat`.
+   *
+   * `at` puts it back at a given position instead of the end. Seat order is
+   * speaking order in a round, so an edit that re-appends a seat also changes
+   * who speaks first — a caller that is editing a seat in place passes its
+   * old index to say the order did not change.
+   */
+  addSeat(seat: SeatSpec, options?: { readonly at?: number }): void;
   /** Remove a seat. The secretary needs `confirmSecretary`. */
   removeSeat(seatId: string, options?: { readonly confirmSecretary?: boolean }): void;
   /** The team's checkpoint coefficient, if it set one. */
@@ -349,7 +356,7 @@ export class TeamsService extends Service {
       get progress() {
         return record.running === undefined ? undefined : record.running.progress;
       },
-      addSeat: (seat) => this.addSeat(record, seat),
+      addSeat: (seat, options) => this.addSeat(record, seat, options),
       removeSeat: (seatId, options) => this.removeSeat(record, seatId, options),
       checkpointCoefficient: record.input.checkpointCoefficient,
       ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
@@ -627,12 +634,12 @@ export class TeamsService extends Service {
    * it had nothing to say) or handed a window nobody else got. Neither is a
    * state worth being able to reach.
    */
-  private addSeat(record: TeamRecord, seat: SeatSpec): void {
+  private addSeat(record: TeamRecord, seat: SeatSpec, options?: { readonly at?: number }): void {
     if (record.disposed) throw new Error("团队已销毁。");
     if (record.roundsInFlight > 0) throw new Error("这一轮还在跑，等它结束再改名册。");
     const problems = checkRoster([...record.seats, seat]);
     if (problems.length > 0) throw new Error(problems.map((problem) => problem.detail).join("\n"));
-    record.seats.push(seat);
+    record.seats.splice(0, record.seats.length, ...placeSeat(record.seats, seat, options?.at));
   }
 
   /**
