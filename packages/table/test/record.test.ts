@@ -16,8 +16,7 @@ import { describe, expect, it } from "vitest";
 import { adoptSessionEvent } from "@deepseek-ai/dsh-session";
 import { spokenMessage } from "../src/service.ts";
 
-const asEvent = (data: unknown) =>
-  ({ type: "user/message", seq: 3, time: Date.now(), data }) as never;
+const asEvent = (data: unknown) => ({ type: "user/message", seq: 3, time: Date.now(), data }) as never;
 
 describe("spokenMessage", () => {
   it("is accepted by the harness's own event validator", () => {
