@@ -33,7 +33,10 @@ export function apply(ctx: Context, config: Config): void {
 export { ReasoningService } from "./service.ts";
 export type { CaptureResult, Config, LearningSignal, SignalKind, Verdict } from "./service.ts";
 
-export { ReasoningStore, CRITERIA_DIR, INSTANCES_DIR, PROPOSALS_DIR } from "./store.ts";
+export { ReasoningStore, CRITERIA_DIR, INSTANCES_DIR, PROPOSALS_DIR, USAGE_DIR } from "./store.ts";
+
+export { REVIEW_AFTER_EVIDENCE, emptyUsage, healthOf, usageFromMarkdown, usageToMarkdown } from "./usage.ts";
+export type { Health, HealthVerdict, UsageRecord } from "./usage.ts";
 export { criterionFromMarkdown, criterionToMarkdown, instanceToMarkdown } from "./criterion.ts";
 export type { Criterion, CriterionStatus, Instance, Trigger } from "./criterion.ts";
 

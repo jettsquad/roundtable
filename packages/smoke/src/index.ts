@@ -432,6 +432,18 @@ export function apply(ctx: Context, config: Config): void {
       // judged, never how a participant thinks — and that has to be true of
       // the topology, not of anyone's discipline. So: assert the claim is
       // nowhere in what a seat would actually be handed.
+      // ── S6 三个刻度 ──────────────────────────────────────────────────
+      // Deliveries have actually happened by now, so the counters have real
+      // numbers rather than defaults.
+      const health = await ctx.reasoning.health();
+      for (const entry of health) {
+        line(
+          `  刻度：${entry.criterionId} 投放 ${entry.usage.delivered} 次，反例 ${entry.usage.counterExamples} 次 → ${entry.verdict}`,
+        );
+      }
+      const counted = health.every((entry) => entry.usage.delivered > 0);
+      line(counted ? "✅ 投放次数记下来了" : "❌ 投放没有被计数");
+
       const seatWindow = (await ctx.teamContext.windowFor(team.teamId, "seat-a")).join("\n");
       const claim = found[0]?.claim ?? "";
       const leaked = claim !== "" && seatWindow.includes(claim.slice(0, 20));

@@ -144,3 +144,21 @@ describe("buildSelectionPrompt", () => {
     expect(buildSelectionPrompt(situation, [make("c1")])).toContain("宁少勿多");
   });
 });
+
+describe("parseSelection tolerance", () => {
+  const candidates = [make("c1"), make("c2")];
+
+  it("reads an array of objects carrying ids", () => {
+    // Seen in a real run: the model answered [{"id": "..."}] and the whole
+    // delivery failed, leaving the host with nothing over a formatting
+    // preference. Surfaced only once selection started running on every
+    // non-empty candidate list rather than only over budget.
+    expect(parseSelection('[{"id":"c2"}]', candidates).map((c) => c.id)).toEqual(["c2"]);
+  });
+
+  it("still refuses an element with no readable id", () => {
+    // Tolerance is bounded. Guessing past this point would deliver criteria
+    // nobody chose.
+    expect(() => parseSelection("[42]", candidates)).toThrow(/读不出 id/);
+  });
+});

@@ -101,8 +101,20 @@ export function parseSelection(text: string, candidates: readonly Criterion[]): 
 
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   const chosen: Criterion[] = [];
-  for (const id of ids) {
-    if (typeof id !== "string") throw new Error("精选返回了非字符串的 id。");
+  for (const entry of ids) {
+    // A bare id, or an object carrying one. Both are unambiguous, and models
+    // move between the two shapes freely — refusing the second would fail the
+    // whole delivery and leave the host with nothing over a formatting
+    // preference. Tolerance stops there: anything else is refused rather than
+    // guessed at. Same bounded latitude `extractJson` gives prose around an
+    // object.
+    const id =
+      typeof entry === "string"
+        ? entry
+        : typeof entry === "object" && entry !== null && typeof (entry as { id?: unknown }).id === "string"
+          ? (entry as { id: string }).id
+          : undefined;
+    if (id === undefined) throw new Error(`精选返回了读不出 id 的元素：${JSON.stringify(entry)}`);
     const found = byId.get(id);
     if (found === undefined) throw new Error(`精选挑了不在候选里的 ${id}。`);
     if (!chosen.includes(found)) chosen.push(found);

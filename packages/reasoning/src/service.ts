@@ -23,6 +23,7 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { stripReasoning, type AgendaSpec } from "@squad/shared";
+import { healthOf, type Health } from "./usage.ts";
 import type { Criterion } from "./criterion.ts";
 import {
   DELIVERY_LIMIT,
@@ -152,6 +153,19 @@ export class ReasoningService extends Service {
       evidence: [...(existing?.evidence ?? []), instanceId],
       status: "active",
     };
+    // Counted here rather than when the proposal is accepted: a
+    // counter-example is a fact about the criterion the moment it is
+    // observed, and whether the human keeps the resulting wording does not
+    // change that something contradicted it. Counting only accepted ones
+    // would make the third scale quietest exactly where disagreement is
+    // sharpest.
+    if (distilled.relation === "counter-example" && distilled.criterionId !== undefined) {
+      await this.store.updateUsage(distilled.criterionId, (current) => ({
+        ...current,
+        counterExamples: current.counterExamples + 1,
+      }));
+    }
+
     await this.store.putProposal(proposal);
     return { instanceId, proposal, relation: distilled.relation };
   }
@@ -178,6 +192,53 @@ export class ReasoningService extends Service {
   /** Everything currently active. */
   async criteria(): Promise<readonly Criterion[]> {
     return this.store.criteria();
+  }
+
+  /**
+   * The human's mark on whether a delivered criterion changed anything.
+   *
+   * A mark, not an inference. Whether a decision moved BECAUSE of a criterion
+   * is not visible from here, and a proxy for it would produce a number that
+   * looks like measurement and is not — which is worse than an empty column,
+   * because an empty column asks to be filled.
+   */
+  async markOutcome(criterionId: string, outcome: "helpful" | "unhelpful"): Promise<void> {
+    await this.store.updateUsage(criterionId, (current) => ({
+      ...current,
+      helpful: current.helpful + (outcome === "helpful" ? 1 : 0),
+      unhelpful: current.unhelpful + (outcome === "unhelpful" ? 1 : 0),
+    }));
+  }
+
+  /** Every criterion judged against the three scales. */
+  async health(): Promise<readonly Health[]> {
+    const all = await this.store.criteria();
+    const report: Health[] = [];
+    for (const criterion of all) {
+      report.push(healthOf(await this.store.usage(criterion.id), criterion.evidence.length));
+    }
+    return report;
+  }
+
+  /**
+   * Suspend criteria that the third scale has flagged, and say which.
+   *
+   * The design asks for this to be executed rather than merely computed: a
+   * criterion with plenty of evidence and no counter-example is either solid
+   * or unfalsifiable, and those look identical from outside. `suspect` still
+   * surfaces in deliveries — it means "under review", not "withdrawn", and
+   * hiding it would remove the thing most likely to attract the
+   * counter-example that would settle it.
+   */
+  async review(): Promise<readonly Health[]> {
+    const flagged = (await this.health()).filter((entry) => entry.verdict === "never-contradicted");
+    for (const entry of flagged) {
+      const criterion = (await this.store.criteria()).find((c) => c.id === entry.criterionId);
+      if (criterion !== undefined && criterion.status === "active") {
+        await this.store.putCriterion({ ...criterion, status: "suspect" });
+      }
+    }
+    return flagged;
   }
 
   /**
@@ -208,11 +269,30 @@ export class ReasoningService extends Service {
     // while the filter was strict, false now that it deliberately over-fetches.
     // The permissive filter is only safe BECAUSE something downstream reads
     // 適用邊界 and drops what does not apply.
-    if (candidates.length === 0 || parent === undefined) {
-      return candidates.slice(0, DELIVERY_LIMIT);
-    }
+    if (candidates.length === 0) return [];
+    if (parent === undefined) return this.recordDelivery(candidates.slice(0, DELIVERY_LIMIT));
     const reply = await this.runTask(parent, "Lil X · 精选", buildSelectionPrompt(situation, candidates));
-    return parseSelection(reply, candidates);
+    return this.recordDelivery(parseSelection(reply, candidates));
+  }
+
+  /**
+   * Count a delivery against each criterion that was actually surfaced.
+   *
+   * Counted at DELIVERY, not at candidacy. "Never recalled" has to mean
+   * "never put in front of anyone", or the first scale measures how the
+   * filter behaves rather than whether the criterion was ever used — and the
+   * filter is the thing that scale is supposed to indict.
+   */
+  private async recordDelivery(delivered: readonly Criterion[]): Promise<readonly Criterion[]> {
+    const at = new Date().toISOString();
+    for (const criterion of delivered) {
+      await this.store.updateUsage(criterion.id, (current) => ({
+        ...current,
+        delivered: current.delivered + 1,
+        lastDeliveredAt: at,
+      }));
+    }
+    return delivered;
   }
 
   /**

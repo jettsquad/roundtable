@@ -26,10 +26,17 @@ import {
   type Criterion,
   type Instance,
 } from "./criterion.ts";
+import { emptyUsage, usageFromMarkdown, usageToMarkdown, type UsageRecord } from "./usage.ts";
 
 export const CRITERIA_DIR = "criteria";
 export const INSTANCES_DIR = "instances";
 export const PROPOSALS_DIR = "proposals";
+/**
+ * Usage sits with instances on the local side of the export boundary. Given
+ * someone else's abstract you should not receive their delivery counts, and
+ * giving yours away should not hand over how you have been working.
+ */
+export const USAGE_DIR = "usage";
 
 /**
  * One user's criteria library.
@@ -40,13 +47,15 @@ export const PROPOSALS_DIR = "proposals";
  */
 export class ReasoningStore {
   private readonly root: string;
+  /** Per-criterion write chains; see `updateUsage`. */
+  private readonly writes = new Map<string, Promise<void>>();
 
   constructor(root: string) {
     this.root = root;
   }
 
   async init(): Promise<void> {
-    for (const dir of [CRITERIA_DIR, INSTANCES_DIR, PROPOSALS_DIR]) {
+    for (const dir of [CRITERIA_DIR, INSTANCES_DIR, PROPOSALS_DIR, USAGE_DIR]) {
       await mkdir(join(this.root, dir), { recursive: true });
     }
   }
@@ -97,5 +106,40 @@ export class ReasoningStore {
 
   async dropProposal(id: string): Promise<void> {
     await rm(join(this.root, PROPOSALS_DIR, `${id}.md`), { force: true });
+  }
+
+  /** One criterion's usage, or a zeroed record when it has none yet. */
+  async usage(criterionId: string): Promise<UsageRecord> {
+    const path = join(this.root, USAGE_DIR, `${criterionId}.md`);
+    const text = await readFile(path, "utf8").catch(() => undefined);
+    return text === undefined ? emptyUsage(criterionId) : usageFromMarkdown(text, `${criterionId}.md`);
+  }
+
+  /**
+   * Read-modify-write one usage record.
+   *
+   * Serialised per criterion through a promise chain: two deliveries landing
+   * together would otherwise both read the same count and both write back
+   * that same number plus one, losing a delivery. An undercount here is
+   * invisible — it looks exactly like a criterion that was recalled less
+   * often, which is precisely the signal the first scale exists to give.
+   */
+  async updateUsage(criterionId: string, change: (current: UsageRecord) => UsageRecord): Promise<UsageRecord> {
+    const previous = this.writes.get(criterionId) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const current = await this.usage(criterionId);
+      const updated = change(current);
+      await mkdir(join(this.root, USAGE_DIR), { recursive: true });
+      await writeFile(join(this.root, USAGE_DIR, `${criterionId}.md`), usageToMarkdown(updated), "utf8");
+      return updated;
+    });
+    this.writes.set(
+      criterionId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next;
   }
 }
