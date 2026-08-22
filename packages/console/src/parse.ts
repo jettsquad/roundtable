@@ -156,3 +156,46 @@ export function checkTeamFields(input: {
   }
   return problems;
 }
+
+/** One complaint about the panel's team form, which picks agents rather than typing them. */
+export interface DraftProblem {
+  readonly field: "displayName" | "projectFolder" | "members";
+  readonly detail: string;
+}
+
+/**
+ * Check the panel's team draft.
+ *
+ * Separate from `checkTeamFields` because the panel no longer types a roster:
+ * it picks agents off the library, so the complaints are about the selection,
+ * not about a grammar. The host still refuses — `checkRoster` is the
+ * authority — this is only what lets each complaint sit under the control
+ * that caused it.
+ */
+export function checkTeamDraft(input: {
+  readonly displayName?: string;
+  readonly projectFolder?: string;
+  readonly members?: readonly { readonly templateId: string; readonly isSecretary?: boolean }[];
+}): readonly DraftProblem[] {
+  const problems: DraftProblem[] = [];
+  const displayName = (input.displayName ?? "").trim();
+  const projectFolder = (input.projectFolder ?? "").trim();
+  const members = input.members ?? [];
+
+  if (displayName === "") problems.push({ field: "displayName", detail: "给团队起个名字。" });
+  if (projectFolder === "") problems.push({ field: "projectFolder", detail: "选一个项目文件夹。" });
+  else if (!projectFolder.startsWith("/")) {
+    problems.push({ field: "projectFolder", detail: `要绝对路径：「${projectFolder}」不是。` });
+  }
+  if (members.length === 0) problems.push({ field: "members", detail: "至少选一个 Agent。" });
+
+  const secretaries = members.filter((member) => member.isSecretary === true);
+  if (secretaries.length > 1) problems.push({ field: "members", detail: "只能有一位秘书。" });
+  if (members.length > 0 && secretaries.length === 0) {
+    // A warning shaped as a refusal, deliberately. A team with no secretary
+    // has no seat that can plan an agenda, which is the thing teams exist
+    // for — and nothing about the roster afterwards says that is why.
+    problems.push({ field: "members", detail: "指一位秘书——只有秘书能排议程，不指的话这支团队开不了会。" });
+  }
+  return problems;
+}

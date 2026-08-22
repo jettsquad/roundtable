@@ -37,8 +37,11 @@ async function call<T>(path: string, method: string, body?: unknown): Promise<T>
 
 export const api = {
   snapshot: (): Promise<SquadSnapshot> => call<SquadSnapshot>("/teams", "GET"),
-  createTeam: (body: { displayName: string; projectFolder: string; roster: string }): Promise<{ teamId: string }> =>
-    call("/teams", "POST", body),
+  createTeam: (body: {
+    displayName: string;
+    projectFolder: string;
+    members: readonly { templateId: string; isSecretary?: boolean }[];
+  }): Promise<{ teamId: string }> => call("/teams", "POST", body),
   addSeat: (body: {
     teamId: string;
     templateId?: string;

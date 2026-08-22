@@ -314,3 +314,24 @@
   font-size: 12px;
   word-break: break-all;
 }
+
+.pickList {
+  margin-top: 4px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  border-radius: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.pickRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 9px;
+}
+
+.pickRow + .pickRow {
+  border-top: 1px solid var(--dsh-color-border, #34343a);
+}

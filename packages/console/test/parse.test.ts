@@ -4,7 +4,7 @@
  * nothing either way.
  */
 import { describe, expect, it } from "vitest";
-import { checkTeamFields, parseNewTeam, parseSay } from "../src/parse.ts";
+import { checkTeamDraft, checkTeamFields, parseNewTeam, parseSay } from "../src/parse.ts";
 
 describe("parseNewTeam", () => {
   it("reads a name, a folder and a roster", () => {
@@ -139,5 +139,46 @@ describe("checkTeamFields", () => {
 
   it("填全了就没有抱怨", () => {
     expect(checkTeamFields({ displayName: "组", projectFolder: "/p", roster: "甲*=架构, 乙=测试" })).toEqual([]);
+  });
+});
+
+describe("checkTeamDraft", () => {
+  const member = (templateId: string, isSecretary?: boolean) => ({
+    templateId,
+    ...(isSecretary === undefined ? {} : { isSecretary }),
+  });
+
+  it("一个都不选就说选人，不说语法", () => {
+    // 面板不再打名册文本，所以抱怨要落在选择上。
+    const problems = checkTeamDraft({ displayName: "组", projectFolder: "/p" });
+    expect(problems.map((problem) => problem.field)).toEqual(["members"]);
+    expect(problems[0]?.detail).toMatch(/至少选一个 Agent/);
+  });
+
+  it("选了人但没指秘书也拦下来", () => {
+    // 没有秘书 = 排不了议程 = 这支团队做不了它存在的那件事。
+    const problems = checkTeamDraft({ displayName: "组", projectFolder: "/p", members: [member("a")] });
+    expect(problems[0]?.field).toBe("members");
+    expect(problems[0]?.detail).toMatch(/秘书/);
+  });
+
+  it("两个秘书被拒", () => {
+    const problems = checkTeamDraft({
+      displayName: "组",
+      projectFolder: "/p",
+      members: [member("a", true), member("b", true)],
+    });
+    expect(problems.some((problem) => /只能有一位秘书/.test(problem.detail))).toBe(true);
+  });
+
+  it("名字和文件夹各自抱怨各自的", () => {
+    const problems = checkTeamDraft({ projectFolder: "proj", members: [member("a", true)] });
+    expect(problems.map((problem) => problem.field).sort()).toEqual(["displayName", "projectFolder"]);
+  });
+
+  it("齐了就没有抱怨", () => {
+    expect(
+      checkTeamDraft({ displayName: "组", projectFolder: "/p", members: [member("a", true), member("b")] }),
+    ).toEqual([]);
   });
 });

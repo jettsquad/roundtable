@@ -149,7 +149,7 @@ export function TeamPanel(): JSX.Element | null {
                 <TeamCard key={team.teamId} team={team} data={snapshot.data} onChanged={again} />
               ))
             )}
-            <CreateForm onCreated={again} />
+            <CreateForm agents={snapshot.data.agents} onCreated={again} />
           </div>
         ) : page === "agents" ? (
           <AgentsPage agents={snapshot.data.agents} connections={snapshot.data.connections} onChanged={again} />

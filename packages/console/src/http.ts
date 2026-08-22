@@ -37,6 +37,7 @@ import type { Context } from "@deepseek-ai/cordis";
 
 import type {
   AgentRequest,
+  TeamMember,
   ConnectionRequest,
   DirectoryListing,
   CreateTeamRequest,
@@ -119,6 +120,59 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
 /** The three fields the panel collects, in the grammar the command uses. */
 export function commandLineFor(request: CreateTeamRequest): string {
   return [request.displayName ?? "", request.projectFolder ?? "", request.roster ?? ""].join(" | ");
+}
+
+/**
+ * Create a team from agents picked off the library.
+ *
+ * The panel's path. It does not go through the text grammar, because there is
+ * nothing to parse: each member is already a configured agent, and the seat
+ * it becomes carries that configuration — backend, connection, permission
+ * mode, ceilings — instead of a name and a guessed system prompt.
+ *
+ * `checkRoster` is still the authority on the result, reached through
+ * `teams.create`. The checks here are the ones that can say something more
+ * useful before that: which template is missing, and which agent the library
+ * never cleared to be a secretary.
+ */
+export async function createTeamWithMembers(
+  ctx: Context,
+  input: { readonly displayName: string; readonly projectFolder: string; readonly members: readonly TeamMember[] },
+): Promise<string> {
+  if (input.displayName.trim() === "") throw new Error("给团队起个名字。");
+  if (!input.projectFolder.trim().startsWith("/")) {
+    throw new Error(`项目文件夹要写绝对路径：「${input.projectFolder}」不是。`);
+  }
+  if (input.members.length === 0) throw new Error("至少要选一个 Agent。");
+
+  const seats = input.members.map((member, index) => {
+    const template = ctx.agentTemplates.get(member.templateId);
+    if (template === undefined) throw new Error(`Agent 库里没有这个模板：${member.templateId}。`);
+    if (member.isSecretary === true && !template.secretaryCandidate) {
+      throw new Error(`「${template.displayName}」在 Agent 库里没有勾选「可以当秘书」。`);
+    }
+    return {
+      seatId: `seat-${index + 1}`,
+      displayName: template.displayName,
+      role: template.role,
+      systemPrompt: template.systemPrompt,
+      backend: template.backend,
+      templateId: template.templateId,
+      color: template.color,
+      ...(member.isSecretary === true ? { isSecretary: true } : {}),
+      ...(template.connectionId === undefined ? {} : { connectionId: template.connectionId }),
+      ...(template.permissionMode === undefined ? {} : { permissionMode: template.permissionMode }),
+      ...(template.caps === undefined ? {} : { caps: template.caps }),
+    };
+  });
+
+  const team = await ctx.teams.create({
+    displayName: input.displayName.trim(),
+    projectFolder: input.projectFolder.trim(),
+    hostDisplayName: "主持人",
+    seats,
+  });
+  return team.teamId;
 }
 
 export async function createTeamFrom(ctx: Context, raw: string): Promise<string> {
@@ -385,7 +439,17 @@ export function registerSquadApi(ctx: Context): () => void {
           return;
         }
         if (req.method === "POST") {
-          const created = await createTeamFrom(ctx, commandLineFor(await readJson<CreateTeamRequest>(req)));
+          const body = await readJson<CreateTeamRequest>(req);
+          // `members` wins when both arrive: it carries configuration, the
+          // text grammar carries only names.
+          const created =
+            body.members === undefined
+              ? await createTeamFrom(ctx, commandLineFor(body))
+              : await createTeamWithMembers(ctx, {
+                  displayName: body.displayName ?? "",
+                  projectFolder: body.projectFolder ?? "",
+                  members: body.members,
+                });
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ teamId: created }));
           return;

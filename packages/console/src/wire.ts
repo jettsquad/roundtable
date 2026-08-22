@@ -62,11 +62,30 @@ export interface SquadSnapshot {
   readonly agents: readonly AgentTemplate[];
 }
 
-/** Building a team: the three fields, in the grammar the command uses. */
+/** One agent taken from the library into a new team. */
+export interface TeamMember {
+  readonly templateId: string;
+  readonly isSecretary?: boolean;
+}
+
+/**
+ * Building a team, two ways in.
+ *
+ * `members` is the panel: agents picked off the library, already configured.
+ * `roster` is the slash command's text grammar, which stays because typing
+ * is the right interaction in a command line and the wrong one in a form —
+ * the form had a person retyping names that were already in the library, and
+ * then spelling a `*` to mark a secretary the library already knew could be
+ * one.
+ *
+ * When both arrive, `members` wins: it is the one that carries configuration
+ * rather than just names.
+ */
 export interface CreateTeamRequest {
   readonly displayName?: string;
   readonly projectFolder?: string;
   readonly roster?: string;
+  readonly members?: readonly TeamMember[];
 }
 
 /** Adding or removing one seat. */
