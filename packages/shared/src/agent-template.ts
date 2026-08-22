@@ -75,6 +75,29 @@ export interface AgentTemplate {
   readonly enabled: boolean;
 }
 
+/**
+ * Whether an agent may use this connection.
+ *
+ * The two backends must MATCH. They were free to disagree, and the failure
+ * was silent and total: a connection registers its provider under its OWN
+ * backend, so a `codex` agent pointing at a `claude-code` connection asks for
+ * `codex/<id>` while `claude-code-fenced/<id>` is what exists. The round
+ * fails naming a provider nobody typed — and the environment would have been
+ * wrong regardless, since each backend reads different variables.
+ */
+export function connectionMismatch(
+  agentBackend: string,
+  connectionBackend: string,
+  connectionName: string,
+): string | undefined {
+  if (agentBackend === connectionBackend) return undefined;
+  return (
+    `「${connectionName}」是 ${connectionBackend} 的连接，配不到 ${agentBackend} 的 agent 上。` +
+    `每个后端读的环境变量不一样，provider 也是按连接自己的后端注册的——` +
+    `请换一个 ${agentBackend} 的连接，或者把这个 agent 的后端改成 ${connectionBackend}。`
+  );
+}
+
 export interface AgentTemplateProblem {
   readonly field: string;
   readonly detail: string;

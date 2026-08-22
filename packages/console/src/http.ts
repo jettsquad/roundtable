@@ -48,7 +48,7 @@ import type {
   TeamSummary,
 } from "./wire.ts";
 import { parseNewTeam } from "./parse.ts";
-import { providerForSeat, type AgentCheckReport, type CheckResult } from "@squad/shared";
+import { connectionMismatch, providerForSeat, type AgentCheckReport, type CheckResult } from "@squad/shared";
 
 // Imported for the `Context.webServer` declaration merging it carries; an
 // augmentation applies only where its module is part of the compilation.
@@ -114,7 +114,11 @@ function blockedReason(
 ) {
   const wanted = providerForSeat(seat);
   if (ctx.subagents.getProvider(wanted) !== undefined) return undefined;
-  return seat.backend === "claude-code" ? `连接不在了（要的是 ${wanted}）` : `Squad 还没有 ${seat.backend} 的席位插件`;
+  // Named honestly, and no longer claiming the backend has no plugin — all
+  // three have one now. The usual cause is a connection whose OWN backend
+  // differs from the seat's, because a provider is registered under the
+  // connection's backend.
+  return `没有注册「${wanted}」——多半是这个席位的连接属于另一个后端，或者连接已经删了`;
 }
 
 /**
@@ -212,7 +216,15 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       proposals: pending.map((criterion) => criterionView(criterion)),
       live: active.map((criterion) => criterionView(criterion, healthById.get(criterion.id))),
     },
-    connections,
+    connections: connections.map((connection) => ({
+      ...connection,
+      // Asked of the registry, so it cannot drift from what was actually
+      // built — see `PanelConnection`.
+      providerReady:
+        ctx.subagents.getProvider(
+          providerForSeat({ backend: connection.backend, connectionId: connection.connectionId }),
+        ) !== undefined,
+    })),
     agents: ctx.agentTemplates.list(),
     picker: pickerKind(ctx),
   };
@@ -375,6 +387,15 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     }
     connectionId = connection.connectionId;
   }
+  // Refused at save, where it can still be fixed cheaply. Left to run time
+  // it becomes an unregistered provider name at the first round.
+  if (connectionId !== undefined && connectionId !== "") {
+    const linked = ctx.seatConnections.get(connectionId);
+    if (linked !== undefined) {
+      const problem = connectionMismatch(request.backend, linked.backend, linked.displayName);
+      if (problem !== undefined) throw new Error(problem);
+    }
+  }
   await ctx.agentTemplates.save({
     templateId: request.templateId,
     displayName: request.displayName,
@@ -425,18 +446,20 @@ export async function checkAgent(ctx: Context, templateId: string): Promise<Agen
   // that passes and a round that fails, which is worse than no test.
   const wanted = providerForSeat(template);
   const registered = ctx.subagents.getProvider(wanted) !== undefined;
+  const linked = template.connectionId === undefined ? undefined : ctx.seatConnections.get(template.connectionId);
+  const mismatch =
+    linked === undefined ? undefined : connectionMismatch(template.backend, linked.backend, linked.displayName);
   checks.push(
     registered
       ? { name: "席位后端", outcome: "ok", detail: wanted }
       : {
           name: "席位后端",
           outcome: "fail",
-          detail:
-            `没有注册「${wanted}」。` +
-            (template.backend === "claude-code"
-              ? "通常是这个连接刚被删掉了。"
-              : `Squad 目前只做了 claude-code 的席位插件，${template.backend} 的还没有——这个 agent 一开会就会失败。` +
-                `已注册的有：${ctx.subagents.list().join("、")}`),
+          // The list of every registered provider used to ride along here.
+          // It is dozens of names and none of them is the answer; the answer
+          // is almost always that the connection belongs to another backend,
+          // which this says instead.
+          detail: `没有注册「${wanted}」。${mismatch ?? "这个连接可能已经删了。"}`,
         },
   );
 

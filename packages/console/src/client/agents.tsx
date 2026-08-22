@@ -240,7 +240,17 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               // to change with it — otherwise the form quietly carries
               // `plan` into a Codex agent and the CLI is the one that
               // complains, one round later.
-              set({ backend, permissionMode: defaultPermissionMode(backend), reasoningEffort: "" });
+              // The chosen connection is dropped if it belonged to the old
+              // backend: keeping it would carry a pairing the host refuses,
+              // and the refusal would arrive at save time pointing at a field
+              // the person did not touch.
+              const keep = connections.find((c) => c.connectionId === draft.connectionId)?.backend === backend;
+              set({
+                backend,
+                permissionMode: defaultPermissionMode(backend),
+                reasoningEffort: "",
+                ...(keep ? {} : { connectionId: "" }),
+              });
             }}
           >
             {BACKENDS.map((backend) => (
@@ -292,12 +302,20 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
             }}
           >
             <option value="">本机登录（用宿主 CLI 的登录态和默认模型）</option>
-            {connections.map((connection) => (
-              <option key={connection.connectionId} value={connection.connectionId}>
-                {connection.displayName}
-                {connection.modelId === undefined ? "" : ` · ${connection.modelId}`}
-              </option>
-            ))}
+            {/* Only this backend's connections. A provider is registered under
+                the CONNECTION's backend, so a codex agent on a claude-code
+                connection asks for a name that does not exist — and the two
+                read different environment variables anyway. The host refuses
+                the pairing; not offering it is what stops someone building
+                it. */}
+            {connections
+              .filter((connection) => connection.backend === draft.backend)
+              .map((connection) => (
+                <option key={connection.connectionId} value={connection.connectionId}>
+                  {connection.displayName}
+                  {connection.modelId === undefined ? "" : ` · ${connection.modelId}`}
+                </option>
+              ))}
             <option value="__new__">＋ 新建一个连接…</option>
           </select>
         </div>

@@ -17,18 +17,27 @@ import {
   isOwnModel,
   type AuthMode,
   type ConnectionBackend,
-  type ConnectionView,
   type SeatConnection,
 } from "@squad/shared";
+import type { PanelConnection } from "../wire.ts";
 import { api, useAction } from "./api.ts";
 import styles from "./panel.module.css";
 
 interface ConnectionsProps {
-  readonly connections: readonly ConnectionView[];
+  readonly connections: readonly PanelConnection[];
   readonly onChanged: () => void;
 }
 
 export function Connections({ connections, onChanged }: ConnectionsProps): JSX.Element {
+  /**
+   * The connection being edited, or `undefined` for a new one.
+   *
+   * The list was read-only apart from delete, so fixing a typo in an endpoint
+   * meant deleting the connection — which orphans every agent pointing at it
+   * — and building it again under a new id. Editing keeps the id, so the
+   * agents stay attached.
+   */
+  const [editing, setEditing] = useState<string | undefined>(undefined);
   const [name, setName] = useState("");
   const [mode, setMode] = useState<AuthMode>("subscription");
   const [backend, setBackend] = useState<ConnectionBackend>("claude-code");
@@ -47,8 +56,38 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
   const [existing, setExisting] = useState(false);
   const { error, run } = useAction(onChanged);
 
+  /** Load an existing connection into the form. Never its key: there is none to load. */
+  const edit = (connection: PanelConnection): void => {
+    setEditing(connection.connectionId);
+    setName(connection.displayName);
+    setBackend(connection.backend);
+    setMode(connection.authMode);
+    setModel(connection.modelId ?? "");
+    setEndpoint(connection.endpoint ?? "");
+    setCredentialRef(connection.credentialRef ?? "");
+    // The key box starts empty on an edit, and an empty key box means "leave
+    // the stored one alone". Prefilling it is impossible — the value never
+    // comes to the browser — and showing a masked placeholder would suggest
+    // it could be read back.
+    setKey("");
+    setExisting(false);
+  };
+
+  const clear = (): void => {
+    setEditing(undefined);
+    setName("");
+    setModel("");
+    setBackend("claude-code");
+    setEndpoint("");
+    setCredentialRef("");
+    setKey("");
+    setExisting(false);
+  };
+
   const save = async (): Promise<void> => {
-    const connectionId = `conn-${Date.now().toString(36)}`;
+    // Keeping the id on an edit is what keeps every agent pointing at this
+    // connection pointing at it afterwards.
+    const connectionId = editing ?? `conn-${Date.now().toString(36)}`;
     const connection: SeatConnection & { credential?: string } = {
       connectionId,
       displayName: name,
@@ -69,13 +108,7 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
       ...(mode === "api-key" && !existing && key !== "" ? { credential: key } : {}),
     };
     if (!(await run(() => api.saveConnection(connection)))) return;
-    setName("");
-    setModel("");
-    setBackend("claude-code");
-    setEndpoint("");
-    setCredentialRef("");
-    setKey("");
-    setExisting(false);
+    clear();
   };
 
   return (
@@ -95,9 +128,10 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
             {/* Honest about what is actually built. A connection on a backend
                 with no seat plugin saves, renders, and then fails at the first
                 round with a provider name nobody typed. */}
-            {connection.backend === "claude-code" ? null : (
-              <span className={styles.badgeBad}>还没有 {connection.backend} 的席位插件</span>
-            )}
+            {connection.providerReady ? null : <span className={styles.badgeBad}>没有席位后端认领它</span>}
+            <button type="button" className={styles.button} onClick={() => edit(connection)}>
+              编辑
+            </button>
             {connection.authMode !== "api-key" ? null : connection.credentialConfigured ? (
               <span className={styles.muted}>密钥已配置</span>
             ) : connection.credentialWritable ? (
@@ -197,8 +231,16 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
         {error === undefined ? null : <div className={styles.error}>{error}</div>}
         <div className={styles.row}>
           <button type="button" className={styles.button} onClick={() => void save()}>
-            保存连接
+            {editing === undefined ? "新建连接" : "保存修改"}
           </button>
+          {editing === undefined ? null : (
+            <button type="button" className={styles.button} onClick={clear}>
+              取消编辑
+            </button>
+          )}
+          {editing === undefined ? null : (
+            <span className={styles.hint}>密钥留空就是不动已存的那把。要换就直接填新的。</span>
+          )}
         </div>
       </div>
     </div>

@@ -90,7 +90,7 @@ export interface SquadSnapshot {
     readonly live: readonly CriterionView[];
   };
   /** Seat connections, with credential STATUS and never a credential value. */
-  readonly connections: readonly ConnectionView[];
+  readonly connections: readonly PanelConnection[];
   /** The reusable agent library. */
   readonly agents: readonly AgentTemplate[];
   /**
@@ -255,4 +255,20 @@ export interface CriterionView {
 export interface CriterionVerdictRequest {
   readonly id: string;
   readonly verdict: "accept" | "reject";
+}
+
+/**
+ * A connection as the panel sees it.
+ *
+ * `providerReady` is added HERE rather than on the library's own view: the
+ * connection library has no business knowing which seat backends registered
+ * what, and asking it to would be the first thread pulling those two apart.
+ * The console has the registry, so the console answers.
+ *
+ * Asked rather than derived from a list of backends someone believed were
+ * built — the badge was once hardcoded to `backend === "claude-code"` and
+ * went on saying 「还没有 codex 的席位插件」 after the codex plugin shipped.
+ */
+export interface PanelConnection extends ConnectionView {
+  readonly providerReady: boolean;
 }

@@ -4,6 +4,7 @@
  * been". So it lives in one function and is checked from both sides.
  */
 import { describe, expect, it } from "vitest";
+import { connectionMismatch } from "../src/agent-template.ts";
 import {
   credentialRefFor,
   modelArgumentFor,
@@ -228,5 +229,21 @@ describe("modelArgumentFor", () => {
     // 给了就会被发到登录态自己的端点，报出来的错指向模型而不是这个不匹配。
     expect(modelArgumentFor(of({ authMode: "subscription", modelId: "deepseek-chat" }))).toBeUndefined();
     expect(modelArgumentFor(of({ authMode: "subscription", modelId: "gpt-5" }))).toBe("gpt-5");
+  });
+});
+
+describe("connectionMismatch", () => {
+  it("后端一致就没问题", () => {
+    expect(connectionMismatch("codex", "codex", "n")).toBeUndefined();
+  });
+
+  it("不一致要拒，而且说清楚两条路", () => {
+    // 之前两边可以随便不一致，失败是彻底静默的：连接按它自己的后端注册
+    // provider，于是 codex agent 去要 codex/<id>，而存在的是
+    // claude-code-fenced/<id>。一轮跑起来才报，名字谁都没敲过。
+    const detail = connectionMismatch("codex", "claude-code", "Chu-MiniMax-H3");
+    expect(detail).toContain("Chu-MiniMax-H3");
+    expect(detail).toContain("claude-code");
+    expect(detail).toContain("codex");
   });
 });
