@@ -48,7 +48,7 @@ import type {
   TeamSummary,
 } from "./wire.ts";
 import { parseNewTeam } from "./parse.ts";
-import { providerNameFor, type AgentCheckReport, type CheckResult } from "@squad/shared";
+import { providerForSeat, providerNameFor, type AgentCheckReport, type CheckResult } from "@squad/shared";
 
 /** Providers the non-claude backends would ask for, if their plugins existed. */
 const PROVIDER_BY_BACKEND_NAME: Readonly<Record<string, string>> = { codex: "codex", dsh: "dsh-sdk" };
@@ -100,6 +100,25 @@ function criterionView(
   };
 }
 
+/**
+ * Why a seat cannot run, when it cannot.
+ *
+ * Asked of the registry, so this cannot drift from what was actually built:
+ * a seat on a backend with no plugin fails the instant the round starts,
+ * having sent nothing, and reporting a provider name afterwards is the worst
+ * moment to learn it. The check lives here rather than in the table because
+ * only the console can act on the answer — the table's job is to run the
+ * round, not to shop for a provider.
+ */
+function blockedReason(
+  ctx: Context,
+  seat: { backend: string; connectionId?: string | undefined; permissionMode?: string | undefined },
+) {
+  const wanted = providerForSeat(seat);
+  if (ctx.subagents.getProvider(wanted) !== undefined) return undefined;
+  return seat.backend === "claude-code" ? `连接不在了（要的是 ${wanted}）` : `Squad 还没有 ${seat.backend} 的席位插件`;
+}
+
 /** Build the snapshot the panel renders. Pure read; nothing here starts anything. */
 export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   const teams: TeamSummary[] = [];
@@ -126,6 +145,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           ...(seat.permissionMode === undefined ? {} : { permissionMode: seat.permissionMode }),
           ...(seat.templateId === undefined ? {} : { templateId: seat.templateId }),
           ...(seat.color === undefined ? {} : { color: seat.color }),
+          ...(blockedReason(ctx, seat) === undefined ? {} : { blocked: blockedReason(ctx, seat) }),
         };
       }),
       ...(team.progress === undefined

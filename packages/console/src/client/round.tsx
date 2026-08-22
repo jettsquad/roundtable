@@ -29,6 +29,14 @@ export function RoundBox({
   const [replies, setReplies] = useState<readonly SeatReply[] | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
 
+  // Seats that cannot run at all. A round containing only these sends
+  // nothing and comes back as failures — which the panel used to let you
+  // start, and then explained afterwards with a provider name you never
+  // typed.
+  const asked = picked.length === 0 ? team.seats : team.seats.filter((seat) => picked.includes(seat.seatId));
+  const blocked = asked.filter((seat) => seat.blocked !== undefined);
+  const allBlocked = asked.length > 0 && blocked.length === asked.length;
+
   const ask = async (): Promise<void> => {
     setError(undefined);
     setRunning(true);
@@ -67,7 +75,7 @@ export function RoundBox({
         <button
           type="button"
           className={styles.button}
-          disabled={running || instruction.trim() === "" || team.seats.length === 0}
+          disabled={running || instruction.trim() === "" || team.seats.length === 0 || allBlocked}
           onClick={() => void ask()}
         >
           {running ? "进行中…" : picked.length === 0 ? "问所有人" : `问 ${picked.length} 位`}
@@ -103,6 +111,12 @@ export function RoundBox({
         ))}
       </div>
 
+      {blocked.length === 0 ? null : (
+        <div className={styles.error}>
+          {allBlocked ? "这一轮问不出去：" : "这几位跑不了，会被跳过："}
+          {blocked.map((seat) => `${seat.displayName}（${seat.blocked}）`).join("、")}
+        </div>
+      )}
       {error === undefined ? null : <div className={styles.error}>{error}</div>}
 
       {(replies ?? []).map((reply) => (

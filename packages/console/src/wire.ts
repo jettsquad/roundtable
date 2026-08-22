@@ -40,6 +40,16 @@ export interface TeamSummary {
     /** Where this seat came from, when it was taken from the library. */
     readonly templateId?: string | undefined;
     readonly color?: string | undefined;
+    /**
+     * Why this seat cannot run, when it cannot.
+     *
+     * Computed from what is actually registered, not from a list of backends
+     * someone believed were built. A seat whose backend has no plugin fails
+     * at the moment the round starts, having sent nothing — and until this
+     * existed the panel let you start that round anyway and showed you the
+     * provider name afterwards.
+     */
+    readonly blocked?: string | undefined;
     /** The seat's own standing instructions, so a roster can be inspected. */
     readonly systemPrompt: string;
     readonly backend: string;

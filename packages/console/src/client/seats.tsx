@@ -83,6 +83,8 @@ export function SeatEditor({ team, connections, agents, onChanged }: SeatEditorP
             <span className={styles.muted}>{seat.role}</span>
             <span className={styles.muted}>{connectionLabel(seat, connections)}</span>
             {seat.permissionMode === undefined ? null : <span className={styles.muted}>{seat.permissionMode}</span>}
+            {/* Said before the round, not after it fails. */}
+            {seat.blocked === undefined ? null : <span className={styles.badgeBad}>⚠️ {seat.blocked}</span>}
             {/* Running is the difference between a seat that will answer and
                 one that already is; it belongs on the row, not in a legend. */}
             {seat.running ? <span className={styles.badgeRun}>发言中</span> : null}
