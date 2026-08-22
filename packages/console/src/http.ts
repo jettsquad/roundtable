@@ -29,9 +29,6 @@
  *   would let a model decide who speaks, which is the one thing this product
  *   must not be, arriving by the back door after the front one was shut.
  */
-import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
 
@@ -39,9 +36,11 @@ import type {
   AgentRequest,
   CriterionVerdictRequest,
   CriterionView,
+  NativePickResult,
+  PickerKind,
+  DirectoryListing as WireDirectoryListing,
   TeamMember,
   ConnectionRequest,
-  DirectoryListing,
   CreateTeamRequest,
   SeatPatch,
   SeatRequest,
@@ -56,6 +55,8 @@ const PROVIDER_BY_BACKEND_NAME: Readonly<Record<string, string>> = { codex: "cod
 // Imported for the `Context.webServer` declaration merging it carries; an
 // augmentation applies only where its module is part of the compilation.
 import type {} from "@deepseek-ai/dsh-host-webserver";
+// Same reason: `ctx.directoryPicker` is a declaration merge.
+import type { DirectoryPicker } from "@deepseek-ai/dsh-host-directory-picker";
 
 /** Where the browser half reads from. Prefix, so one registration serves several reads. */
 export const SQUAD_API_PREFIX = "/api/squad";
@@ -159,6 +160,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
     },
     connections,
     agents: ctx.agentTemplates.list(),
+    picker: pickerKind(ctx),
   };
 }
 
@@ -443,36 +445,79 @@ export async function checkAgent(ctx: Context, templateId: string): Promise<Agen
 }
 
 /**
- * List the directories under one path, for the folder picker.
+ * The picker service, or `undefined` where none is mounted.
  *
- * A browser has no native folder dialog, and a text box asking for an
- * absolute path is a text box people mistype. This is the smallest thing that
- * replaces it: names of direct child directories, nothing else — no files, no
- * sizes, no contents. Read-only by construction, and the server it rides on
- * is the local one the person already has open.
- *
- * Unreadable children are skipped rather than failing the listing: a home
- * directory usually contains something the user cannot stat, and refusing to
- * show the other forty entries because of it helps nobody.
+ * `ctx.get` rather than an `inject` entry, deliberately. Injecting it would
+ * make the console WAIT for a service a composition may never provide —
+ * cordis holds the fiber until a declared dependency appears — so a missing
+ * FILE DIALOG would silently take the whole team surface down with it.
+ * `ctx.get` answers `undefined`, and the form then says the host has no
+ * picker instead of drawing a button that cannot work.
  */
-export async function browseDirectory(target?: string): Promise<DirectoryListing> {
-  const path = target === undefined || target.trim() === "" ? homedir() : resolve(target.trim());
-  if (!isAbsolute(path)) throw new Error(`要绝对路径：「${path}」不是。`);
-  const entries = await readdir(path, { withFileTypes: true }).catch((failure: NodeJS.ErrnoException) => {
-    throw new Error(`读不了这个目录：${path}（${failure.code ?? failure.message}）`);
-  });
-  const directories = entries
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-    .map((entry) => entry.name)
-    .sort((a, b) => a.localeCompare(b));
-  const parent = dirname(path);
-  return { path, directories, ...(parent === path ? {} : { parent }) };
+function picker(ctx: Context): DirectoryPicker | undefined {
+  return ctx.reflect.get("directoryPicker") as DirectoryPicker | undefined;
 }
 
-/** Join a browsed directory with a child name, without letting `..` through. */
-export function childPath(path: string, name: string): string {
-  if (name.includes("/") || name === "..") throw new Error(`不是一个目录名：「${name}」。`);
-  return join(path, name);
+/**
+ * How this host lets a person choose a folder.
+ *
+ * Asked rather than assumed. dsh resolves the interaction at boot — an OS
+ * chooser when the host has a display, listing primitives when it does not,
+ * because no dialog can reach a remote browser — and exposes it as a
+ * discriminated capability. The first version of this route hand-rolled
+ * `readdir`, which meant a machine with a real file dialog never got to use
+ * it, and the in-app list was the only thing anyone ever saw.
+ */
+export function pickerKind(ctx: Context): PickerKind {
+  const capability = picker(ctx)?.capability();
+  if (capability === undefined) return "none";
+  return capability.kind === "native" || capability.kind === "browse" ? capability.kind : "none";
+}
+
+/**
+ * Open the host's OS directory chooser.
+ *
+ * `null` is a cancellation, not a failure — a person who closed the dialog
+ * made a choice, and reporting it as an error would put a red line under a
+ * decision they meant.
+ */
+export async function pickDirectoryNatively(ctx: Context, signal?: AbortSignal): Promise<NativePickResult> {
+  const capability = picker(ctx)?.capability();
+  if (capability?.kind !== "native") throw new Error("这台宿主没有原生的文件夹对话框。");
+  const path = await capability.pick(signal ?? new AbortController().signal);
+  return { path };
+}
+
+/** List one directory level through the browse backend. */
+export async function browseDirectory(ctx: Context, target?: string): Promise<WireDirectoryListing> {
+  const capability = picker(ctx)?.capability();
+  if (capability?.kind !== "browse") throw new Error("这台宿主不提供目录浏览。");
+  const listing = await capability.list(
+    target === undefined || target.trim() === "" ? undefined : target.trim(),
+    new AbortController().signal,
+  );
+  return {
+    kind: "browse",
+    path: listing.path,
+    home: listing.home,
+    crumbs: listing.crumbs,
+    // Hidden rows are dropped here rather than at the seam: the backend
+    // reports the flag and leaves the policy to the client, and a project
+    // folder is essentially never a dot-directory.
+    entries: listing.entries.filter((entry) => !entry.hidden),
+    truncated: listing.truncated,
+  };
+}
+
+/**
+ * Disband a team.
+ *
+ * The record it wrote stays: the discussion happened, and a checkpoint whose
+ * team is gone is still the only account of what was decided. What ends is
+ * the live table — its host node, its seats, its in-flight rounds.
+ */
+export async function disbandTeam(ctx: Context, teamId: string): Promise<void> {
+  await teamOf(ctx, teamId).dispose();
 }
 
 /** Remove a seat. Its past words stay in the record — the discussion happened. */
@@ -589,12 +634,42 @@ export function registerSquadApi(ctx: Context): () => void {
           return;
         }
         if (suffix === "/browse" && req.method === "POST") {
-          const body = await readJson<{ path?: string; child?: string }>(req);
-          const base = body.path === undefined || body.path === "" ? undefined : body.path;
-          const target = body.child === undefined || body.child === "" ? base : childPath(base ?? "", body.child);
-          const listing = await browseDirectory(target);
+          const body = await readJson<{ path?: string }>(req);
+          const listing = await browseDirectory(ctx, body.path);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify(listing));
+          return;
+        }
+        if (suffix === "/pick" && req.method === "POST") {
+          const picked = await pickDirectoryNatively(ctx);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(picked));
+          return;
+        }
+        if (suffix === "/teams" && req.method === "DELETE") {
+          await disbandTeam(ctx, (await readJson<{ teamId: string }>(req)).teamId);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/say" && req.method === "POST") {
+          // A round costs real model calls, so it is a deliberate act — but a
+          // person clicking a button in the panel is exactly as much a person
+          // as one typing a slash command. The invariant this product keeps
+          // is that no MODEL takes the chair, not that only typing counts.
+          const body = await readJson<{ teamId: string; instruction: string; seatIds?: readonly string[] }>(req);
+          const team = teamOf(ctx, body.teamId);
+          if (body.instruction.trim() === "") throw new Error("指令是空的。");
+          const replies = await team.ask(body.instruction.trim(), body.seatIds);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ replies: replies.map((reply) => ({ ...reply })) }));
+          return;
+        }
+        if (suffix === "/stop" && req.method === "POST") {
+          const body = await readJson<{ teamId: string; reason?: string }>(req);
+          await teamOf(ctx, body.teamId).stopAgenda(body.reason ?? "主持人在面板上叫停。");
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
           return;
         }
         if (suffix === "/seats" && req.method === "PATCH") {

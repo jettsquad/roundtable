@@ -6,9 +6,9 @@
  */
 import { useEffect, useState } from "react";
 import type { AgentCheckReport, AgentTemplate, SeatCaps, SeatConnection } from "@squad/shared";
-import type { AgentRequest, DirectoryListing, SquadSnapshot } from "../wire.ts";
+import type { AgentRequest, DirectoryListing, NativePickResult, PickerKind, SquadSnapshot } from "../wire.ts";
 
-export type { AgentCheckReport, AgentTemplate, DirectoryListing, SquadSnapshot };
+export type { AgentCheckReport, AgentTemplate, DirectoryListing, PickerKind, SquadSnapshot };
 export type TeamSummary = SquadSnapshot["teams"][number];
 export type SeatSummary = TeamSummary["seats"][number];
 
@@ -61,7 +61,15 @@ export const api = {
   testAgent: (body: { templateId: string }): Promise<AgentCheckReport> => call("/agents/test", "POST", body),
   resolveCriterion: (body: { id: string; verdict: "accept" | "reject" }): Promise<unknown> =>
     call("/criteria", "POST", body),
-  browse: (body: { path?: string; child?: string }): Promise<DirectoryListing> => call("/browse", "POST", body),
+  browse: (body: { path?: string }): Promise<DirectoryListing> => call("/browse", "POST", body),
+  pickDirectory: (): Promise<NativePickResult> => call("/pick", "POST", {}),
+  disbandTeam: (body: { teamId: string }): Promise<unknown> => call("/teams", "DELETE", body),
+  say: (body: {
+    teamId: string;
+    instruction: string;
+    seatIds?: readonly string[];
+  }): Promise<{ replies: readonly SeatReply[] }> => call("/say", "POST", body),
+  stop: (body: { teamId: string; reason?: string }): Promise<unknown> => call("/stop", "POST", body),
 };
 
 export type Snapshot =
@@ -124,4 +132,19 @@ export function useAction(onChanged: () => void): {
     }
   };
   return { error, setError, run };
+}
+
+/** What one seat said in a round. */
+export interface SeatReply {
+  readonly seatId: string;
+  readonly displayName: string;
+  readonly text: string;
+  readonly failed: boolean;
+  /**
+   * How many lines of discussion this seat was handed.
+   *
+   * Shown because "the window was empty" and "the seat ignored a full window"
+   * produce the same answer and are different failures.
+   */
+  readonly contextLines: number;
 }

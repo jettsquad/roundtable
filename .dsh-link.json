@@ -13,10 +13,11 @@
     "dsh-subprocess",
     "dsh-host-webserver",
     "dsh-credentials",
+    "dsh-host-directory-picker",
     "dsh-client-ui-slots",
     "dsh-client-runtime",
     "dsh-client-ui-sidebar",
     "dsh-client-ui-layout"
   ],
-  "linkedAt": "2026-08-21T23:15:40.607Z"
+  "linkedAt": "2026-08-22T13:25:53.234Z"
 }

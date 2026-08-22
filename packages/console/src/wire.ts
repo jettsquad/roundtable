@@ -73,6 +73,15 @@ export interface SquadSnapshot {
   readonly connections: readonly ConnectionView[];
   /** The reusable agent library. */
   readonly agents: readonly AgentTemplate[];
+  /**
+   * How this host lets a person choose a folder.
+   *
+   * In the snapshot rather than asked per click, because the answer decides
+   * which control to draw: a button that opens an OS dialog, or an in-app
+   * browser. Drawing the browser and finding out afterwards would show the
+   * clumsy one to every machine that had the good one.
+   */
+  readonly picker: PickerKind;
 }
 
 /** One agent taken from the library into a new team. */
@@ -160,13 +169,41 @@ export interface AgentRequest extends Omit<AgentTemplate, "enabled"> {
   readonly connection?: SeatConnection & { readonly credential?: string };
 }
 
-/** One directory, as the folder picker sees it. */
-export interface DirectoryListing {
+/**
+ * How this host lets a person choose a folder.
+ *
+ * `native` opens one OS chooser on the host's display; `browse` serves
+ * listing primitives for an in-app browser, which is what a remote client
+ * gets because no OS dialog can reach it. The distinction is dsh's own seam
+ * (`ctx.directoryPicker`) and this carries it rather than deciding for it —
+ * hand-rolling a `readdir` route was the first version, and it meant a
+ * machine with a real file dialog never got to use it.
+ */
+export type PickerKind = "native" | "browse" | "none";
+
+/** One directory row: a listing child, or a breadcrumb ancestor. */
+export interface DirectoryEntry {
+  readonly name: string;
+  /** Absolute host path. Clients never join segments themselves. */
   readonly path: string;
-  /** The parent, absent at the filesystem root. */
-  readonly parent?: string;
-  /** Direct child directories, by name, sorted. Files are not listed. */
-  readonly directories: readonly string[];
+  readonly hidden: boolean;
+}
+
+/** One directory level plus its ancestry, as a browse backend reports it. */
+export interface DirectoryListing {
+  readonly kind: PickerKind;
+  readonly path: string;
+  readonly home: string;
+  /** Root → this directory, inclusive. Every crumb is a jump target. */
+  readonly crumbs: readonly DirectoryEntry[];
+  readonly entries: readonly DirectoryEntry[];
+  /** The level has more children than reported; the missing ones are the tail. */
+  readonly truncated: boolean;
+}
+
+/** The outcome of one native chooser. `null` path means the person cancelled. */
+export interface NativePickResult {
+  readonly path: string | null;
 }
 
 /** One criterion, flattened for the panel. */

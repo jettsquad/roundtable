@@ -8,11 +8,12 @@
  */
 import { useState } from "react";
 import type { UsageTotals } from "@squad/shared";
-import { useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
+import { api, useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
 import { AgentsPage } from "./agents.tsx";
 import { Connections } from "./connections.tsx";
 import { CriteriaPage } from "./criteria.tsx";
 import { CreateForm } from "./create.tsx";
+import { RoundBox } from "./round.tsx";
 import { SeatEditor } from "./seats.tsx";
 import { panelStore, usePanelOpen } from "./store.ts";
 import styles from "./panel.module.css";
@@ -66,6 +67,22 @@ function TeamCard({
         <span className={styles.teamName}>{team.displayName}</span>
         <span className={styles.muted}>{team.projectFolder}</span>
         {team.busy ? <span className={styles.badgeRun}>进行中</span> : null}
+        <button
+          type="button"
+          className={styles.drop}
+          title="解散这支团队"
+          onClick={() => {
+            // Asked first, and the question says what survives: the record
+            // this team wrote stays, because the discussion happened and a
+            // checkpoint whose team is gone is still the only account of what
+            // was decided.
+            if (window.confirm(`解散「${team.displayName}」？已经写下的记录会留着，但这张桌子就没了。`)) {
+              void api.disbandTeam({ teamId: team.teamId }).then(onChanged);
+            }
+          }}
+        >
+          解散
+        </button>
       </div>
       {team.progress === undefined ? null : (
         <div className={styles.muted}>
@@ -77,6 +94,7 @@ function TeamCard({
         {team.seats.some((seat) => seat.isSecretary) ? "" : " · ⚠️ 没有秘书，排不了议程"}
       </div>
       <SeatEditor team={team} connections={data.connections} agents={data.agents} onChanged={onChanged} />
+      <RoundBox team={team} onChanged={onChanged} />
     </div>
   );
 }
@@ -156,7 +174,7 @@ export function TeamPanel(): JSX.Element | null {
                 <TeamCard key={team.teamId} team={team} data={snapshot.data} onChanged={again} />
               ))
             )}
-            <CreateForm agents={snapshot.data.agents} onCreated={again} />
+            <CreateForm agents={snapshot.data.agents} picker={snapshot.data.picker} onCreated={again} />
           </div>
         ) : page === "agents" ? (
           <AgentsPage agents={snapshot.data.agents} connections={snapshot.data.connections} onChanged={again} />

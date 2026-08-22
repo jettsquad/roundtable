@@ -46,6 +46,11 @@ const NEEDED = [
   "dsh-subprocess",
   "dsh-host-webserver",
   "dsh-credentials",
+  // The directory-picker seam. Linked for its `ctx.directoryPicker`
+  // declaration merge: the host resolves native-vs-browse at boot and the
+  // console asks rather than assuming, so a machine with a real OS file
+  // dialog actually gets one.
+  "dsh-host-directory-picker",
   // Browser half. Linked for TYPES, not for bundling: `ctx.slots` on the
   // client Context is a declaration merge that only exists if this package is
   // resolvable, and the bundle keeps it external because it is a platform

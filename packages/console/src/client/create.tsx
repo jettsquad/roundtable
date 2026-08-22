@@ -13,6 +13,7 @@
  */
 import { useState } from "react";
 import type { AgentTemplate } from "@squad/shared";
+import type { PickerKind } from "./api.ts";
 import { api, useAction } from "./api.ts";
 import { checkTeamDraft, type DraftProblem } from "../parse.ts";
 import { FolderField } from "./folder-picker.tsx";
@@ -20,10 +21,11 @@ import styles from "./panel.module.css";
 
 interface CreateFormProps {
   readonly agents: readonly AgentTemplate[];
+  readonly picker: PickerKind;
   readonly onCreated: () => void;
 }
 
-export function CreateForm({ agents, onCreated }: CreateFormProps): JSX.Element {
+export function CreateForm({ agents, picker, onCreated }: CreateFormProps): JSX.Element {
   const [displayName, setDisplayName] = useState("");
   const [projectFolder, setProjectFolder] = useState("");
   const [picked, setPicked] = useState<readonly string[]>([]);
@@ -82,6 +84,7 @@ export function CreateForm({ agents, onCreated }: CreateFormProps): JSX.Element 
       <FolderField
         value={projectFolder}
         onChange={setProjectFolder}
+        kind={picker}
         invalid={complaint("projectFolder") !== undefined}
       />
       {complaint("projectFolder") === undefined ? null : (
