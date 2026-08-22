@@ -145,6 +145,9 @@ export class SquadSeatCodex extends Service {
               // has no model environment variable — and only when it can
               // actually be honoured.
               ...(connection === undefined ? {} : { model: modelArgumentFor(connection) }),
+              // The endpoint, as a one-off provider. Dropped until now, so a
+              // codex connection's address was stored, shown, and ignored.
+              ...(connection?.endpoint === undefined ? {} : { endpoint: connection.endpoint }),
               ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
             }),
           // Resolved per start, so a rotated key reaches this turn.

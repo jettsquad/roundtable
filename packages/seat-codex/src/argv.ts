@@ -39,6 +39,45 @@ export interface CodexArgvInput {
   /** Only when the connection's model can actually be honoured — see `modelArgumentFor`. */
   readonly model?: string | undefined;
   readonly reasoningEffort?: "low" | "medium" | "high" | undefined;
+  /**
+   * A custom endpoint, declared as a one-off provider.
+   *
+   * Codex has no base-url environment variable — its own config owns the
+   * provider — so without this a connection's endpoint was stored, shown in
+   * the library, and silently ignored, exactly as the dsh backend was doing.
+   * `-c model_providers.*` is the documented override and it does take
+   * effect: verified by watching the CLI reach the configured host.
+   */
+  readonly endpoint?: string | undefined;
+}
+
+/** The provider id one custom endpoint is declared under. */
+export const CUSTOM_PROVIDER = "squad";
+
+/**
+ * Declare an endpoint as a provider Codex will use.
+ *
+ * `wire_api = "responses"` because it is the only one this CLI still accepts
+ * — `"chat"` is refused outright with 「no longer supported」. That is a real
+ * constraint on which gateways can back a Codex seat: one that speaks only
+ * chat-completions cannot, however OpenAI-compatible it otherwise is.
+ *
+ * `env_key` names the variable rather than carrying the secret, so the key
+ * never appears in a process's argument list — which `ps` shows to everyone.
+ */
+function providerArgs(endpoint: string): readonly string[] {
+  return [
+    "-c",
+    `model_provider="${CUSTOM_PROVIDER}"`,
+    "-c",
+    `model_providers.${CUSTOM_PROVIDER}.name="Squad"`,
+    "-c",
+    `model_providers.${CUSTOM_PROVIDER}.base_url=${JSON.stringify(endpoint)}`,
+    "-c",
+    `model_providers.${CUSTOM_PROVIDER}.env_key="CODEX_API_KEY"`,
+    "-c",
+    `model_providers.${CUSTOM_PROVIDER}.wire_api="responses"`,
+  ];
 }
 
 /**
@@ -59,6 +98,7 @@ function permissionArgs(mode: CodexPermissionMode): readonly string[] {
 export function buildCodexArgv(input: CodexArgvInput): readonly string[] {
   const argv = ["exec", "--cd", input.cwd, "--json", "--skip-git-repo-check"];
   argv.push(...permissionArgs(input.permissionMode ?? "workspace"));
+  if (input.endpoint !== undefined && input.endpoint.trim() !== "") argv.push(...providerArgs(input.endpoint.trim()));
   if (input.reasoningEffort !== undefined) argv.push("-c", `model_reasoning_effort="${input.reasoningEffort}"`);
   if (input.model !== undefined && input.model.trim() !== "") argv.push("--model", input.model.trim());
   // The prompt goes LAST and is one argument. It is user text with newlines

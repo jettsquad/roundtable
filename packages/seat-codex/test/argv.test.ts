@@ -61,3 +61,35 @@ describe("isCodexMode", () => {
     expect(isCodexMode(undefined)).toBe(false);
   });
 });
+
+describe("自定义端点", () => {
+  it("没给端点就不声明 provider", () => {
+    // 订阅席位用 CLI 自己的登录态和 provider；多声明一个就是覆盖掉它。
+    expect(buildCodexArgv(base).join(" ")).not.toContain("model_providers");
+  });
+
+  it("给了端点就声明成一次性的 provider", () => {
+    // 这是那个 bug：codex 没有 base-url 环境变量，不声明的话连接上的地址
+    // 存得下、库里画得出、然后被忽略——和 dsh 那次一模一样。
+    const argv = buildCodexArgv({ ...base, endpoint: "https://api.example.com/v1" });
+    expect(argv).toContain('model_provider="squad"');
+    expect(argv).toContain('model_providers.squad.base_url="https://api.example.com/v1"');
+  });
+
+  it("密钥只给变量名，不给值", () => {
+    // 参数列表 ps 谁都看得见。
+    const argv = buildCodexArgv({ ...base, endpoint: "https://x" });
+    expect(argv).toContain('model_providers.squad.env_key="CODEX_API_KEY"');
+    expect(argv.join(" ")).not.toMatch(/sk-|secret/);
+  });
+
+  it("wire_api 只能是 responses", () => {
+    // 这个 CLI 已经明确拒绝 "chat"（no longer supported）。这是对「哪些网关
+    // 能给 codex 席位用」的真实约束：只讲 chat-completions 的不行。
+    expect(buildCodexArgv({ ...base, endpoint: "https://x" })).toContain('model_providers.squad.wire_api="responses"');
+  });
+
+  it("空白端点当没给", () => {
+    expect(buildCodexArgv({ ...base, endpoint: "   " }).join(" ")).not.toContain("model_providers");
+  });
+});

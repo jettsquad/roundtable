@@ -42,6 +42,23 @@ export interface SeatConnection {
    * name, which is the one case where inventing a fresh one would be wrong.
    */
   readonly credentialRef?: string | undefined;
+  /**
+   * Which header carries the key, for backends that have a choice.
+   *
+   * Claude Code sends `x-api-key` when it reads `ANTHROPIC_API_KEY` and
+   * `Authorization: Bearer` when it reads `ANTHROPIC_AUTH_TOKEN`, and
+   * gateways disagree about which they accept. MiniMax's Anthropic-compatible
+   * endpoint accepts ONLY `x-api-key` — it says so even when handed a Bearer
+   * — so a connection wired the other way authenticates forever and the CLI
+   * retries until something times it out. Nothing in that failure mentions a
+   * header.
+   *
+   * Absent means `x-api-key`, which is what the Anthropic API itself takes
+   * and what compatible gateways overwhelmingly expect. `bearer` is there
+   * because some gateways only take that, and guessing for them is how this
+   * bug happened in the first place.
+   */
+  readonly authHeader?: "x-api-key" | "bearer" | undefined;
 }
 
 /**
@@ -159,10 +176,17 @@ interface EnvNames {
  * are absent here rather than invented.
  */
 const ENV_NAMES: Readonly<Record<ConnectionBackend, EnvNames>> = {
-  "claude-code": { token: "ANTHROPIC_AUTH_TOKEN", baseUrl: "ANTHROPIC_BASE_URL", model: "ANTHROPIC_MODEL" },
+  // The token variable is decided per connection — see `authHeader`.
+  "claude-code": { token: "ANTHROPIC_API_KEY", baseUrl: "ANTHROPIC_BASE_URL", model: "ANTHROPIC_MODEL" },
   codex: { token: "CODEX_API_KEY" },
   dsh: { token: "DEEPSEEK_API_KEY" },
 };
+
+/** The variable whose name decides which header Claude Code sends. */
+function tokenVariable(connection: SeatConnection): string {
+  if (connection.backend !== "claude-code") return ENV_NAMES[connection.backend].token;
+  return connection.authHeader === "bearer" ? "ANTHROPIC_AUTH_TOKEN" : "ANTHROPIC_API_KEY";
+}
 
 export function envForConnection(
   connection: SeatConnection,
@@ -181,7 +205,7 @@ export function envForConnection(
   const env: Record<string, string> = {};
   const endpoint = (connection.endpoint ?? "").trim();
   if (names.baseUrl !== undefined && endpoint !== "") env[names.baseUrl] = endpoint;
-  if (credential !== undefined && credential !== "") env[names.token] = credential;
+  if (credential !== undefined && credential !== "") env[tokenVariable(connection)] = credential;
   const model = (connection.modelId ?? "").trim();
   // Any model name is safe here: it travels with its own endpoint and token.
   if (names.model !== undefined && model !== "") env[names.model] = model;

@@ -64,7 +64,7 @@ describe("envForConnection · api-key", () => {
   it("sends endpoint, token and model together", () => {
     expect(envForConnection(apiKey(), "sk-live")).toEqual({
       ANTHROPIC_BASE_URL: "https://gateway.example/v1",
-      ANTHROPIC_AUTH_TOKEN: "sk-live",
+      ANTHROPIC_API_KEY: "sk-live",
       ANTHROPIC_MODEL: "deepseek-chat",
     });
   });
@@ -200,7 +200,7 @@ describe("envForConnection：每个后端读的变量名不一样", () => {
     const env = envForConnection(of({ endpoint: "https://gw", modelId: "m" }), "k");
     expect(env).toEqual({
       ANTHROPIC_BASE_URL: "https://gw",
-      ANTHROPIC_AUTH_TOKEN: "k",
+      ANTHROPIC_API_KEY: "k",
       ANTHROPIC_MODEL: "m",
     });
   });
@@ -245,5 +245,42 @@ describe("connectionMismatch", () => {
     expect(detail).toContain("Chu-MiniMax-H3");
     expect(detail).toContain("claude-code");
     expect(detail).toContain("codex");
+  });
+});
+
+describe("authHeader：密钥放哪个头", () => {
+  const of = (over: Partial<SeatConnection>): SeatConnection => ({
+    connectionId: "c",
+    displayName: "c",
+    authMode: "api-key",
+    backend: "claude-code",
+    ...over,
+  });
+
+  it("默认走 x-api-key（ANTHROPIC_API_KEY）", () => {
+    // MiniMax 的 Anthropic 兼容端点只认 X-Api-Key，连发 Bearer 都明确回
+    // 「请把密钥放在 X-Api-Key 头里」。配成 Bearer 的连接会永远认证失败，
+    // 而 CLI 会一直重试——报出来的错里一个字都不会提到「头」。
+    expect(envForConnection(of({}), "k")["ANTHROPIC_API_KEY"]).toBe("k");
+    expect(envForConnection(of({}), "k")["ANTHROPIC_AUTH_TOKEN"]).toBeUndefined();
+  });
+
+  it("显式选 bearer 才走 ANTHROPIC_AUTH_TOKEN", () => {
+    const env = envForConnection(of({ authHeader: "bearer" }), "k");
+    expect(env["ANTHROPIC_AUTH_TOKEN"]).toBe("k");
+    expect(env["ANTHROPIC_API_KEY"]).toBeUndefined();
+  });
+
+  it("只有一个变量被设，不是两个都设", () => {
+    // 两个都发就是让 CLI 替我们猜，而猜错的那次不会说自己猜了。
+    expect(Object.keys(envForConnection(of({ endpoint: "https://x" }), "k")).sort()).toEqual([
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_BASE_URL",
+    ]);
+  });
+
+  it("其它后端不受影响", () => {
+    expect(envForConnection(of({ backend: "codex", authHeader: "bearer" }), "k")["CODEX_API_KEY"]).toBe("k");
+    expect(envForConnection(of({ backend: "dsh", authHeader: "bearer" }), "k")["DEEPSEEK_API_KEY"]).toBe("k");
   });
 });

@@ -25,6 +25,9 @@ import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "
 // Imported for the `Context.subprocess` declaration merging it carries: an
 // augmentation applies only where its module is in the compilation.
 import type {} from "@deepseek-ai/dsh-subprocess";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runCliSeat } from "@squad/seat-runtime";
 import { CLAUDE_PERMISSION_MODES, providerNameFor } from "@squad/shared";
 import { DELEGATION_TOOLS, buildArgv, type PermissionMode } from "./argv.ts";
@@ -178,6 +181,28 @@ export class FencedClaudeCodeSeats extends Service {
 
       async start(request): Promise<SubagentRun> {
         const connectionEnv = connectionId === undefined ? {} : await ctx.seatConnections.envFor(connectionId);
+        const connection = connectionId === undefined ? undefined : ctx.seatConnections.get(connectionId);
+
+        // An api-key seat gets its OWN config directory.
+        //
+        // Without one the host's `claude login` WINS: the CLI prefers its
+        // stored subscription over `ANTHROPIC_API_KEY`, so it sent an
+        // Anthropic OAuth token to the connection's gateway, got 401, and
+        // retried ten times with growing backoff — which from outside looks
+        // like a seat that hangs for minutes and then says nothing. The
+        // connection's key was stored, rendered in the library, and ignored.
+        //
+        // Proven rather than guessed: the same key, endpoint and model
+        // answered in 11 seconds the moment `CLAUDE_CONFIG_DIR` pointed
+        // somewhere empty, and failed with `authentication_failed` without it.
+        //
+        // Subscription seats keep the host's config — using that login IS
+        // what subscription mode means.
+        let configDir: string | undefined;
+        if (connection?.authMode === "api-key") {
+          configDir = await mkdtemp(join(tmpdir(), "squad-claude-"));
+        }
+
         return runCliSeat({
           ctx,
           who: name,
@@ -197,7 +222,20 @@ export class FencedClaudeCodeSeats extends Service {
               alwaysDeny: config.alwaysDeny ?? DEFAULTS.alwaysDeny,
             }),
           // Resolved per start, so a rotated key reaches this turn.
-          env: { ...(config.env ?? {}), ...connectionEnv },
+          env: {
+            ...(config.env ?? {}),
+            ...connectionEnv,
+            ...(configDir === undefined ? {} : { CLAUDE_CONFIG_DIR: configDir }),
+          },
+          // Removed afterwards. A seat is a process that remembers nothing;
+          // a config directory left behind is state it would remember.
+          ...(configDir === undefined
+            ? {}
+            : {
+                cleanup: async () => {
+                  await rm(configDir, { recursive: true, force: true }).catch(() => undefined);
+                },
+              }),
           parse: readStream,
           limits: {
             idleMs: config.idleMs ?? DEFAULTS.idleMs,
