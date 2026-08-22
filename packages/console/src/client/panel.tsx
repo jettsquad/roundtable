@@ -93,9 +93,43 @@ function TeamCard({
         {team.seats.some((seat) => seat.isSecretary) ? "" : " · ⚠️ 没有秘书，排不了议程"}
       </div>
       <SeatEditor team={team} connections={data.connections} agents={data.agents} onChanged={onChanged} />
+      {/* The discussion, here as well as in the session's 团队 tab.
+          That tab only exists once the SESSION has content of its own, and a
+          fresh session in a team's workspace has none — so you could talk to
+          the team and never see a word of what it said back. */}
+      <Transcript team={team} />
       {/* The panel builds and edits teams; talking to one happens in its own
           session, in the composer at the bottom. Putting a second send box
           here is what produced two inputs with different destinations. */}
+    </div>
+  );
+}
+
+/** The discussion, most recent last. Collapsed by default: the panel is for
+ *  building and editing teams, and an open transcript would push the roster
+ *  of the next team off the screen. */
+function Transcript({ team }: { readonly team: TeamSummary }): JSX.Element | null {
+  const [open, setOpen] = useState(false);
+  if (team.transcript.length === 0) return <div className={styles.hint}>还没有讨论。</div>;
+  return (
+    <div className={styles.section}>
+      <button type="button" className={styles.sectionToggle} onClick={() => setOpen(!open)}>
+        {open ? "▾ " : "▸ "}
+        讨论记录（{team.recorded} 行）
+      </button>
+      {!open ? null : (
+        <div className={styles.transcript}>
+          {team.transcriptOmitted === 0 ? null : (
+            <div className={styles.hint}>前面还有 {team.transcriptOmitted} 条，这里只显示最近的。</div>
+          )}
+          {team.transcript.map((line) => (
+            <div key={line.turnId} className={styles.said}>
+              <div className={styles.saidWho}>{line.speaker}</div>
+              <div className={styles.saidText}>{line.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
