@@ -16,8 +16,11 @@
 
 import type { UsageTotals } from "@squad/shared";
 import { useState } from "react";
+import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
+import { api } from "./api.ts";
 import { useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
 import { Agenda } from "./agenda.tsx";
+import { ContextPanel } from "./context-panel.tsx";
 import { Discussion } from "./discussion.tsx";
 import styles from "./panel.module.css";
 
@@ -72,8 +75,18 @@ function Roster({ team, data }: { readonly team: TeamSummary; readonly data: Squ
               : (data.connections.find((c) => c.connectionId === seat.connectionId)?.displayName ?? "⚠️ 连接已删除")}
             {seat.permissionMode === undefined ? "" : ` · ${seat.permissionMode}`}
           </span>
-          {seat.running ? <span className={styles.badgeRun}>发言中</span> : null}
-          {seat.blocked === undefined ? null : <span className={styles.badgeBad}>⚠️ {seat.blocked}</span>}
+          {/* 1.x showed a state for every seat, not only the speaking one.
+              「待命」 and a blank look the same on screen and are different
+              facts: one seat is ready and the other might be anything. */}
+          {seat.blocked !== undefined ? (
+            <span className={styles.badgeBad}>⚠️ {seat.blocked}</span>
+          ) : seat.running ? (
+            <span className={styles.badgeRun} title={seat.instruction}>
+              工作中
+            </span>
+          ) : (
+            <span className={styles.badgeIdle}>待命</span>
+          )}
         </span>
       ))}
     </div>
@@ -92,10 +105,74 @@ function teamForCwd(data: SquadSnapshot, cwd: string | undefined): TeamSummary |
   return data.teams.find((team) => team.projectFolder === cwd);
 }
 
+/**
+ * The team's name, and a way to change it.
+ *
+ * Renaming exists because a name is chosen before the work does: a team
+ * called 「真实流程验证」 that became the place a real project is planned
+ * cannot be fixed by deleting it — the discussion is inside.
+ */
+function TeamHeader({ team, onChanged }: { readonly team: TeamSummary; readonly onChanged: () => void }): JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(team.displayName);
+
+  if (!editing) {
+    return (
+      <div className={styles.row}>
+        <span className={styles.teamName}>{team.displayName}</span>
+        <span className={styles.muted}>{team.projectFolder}</span>
+        <button
+          type="button"
+          className={styles.drop}
+          title="改名"
+          onClick={() => {
+            setName(team.displayName);
+            setEditing(true);
+          }}
+        >
+          ✎
+        </button>
+      </div>
+    );
+  }
+
+  const save = (): void => {
+    void api
+      .renameTeam({ teamId: team.teamId, displayName: name })
+      .then(() => {
+        setEditing(false);
+        onChanged();
+      })
+      .catch(() => setEditing(false));
+  };
+
+  return (
+    <div className={styles.row}>
+      <Input
+        className={styles.field ?? ""}
+        value={name}
+        autoFocus
+        onChange={(event) => setName(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") save();
+          if (event.key === "Escape") setEditing(false);
+        }}
+      />
+      <Button type="button" onClick={save}>
+        改名
+      </Button>
+      <Button type="button" onClick={() => setEditing(false)}>
+        取消
+      </Button>
+    </div>
+  );
+}
+
 export function TeamView({ folderOf }: { readonly folderOf: () => string | undefined }): JSX.Element {
   const cwd = folderOf();
   const [nonce, setNonce] = useState(0);
   const snapshot = useSnapshot(nonce);
+  const again = (): void => setNonce((value) => value + 1);
 
   if (snapshot.state === "loading") return <div className={styles.viewPad}>读取中……</div>;
   if (snapshot.state === "error") return <div className={styles.viewPad}>{snapshot.detail}</div>;
@@ -113,10 +190,7 @@ export function TeamView({ folderOf }: { readonly folderOf: () => string | undef
 
   return (
     <div className={styles.viewPad}>
-      <div className={styles.row}>
-        <span className={styles.teamName}>{team.displayName}</span>
-        <span className={styles.muted}>{team.projectFolder}</span>
-      </div>
+      <TeamHeader team={team} onChanged={again} />
       <div className={styles.muted}>{statusLine(team)}</div>
       <div className={styles.muted}>
         {usageLine(team.usage)} · 记录 {team.recorded} 行
@@ -127,7 +201,8 @@ export function TeamView({ folderOf }: { readonly folderOf: () => string | undef
       {/* The agenda lives here as well as in the panel: this is where the
           work happens, and a plan you must leave the room to confirm is a
           plan you confirm without looking at the discussion it came from. */}
-      <Agenda team={team} onChanged={() => setNonce((value) => value + 1)} />
+      <ContextPanel team={team} onChanged={again} />
+      <Agenda team={team} onChanged={again} />
       <Discussion team={team} autoScroll />
       {/* No input box here. There is exactly one on the screen and it is the
           one at the bottom, in the place people already type — see

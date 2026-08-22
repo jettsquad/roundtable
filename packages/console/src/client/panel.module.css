@@ -492,3 +492,13 @@
 .threadTail {
   height: 260px;
 }
+
+/* 「待命」 is a state, not the absence of one: a seat that is ready and a
+   seat nobody can account for look identical when only「工作中」 is drawn. */
+.badgeIdle {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  font-size: 11px;
+  opacity: 0.55;
+}

@@ -37,6 +37,8 @@ export interface TeamSummary {
     readonly isSecretary: boolean;
     /** Speaking right now. */
     readonly running: boolean;
+    /** What this seat was last asked, while it is speaking. */
+    readonly instruction?: string | undefined;
     readonly connectionId?: string | undefined;
     readonly caps?: SeatCaps | undefined;
     readonly permissionMode?: PermissionMode | undefined;
@@ -89,6 +91,25 @@ export interface TeamSummary {
   readonly transcript: readonly { readonly speaker: string; readonly text: string; readonly turnId: string }[];
   /** How much of the discussion the tail left out. */
   readonly transcriptOmitted: number;
+  /**
+   * The context checkpoint standing in for the earlier discussion, and how
+   * close the next automatic fold is.
+   *
+   * Shown because folding is otherwise invisible: the record the seats read
+   * quietly becomes a summary, and when a later answer looks thin nothing on
+   * screen says why. 1.x put both the checkpoint and its revoke control in
+   * front of the host for exactly that reason.
+   */
+  readonly context: {
+    /** Estimated tokens since the last checkpoint. */
+    readonly accumulated: number;
+    /** What that is compared against. */
+    readonly limit: number;
+    /** The live checkpoint's text, when one stands. */
+    readonly checkpoint?: { readonly id: string; readonly text: string; readonly createdAt: number } | undefined;
+    /** How many checkpoints have been written, revoked ones included. */
+    readonly checkpointCount: number;
+  };
 }
 
 export interface SquadSnapshot {
@@ -305,4 +326,17 @@ export interface AgendaVerdictRequest {
   readonly verdict: "confirm" | "discard";
   /** An edited draft replaces the held one; absent confirms it as written. */
   readonly agenda?: AgendaSpec;
+}
+
+/** Renaming a team. */
+export interface RenameTeamRequest {
+  readonly teamId: string;
+  readonly displayName: string;
+}
+
+/** Folding the discussion, or undoing a fold. */
+export interface CheckpointRequest {
+  readonly teamId: string;
+  /** Absent folds now; present revokes that checkpoint. */
+  readonly revokeId?: string;
 }

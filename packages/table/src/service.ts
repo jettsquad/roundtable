@@ -119,6 +119,14 @@ export interface Team {
   addSeat(seat: SeatSpec, options?: { readonly at?: number }): void;
   /** Remove a seat. The secretary needs `confirmSecretary`. */
   removeSeat(seatId: string, options?: { readonly confirmSecretary?: boolean }): void;
+  /**
+   * Rename the team.
+   *
+   * Needed because a name is chosen before the work exists: a team called
+   * 「真实流程验证」 that turned into the place a real project is planned
+   * cannot be fixed by deleting it — the discussion is in there.
+   */
+  rename(displayName: string): void;
   /** The team's checkpoint coefficient, if it set one. */
   readonly checkpointCoefficient?: number | undefined;
   /**
@@ -517,6 +525,7 @@ export class TeamsService extends Service {
       },
       addSeat: (seat, options) => this.addSeat(record, seat, options),
       removeSeat: (seatId, options) => this.removeSeat(record, seatId, options),
+      rename: (displayName) => this.rename(record, displayName),
       checkpointCoefficient: record.input.checkpointCoefficient,
       ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
       transcript: () => transcriptOf(record.handle.agent),
@@ -1012,6 +1021,29 @@ export class TeamsService extends Service {
     }
   }
 
+  /**
+   * Rename the team, and its workspace with it.
+   *
+   * Both, because they are one thing to a person: the sidebar entry and the
+   * team header showing different names would be two objects where there is
+   * one. The workspace is renamed through the registry when there is one —
+   * a composition without it simply keeps the team's own name.
+   */
+  private rename(record: TeamRecord, displayName: string): void {
+    const name = displayName.trim();
+    if (name === "") throw new Error("团队要有一个名字。");
+    record.input = { ...record.input, displayName: name };
+    this.persist(record);
+    const registry = this.ctx.reflect.get("workspaceRegistry") as
+      { list(): readonly { path: string; setTitle(title: string): Promise<void> }[] } | undefined;
+    const workspace = registry?.list().find((entry) => entry.path === record.input.projectFolder);
+    void workspace?.setTitle(name).catch((error: Error) => {
+      // Warned, not thrown: the team is renamed either way, and failing the
+      // rename over a sidebar label would be the tail wagging the dog.
+      this.ctx.logger.warn(`workspace 改名失败：${error.message}`);
+    });
+  }
+
   private async dispose(record: TeamRecord): Promise<void> {
     if (record.disposed) return;
     record.disposed = true;
@@ -1076,7 +1108,8 @@ interface WindowAttempt {
 
 interface TeamRecord {
   readonly teamId: string;
-  readonly input: CreateTeamInput;
+  /** Mutable: a team can be renamed, and the record is what gets persisted. */
+  input: CreateTeamInput;
   readonly handle: AgentHandle;
   /** Rounds currently running. Folding starts only at zero. */
   roundsInFlight: number;

@@ -109,10 +109,18 @@ export function readStream(output: string): StreamOutcome {
     .join("\n\n");
 
   if (envelope === undefined) {
-    // No stream-json at all. Whatever came out is the answer, and an empty
-    // answer is a failure rather than a silent success — a seat that returns
-    // nothing and a seat that returned "" are the same to every reader
-    // downstream, so they must not be the same here.
+    // Two different situations, and treating them as one dumped a whole
+    // JSONL log into the discussion as if a seat had said it.
+    //
+    // Events but no envelope: the CLI WAS speaking stream-json and never
+    // reached its result — killed by the watchdog, or dying mid-retry. The
+    // answer is whatever assistant text arrived, and nothing if none did.
+    // The raw log is not an answer; it is a transcript of the machinery.
+    if (events.length > 0) return { text: streamed, failed: true };
+
+    // No events at all: not a stream-json run — an older CLI, or a failure
+    // before the format started. Whatever came out is all there is, and an
+    // empty answer is a failure rather than a silent success.
     const plain = output.trim();
     return { text: plain, failed: plain === "" };
   }

@@ -294,6 +294,23 @@ export class TeamContextService extends Service {
   }
 
   /** The newest checkpoint still standing, or none. */
+  /**
+   * The checkpoint currently standing in for the earlier discussion.
+   *
+   * Public because a surface has to be able to SHOW it. A fold that happens
+   * invisibly is a discussion that silently stops being what the seats read —
+   * and when a later answer looks wrong, nothing on screen says the record it
+   * was built from had been replaced by a summary.
+   */
+  currentCheckpoint(teamId: string): CheckpointRecord | undefined {
+    return this.liveCheckpoint(teamId);
+  }
+
+  /** Every checkpoint this team has, newest first, revoked ones included. */
+  checkpointHistory(teamId: string): readonly CheckpointRecord[] {
+    return [...this.checkpointsOf(teamId)].sort((a, b) => b.createdAt - a.createdAt);
+  }
+
   private liveCheckpoint(teamId: string): CheckpointRecord | undefined {
     const live = this.checkpointsOf(teamId).filter((record) => record.revokedAt === undefined);
     return live[live.length - 1];

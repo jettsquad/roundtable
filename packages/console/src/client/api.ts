@@ -64,6 +64,9 @@ export const api = {
   browse: (body: { path?: string }): Promise<DirectoryListing> => call("/browse", "POST", body),
   pickDirectory: (): Promise<NativePickResult> => call("/pick", "POST", {}),
   disbandTeam: (body: { teamId: string }): Promise<unknown> => call("/teams", "DELETE", body),
+  renameTeam: (body: { teamId: string; displayName: string }): Promise<unknown> => call("/teams/rename", "POST", body),
+  fold: (body: { teamId: string }): Promise<unknown> => call("/checkpoint", "POST", body),
+  revokeCheckpoint: (body: { teamId: string; revokeId: string }): Promise<unknown> => call("/checkpoint", "POST", body),
   say: (body: {
     teamId: string;
     instruction: string;

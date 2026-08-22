@@ -41,9 +41,11 @@ import type {
   DirectoryListing as WireDirectoryListing,
   TeamMember,
   AgendaVerdictRequest,
+  CheckpointRequest,
   ConnectionRequest,
   CreateTeamRequest,
   DraftAgendaRequest,
+  RenameTeamRequest,
   SeatPatch,
   SeatRequest,
   SquadSnapshot,
@@ -166,6 +168,26 @@ function transcriptTail(events: readonly { kind: string; text: string; turnId: s
   };
 }
 
+/**
+ * What the context assembler knows about this team, for the panel.
+ *
+ * Reported even when nothing has folded yet: the number people need is how
+ * close the NEXT fold is, and a field that appeared only after the first one
+ * would leave them guessing until it was too late to act.
+ */
+function contextOf(ctx: Context, teamId: string, coefficient: number | undefined): TeamSummary["context"] {
+  const progress = ctx.teamContext.progress(teamId, coefficient);
+  const live = ctx.teamContext.currentCheckpoint(teamId);
+  return {
+    accumulated: progress.accumulated,
+    limit: progress.limit,
+    checkpointCount: ctx.teamContext.checkpointHistory(teamId).length,
+    ...(live === undefined
+      ? {}
+      : { checkpoint: { id: live.checkpointId, text: live.text, createdAt: live.createdAt } }),
+  };
+}
+
 /** Build the snapshot the panel renders. Pure read; nothing here starts anything. */
 export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   const teams: TeamSummary[] = [];
@@ -186,6 +208,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           role: seat.role,
           isSecretary: seat.isSecretary === true,
           running: state?.running === true,
+          ...(state?.running === true && state.instruction !== undefined ? { instruction: state.instruction } : {}),
           systemPrompt: seat.systemPrompt,
           backend: seat.backend,
           ...(seat.connectionId === undefined ? {} : { connectionId: seat.connectionId }),
@@ -210,6 +233,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       usage: team.usage,
       ...transcriptTail(team.transcript()),
       ...(draftOf(teamId) === undefined ? {} : { draft: draftOf(teamId) }),
+      context: contextOf(ctx, teamId, team.checkpointCoefficient),
     });
   }
   const [active, pending, connections, health] = await Promise.all([
@@ -921,6 +945,28 @@ export function registerSquadApi(ctx: Context): () => void {
         }
         if (suffix === "/teams" && req.method === "DELETE") {
           await disbandTeam(ctx, (await readJson<{ teamId: string }>(req)).teamId);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/teams/rename" && req.method === "POST") {
+          const body = await readJson<RenameTeamRequest>(req);
+          teamOf(ctx, body.teamId).rename(body.displayName);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/checkpoint" && req.method === "POST") {
+          const body = await readJson<CheckpointRequest>(req);
+          // Folding is a real secretary turn, so it is not awaited: the click
+          // must not hang on minutes of work. Revoking is instant and is.
+          if (body.revokeId === undefined) {
+            void ctx.teamContext.fold(body.teamId).catch((error: Error) => {
+              ctx.logger.warn(`手动折叠失败：${error.message}`);
+            });
+          } else {
+            await ctx.teamContext.revoke(body.teamId, body.revokeId);
+          }
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true }));
           return;
