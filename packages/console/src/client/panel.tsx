@@ -13,7 +13,6 @@ import { AgentsPage } from "./agents.tsx";
 import { Connections } from "./connections.tsx";
 import { CriteriaPage } from "./criteria.tsx";
 import { CreateForm } from "./create.tsx";
-import { RoundBox } from "./round.tsx";
 import { SeatEditor } from "./seats.tsx";
 import { panelStore, usePanelOpen } from "./store.ts";
 import styles from "./panel.module.css";
@@ -94,7 +93,9 @@ function TeamCard({
         {team.seats.some((seat) => seat.isSecretary) ? "" : " · ⚠️ 没有秘书，排不了议程"}
       </div>
       <SeatEditor team={team} connections={data.connections} agents={data.agents} onChanged={onChanged} />
-      <RoundBox team={team} onChanged={onChanged} />
+      {/* The panel builds and edits teams; talking to one happens in its own
+          session, in the composer at the bottom. Putting a second send box
+          here is what produced two inputs with different destinations. */}
     </div>
   );
 }

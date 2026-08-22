@@ -22,6 +22,9 @@ import type {} from "@deepseek-ai/dsh-client-ui-layout/client";
 // in, and therefore where a team view belongs.
 import type {} from "@deepseek-ai/dsh-client-ui-conversation/client";
 import { TeamButton, TeamPanel } from "./panel.tsx";
+import { SquadComposer } from "./composer.tsx";
+import { api } from "./api.ts";
+import { setTeamFolders, teamFolders, watchTeamFolders } from "./team-sessions.ts";
 import { TeamView } from "./team-view.tsx";
 
 /**
@@ -54,6 +57,68 @@ export function apply(ctx: Context): void {
    * its folder as the workspace, so every session in that workspace is a
    * session of that team.
    */
+  /**
+   * Keep the team-folder cache fresh.
+   *
+   * The composer chain's election reads it synchronously, and a team that was
+   * just created has to take over its sessions without a reload. Two seconds
+   * is the same cadence the panel already polls at; the cache only announces
+   * a real change, so this does not re-register anything on a quiet tick.
+   */
+  const poll = setInterval(() => {
+    void api
+      .snapshot()
+      .then((snapshot) => setTeamFolders(snapshot.teams.map((team) => team.projectFolder)))
+      .catch(() => undefined);
+  }, 2000);
+  ctx.effect(() => () => clearInterval(poll));
+
+  /** The workspace folder one session sits in, or undefined. */
+  const folderOfSession = (sessionId: string): string | undefined =>
+    ctx.workspaces.list.getSnapshot().items.find((workspace) => workspace.sessionIds.includes(sessionId))?.path;
+
+  /**
+   * Take over the composer on a team's sessions.
+   *
+   * `conversation.composer` is a chain whose fallback is dsh's own input bar,
+   * held mounted under an election so its draft survives. Electing here means
+   * the box in the usual place goes to the team — which is the whole point:
+   * two input boxes on one screen, one of them wired to something else
+   * entirely, is not a design anybody can use.
+   *
+   * Re-registered whenever the set of team folders changes, because the
+   * election is computed from that set and a chain only re-dispatches when
+   * its entries change. Without this a team created just now would not take
+   * over until something else forced a re-render.
+   */
+  const registerComposer = (): (() => void) =>
+    ctx.slots.register(
+      {
+        name: "conversation.composer",
+        // Below dsh's own approval and read-only claims: an approval prompt
+        // or an unavailable parent has to win over a team's input box.
+        priority: -20,
+        select: (owner: { session: { sessionId: string } | undefined }) => {
+          const sessionId = owner.session?.sessionId;
+          if (sessionId === undefined) return null;
+          const folder = folderOfSession(sessionId);
+          return folder !== undefined && teamFolders().has(folder) ? { folder } : null;
+        },
+      },
+      ({ matched }: { matched: { folder: string } }) => <SquadComposer folder={matched.folder} />,
+    );
+  ctx.slots.inject("conversation.composer", () => {
+    let dispose = registerComposer();
+    const stop = watchTeamFolders(() => {
+      dispose();
+      dispose = registerComposer();
+    });
+    return () => {
+      stop();
+      dispose();
+    };
+  });
+
   ctx.slots.inject("conversation.view", () =>
     ctx.slots.register(
       {

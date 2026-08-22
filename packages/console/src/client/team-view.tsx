@@ -13,10 +13,9 @@
  * tabs — so a team gets its own tab next to them, on the sessions that belong
  * to a team's workspace.
  */
-import { useState } from "react";
+
 import type { UsageTotals } from "@squad/shared";
 import { useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
-import { RoundBox } from "./round.tsx";
 import styles from "./panel.module.css";
 
 /** One team's consumption, in a line. See `panel.tsx` for why cache is separate. */
@@ -113,9 +112,7 @@ function teamForCwd(data: SquadSnapshot, cwd: string | undefined): TeamSummary |
 
 export function TeamView({ folderOf }: { readonly folderOf: () => string | undefined }): JSX.Element {
   const cwd = folderOf();
-  const [nonce, setNonce] = useState(0);
-  const snapshot = useSnapshot(nonce);
-  const again = (): void => setNonce((value) => value + 1);
+  const snapshot = useSnapshot(0);
 
   if (snapshot.state === "loading") return <div className={styles.viewPad}>读取中……</div>;
   if (snapshot.state === "error") return <div className={styles.viewPad}>{snapshot.detail}</div>;
@@ -145,7 +142,10 @@ export function TeamView({ folderOf }: { readonly folderOf: () => string | undef
 
       <Roster team={team} data={snapshot.data} />
       <Transcript team={team} />
-      <RoundBox team={team} onChanged={again} />
+      {/* No input box here. There is exactly one on the screen and it is the
+          one at the bottom, in the place people already type — see
+          `composer.tsx`. Two boxes with different destinations is what made
+          this unusable. */}
     </div>
   );
 }

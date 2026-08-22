@@ -428,3 +428,20 @@
   white-space: pre-wrap;
   opacity: 0.9;
 }
+
+.composerBox {
+  margin: 0 auto;
+  padding: 10px 14px 12px;
+  width: min(760px, 92%);
+  border-radius: 10px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  background: var(--dsh-color-surface, #1b1b1f);
+  color: var(--dsh-color-text, #e8e8ea);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.composerWho {
+  font-weight: 600;
+  opacity: 0.8;
+}
