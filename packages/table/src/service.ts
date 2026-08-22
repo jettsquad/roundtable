@@ -23,6 +23,8 @@ import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { Domain } from "@deepseek-ai/dsh-storage-domain";
+import { SQUAD_TABLE_DOMAIN, type TeamPersisted } from "./domain.ts";
 import {
   EMPTY_TOTALS,
   capExceeded,
@@ -254,13 +256,113 @@ export interface TeamAssembler {
 }
 
 export class TeamsService extends Service {
-  static readonly inject = ["agents", "subagents", "seatConnections"];
+  static readonly inject = ["agents", "subagents", "seatConnections", "storageDomain"];
 
   private readonly teams = new Map<string, TeamRecord>();
   private assembler: TeamAssembler | undefined;
+  private domain: Domain<typeof SQUAD_TABLE_DOMAIN> | undefined;
+  /** Serialises writes so two edits in one tick cannot lose one another. */
+  private writes: Promise<void> = Promise.resolve();
 
   constructor(ctx: Context) {
     super(ctx, "teams");
+  }
+
+  /**
+   * Open the store and put every saved team back.
+   *
+   * The host node is RESUMED, not created: its session id is the team id, and
+   * resuming loads the persisted log — so the discussion comes back with the
+   * team rather than the team coming back mute.
+   *
+   * A team that cannot be restored is reported and skipped, never dropped
+   * silently. Its folder is still in the sidebar either way, and a workspace
+   * whose team quietly failed to load is indistinguishable from one that
+   * never had a team — which is precisely the confusion this whole section
+   * exists to end.
+   */
+  async [Service.init](): Promise<void> {
+    const domain = await this.ctx.storageDomain.open(SQUAD_TABLE_DOMAIN);
+    this.domain = domain;
+    this.ctx.effect(() => async () => {
+      this.domain = undefined;
+      await domain.close();
+    });
+
+    for (const [, saved] of domain.table("teams").entries()) {
+      try {
+        await this.restore(saved);
+      } catch (error) {
+        this.ctx.logger.warn(
+          `团队「${saved.displayName}」没能恢复：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  /** Rebuild one saved team, log and all. */
+  private async restore(saved: TeamPersisted): Promise<void> {
+    const handle = await this.ctx.agents.resume({ resumeSessionId: saved.teamId as never });
+    const input: CreateTeamInput = {
+      displayName: saved.displayName,
+      projectFolder: saved.projectFolder,
+      hostDisplayName: saved.hostDisplayName,
+      seats: saved.seats as unknown as readonly SeatSpec[],
+      ...(saved.checkpointCoefficient === undefined ? {} : { checkpointCoefficient: saved.checkpointCoefficient }),
+    };
+    this.teams.set(saved.teamId, {
+      teamId: saved.teamId,
+      input,
+      handle,
+      roundsInFlight: 0,
+      running: undefined,
+      roundAbort: undefined,
+      artifacts: [],
+      // Carried across the restart: it is the user's money, and a total that
+      // resets to zero only ever says "cheap".
+      usage: saved.usage ?? EMPTY_TOTALS,
+      perSeat: new Map(),
+      authModes: new Map(),
+      seats: [...input.seats],
+      speaking: new Map(),
+      disposed: false,
+    });
+  }
+
+  /**
+   * Write one team down.
+   *
+   * Chained rather than awaited by callers: a seat edit and a round's usage
+   * update can land in the same tick, and two read-modify-writes racing on
+   * one key lose whichever finished first.
+   */
+  private persist(record: TeamRecord): void {
+    const table = this.domain?.table("teams");
+    if (table === undefined) return;
+    const existing = table.get(record.teamId);
+    const row: TeamPersisted = {
+      teamId: record.teamId,
+      displayName: record.input.displayName,
+      projectFolder: record.input.projectFolder,
+      hostDisplayName: record.input.hostDisplayName,
+      ...(record.input.checkpointCoefficient === undefined
+        ? {}
+        : { checkpointCoefficient: record.input.checkpointCoefficient }),
+      seats: record.seats as unknown as TeamPersisted["seats"],
+      usage: record.usage,
+      createdAt: existing?.createdAt ?? Date.now(),
+    };
+    this.writes = this.writes.then(async () => {
+      await table.put(record.teamId, row);
+    });
+  }
+
+  private forget(teamId: string): void {
+    const table = this.domain?.table("teams");
+    if (table === undefined) return;
+    this.writes = this.writes.then(async () => {
+      await table.delete(teamId);
+    });
   }
 
   /**
@@ -334,6 +436,7 @@ export class TeamsService extends Service {
       disposed: false,
     };
     this.teams.set(teamId, record);
+    this.persist(record);
     return this.viewOf(record);
   }
 
@@ -722,6 +825,7 @@ export class TeamsService extends Service {
     const problems = checkRoster([...record.seats, seat]);
     if (problems.length > 0) throw new Error(problems.map((problem) => problem.detail).join("\n"));
     record.seats.splice(0, record.seats.length, ...placeSeat(record.seats, seat, options?.at));
+    this.persist(record);
   }
 
   /**
@@ -743,6 +847,7 @@ export class TeamsService extends Service {
       record.seats.findIndex((seat) => seat.seatId === seatId),
       1,
     );
+    this.persist(record);
   }
 
   /**
@@ -857,6 +962,9 @@ export class TeamsService extends Service {
       const usage = usageOfResult(result);
       record.usage = addUsage(record.usage, usage);
       record.perSeat.set(seat.seatId, addUsage(record.perSeat.get(seat.seatId) ?? EMPTY_TOTALS, usage));
+      // Written after every turn, not at shutdown: a crash between the spend
+      // and the save loses exactly the number that says what was spent.
+      this.persist(record);
       // A cancelled seat SAYS it was cancelled. Stopping a round left it
       // returning empty text with `failed`, which reads as "the model had
       // nothing to say" — the one reading that sends a person to look at the
@@ -898,6 +1006,7 @@ export class TeamsService extends Service {
     record.disposed = true;
     await record.handle.dispose();
     this.teams.delete(record.teamId);
+    this.forget(record.teamId);
   }
 }
 
