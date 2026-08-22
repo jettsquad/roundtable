@@ -271,10 +271,13 @@ export class TeamContextService extends Service {
 
       const text = await this.ctx.secretary.writeCheckpoint({
         parent: team.host,
-        // The designated secretary's standing instructions, when the team
-        // named one. This is what turns `isSecretary` from a stored flag into
-        // a fact about who does the judgement work.
-        ...(team.secretary === undefined ? {} : { persona: team.secretary.systemPrompt }),
+        // The designated secretary's standing instructions AND the provider
+        // it runs on. The persona was passed from the start; the provider was
+        // not, so the secretary's model, connection and permission mode were
+        // stored, rendered in the Agent library, and ignored — the folding
+        // ran on the host's bare login instead. Configuring a secretary and
+        // having the configuration do nothing is worse than not offering it.
+        ...(team.secretary === undefined ? {} : { secretary: team.secretary }),
         hostGoal: team.displayName,
         previousCheckpoint: plan.previousCheckpoint,
         turns: plan.turns,

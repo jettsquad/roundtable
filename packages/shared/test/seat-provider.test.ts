@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CLAUDE_PERMISSION_MODES, providerNameFor, SEAT_PROVIDER } from "../src/index.ts";
+import { CLAUDE_PERMISSION_MODES, providerForSeat, providerNameFor, SEAT_PROVIDER } from "../src/index.ts";
 
 describe("providerNameFor", () => {
   it("什么都不给就是默认 provider", () => {
@@ -25,5 +25,25 @@ describe("providerNameFor", () => {
       }
     }
     expect(names.size).toBe(3 * (CLAUDE_PERMISSION_MODES.length + 1));
+  });
+});
+
+describe("providerForSeat", () => {
+  it("claude-code 席位带上连接和权限模式", () => {
+    expect(providerForSeat({ backend: "claude-code" })).toBe(SEAT_PROVIDER);
+    expect(providerForSeat({ backend: "claude-code", connectionId: "gw", permissionMode: "plan" })).toBe(
+      `${SEAT_PROVIDER}/gw#plan`,
+    );
+  });
+
+  it("非 claude 后端走它自己的 provider，不带连接轴", () => {
+    // 它们的席位插件还没写；名字对不对至少要能一眼看出来。
+    expect(providerForSeat({ backend: "codex", connectionId: "gw" })).toBe("codex");
+    expect(providerForSeat({ backend: "dsh" })).toBe("dsh-sdk");
+  });
+
+  it("没见过的后端原样返回，而不是悄悄退回默认", () => {
+    // 退回 SEAT_PROVIDER 会让一个配错后端的席位跑在别人的登录态上，而且不报错。
+    expect(providerForSeat({ backend: "什么" })).toBe("什么");
   });
 });

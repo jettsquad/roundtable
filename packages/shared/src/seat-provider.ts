@@ -38,3 +38,31 @@ export function providerNameFor(connectionId?: string, permissionMode?: string):
   const base = connectionId === undefined || connectionId === "" ? SEAT_PROVIDER : `${SEAT_PROVIDER}/${connectionId}`;
   return permissionMode === undefined || permissionMode === "" ? base : `${base}#${permissionMode}`;
 }
+
+/** The provider names the non-claude backends ask for. */
+const PROVIDER_BY_BACKEND: Readonly<Record<string, string>> = {
+  // The FENCED provider, not the stock one — see the note above.
+  "claude-code": SEAT_PROVIDER,
+  codex: "codex",
+  dsh: "dsh-sdk",
+};
+
+/**
+ * Which provider one seat runs on.
+ *
+ * The single derivation, because it was briefly written in two places and the
+ * second one was wrong by omission: `@squad/context` asked the secretary to
+ * fold a discussion without passing a provider at all, so the secretary's
+ * configured model, connection and permission mode were stored, rendered in
+ * the Agent library, and ignored. The judgement work ran on the host's bare
+ * login instead — a setting that looks like it works, which is the failure
+ * this project keeps having to design against.
+ */
+export function providerForSeat(seat: {
+  readonly backend: string;
+  readonly connectionId?: string | undefined;
+  readonly permissionMode?: string | undefined;
+}): string {
+  if (seat.backend !== "claude-code") return PROVIDER_BY_BACKEND[seat.backend] ?? seat.backend;
+  return providerNameFor(seat.connectionId, seat.permissionMode);
+}

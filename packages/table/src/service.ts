@@ -24,9 +24,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   EMPTY_TOTALS,
-  SEAT_PROVIDER,
   capExceeded,
-  providerNameFor,
+  providerForSeat,
   addUsage,
   resolveArtifactPath,
   stripReasoning,
@@ -245,16 +244,6 @@ export interface TeamAssembler {
    */
   artifactWritten(teamId: string, path: string): void;
 }
-
-/** The provider name each backend is registered under in dsh. */
-const PROVIDER_BY_BACKEND: Record<SeatSpec["backend"], string> = {
-  // The fenced provider, not the stock one: a seat that can spawn its own
-  // subagents turns one accountable participant into an unlogged crowd, and
-  // every reader downstream sees the same reply either way.
-  "claude-code": SEAT_PROVIDER,
-  codex: "codex",
-  dsh: "dsh-sdk",
-};
 
 export class TeamsService extends Service {
   static readonly inject = ["agents", "subagents", "seatConnections"];
@@ -709,11 +698,10 @@ export class TeamsService extends Service {
    * own login.
    */
   private providerFor(seat: SeatSpec): string {
-    const connectionId = (seat.connectionId ?? "").trim();
-    // Non-claude backends keep their plain provider: only the fenced
-    // claude-code backend registers per connection and per permission mode.
-    if (seat.backend !== "claude-code") return PROVIDER_BY_BACKEND[seat.backend];
-    return providerNameFor(connectionId, seat.permissionMode);
+    // Delegated, so the table and `@squad/context` cannot disagree about
+    // which provider a seat runs on — they did, and the secretary's whole
+    // model configuration was silently ignored as a result.
+    return providerForSeat(seat);
   }
 
   private async runSeat(

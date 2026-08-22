@@ -119,6 +119,9 @@ export function apply(ctx: Context, config: Config): void {
       line("秘书拟议程…");
       const draft = await ctx.secretary.draftAgenda({
         parent: team.host,
+        // The seat, whole. Left off, this ran on the host's bare login and
+        // the smoke run passed while the configured model did nothing.
+        ...(team.secretary === undefined ? {} : { secretary: team.secretary }),
         command: "让甲用一句话说明 README.md 讲了什么，并把答案写进 docs/smoke.md",
         topic: topic,
         seats: [{ seatId: "seat-a", displayName: "甲" }],
@@ -289,7 +292,11 @@ export function apply(ctx: Context, config: Config): void {
         }
 
         line("秘书写中止交接…");
-        const handoff = await ctx.secretary.writeTermination({ parent: team.host, ...material });
+        const handoff = await ctx.secretary.writeTermination({
+          parent: team.host,
+          ...(team.secretary === undefined ? {} : { secretary: team.secretary }),
+          ...material,
+        });
         const namesRemaining = material.remaining.every((item) => handoff.includes(item.replace(/^阶段「|」.*$/g, "")));
         line(`交接文档 ${handoff.length} 字，五个标题齐全（否则已经抛错），` + `点到了未完成阶段 = ${namesRemaining}`);
         // Two claims, kept apart. The hand-off is judged on its own — it names
@@ -464,6 +471,7 @@ export function apply(ctx: Context, config: Config): void {
       // somebody could call: the secretary labels each phase while drafting,
       // and the briefs come off that label at confirmation time.
       const labelled = await ctx.secretary.draftAgenda({
+        ...(team.secretary === undefined ? {} : { secretary: team.secretary }),
         parent: team.host,
         command: "设计一个「讨论过长时自动折叠」的机制，让甲提出方案。",
         topic: topic,
