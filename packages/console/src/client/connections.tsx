@@ -12,7 +12,14 @@
  * field whose value will be rejected teaches that the form is unreliable.
  */
 import { useState } from "react";
-import { credentialRefFor, type AuthMode, type ConnectionView, type SeatConnection } from "@squad/shared";
+import {
+  credentialRefFor,
+  isOwnModel,
+  type AuthMode,
+  type ConnectionBackend,
+  type ConnectionView,
+  type SeatConnection,
+} from "@squad/shared";
 import { api, useAction } from "./api.ts";
 import styles from "./panel.module.css";
 
@@ -24,6 +31,7 @@ interface ConnectionsProps {
 export function Connections({ connections, onChanged }: ConnectionsProps): JSX.Element {
   const [name, setName] = useState("");
   const [mode, setMode] = useState<AuthMode>("subscription");
+  const [backend, setBackend] = useState<ConnectionBackend>("claude-code");
   const [model, setModel] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [credentialRef, setCredentialRef] = useState("");
@@ -45,7 +53,7 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
       connectionId,
       displayName: name,
       authMode: mode,
-      backend: "claude-code",
+      backend,
       ...(model.trim() === "" ? {} : { modelId: model.trim() }),
       ...(mode === "api-key" && endpoint.trim() !== "" ? { endpoint: endpoint.trim() } : {}),
       // Derived unless the person named an existing secret. A reference is an
@@ -63,6 +71,7 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
     if (!(await run(() => api.saveConnection(connection)))) return;
     setName("");
     setModel("");
+    setBackend("claude-code");
     setEndpoint("");
     setCredentialRef("");
     setKey("");
@@ -80,9 +89,15 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
           <div key={connection.connectionId} className={styles.row}>
             <span>{connection.displayName}</span>
             <span className={styles.muted}>
-              {connection.authMode === "subscription" ? "订阅" : "API key"}
+              {connection.backend} · {connection.authMode === "subscription" ? "订阅" : "API key"}
               {connection.modelId === undefined ? "" : ` · ${connection.modelId}`}
             </span>
+            {/* Honest about what is actually built. A connection on a backend
+                with no seat plugin saves, renders, and then fails at the first
+                round with a provider name nobody typed. */}
+            {connection.backend === "claude-code" ? null : (
+              <span className={styles.badgeBad}>还没有 {connection.backend} 的席位插件</span>
+            )}
             {connection.authMode !== "api-key" ? null : connection.credentialConfigured ? (
               <span className={styles.muted}>密钥已配置</span>
             ) : connection.credentialWritable ? (
@@ -111,6 +126,15 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
             placeholder="连接名"
             onChange={(event) => setName(event.target.value)}
           />
+          <select
+            className={styles.field}
+            value={backend}
+            onChange={(event) => setBackend(event.target.value as ConnectionBackend)}
+          >
+            <option value="claude-code">Claude Code</option>
+            <option value="codex">Codex（ChatGPT / OpenAI）</option>
+            <option value="dsh">DeepSeek Harness</option>
+          </select>
           <select className={styles.field} value={mode} onChange={(event) => setMode(event.target.value as AuthMode)}>
             <option value="subscription">订阅（用本机 CLI 的登录态）</option>
             <option value="api-key">API key</option>
@@ -118,7 +142,7 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
           <input
             className={styles.field}
             value={model}
-            placeholder={mode === "subscription" ? "模型（只能是自家的，如 sonnet）" : "模型"}
+            placeholder={mode === "subscription" ? `模型（只能是 ${backend} 自家的）` : "模型"}
             onChange={(event) => setModel(event.target.value)}
           />
         </div>
@@ -161,6 +185,15 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
           </div>
         )}
 
+        {/* Said before the save rather than after: the host refuses a foreign
+            model on a subscription, and that reason is one a person can act
+            on only while the field is still in front of them. */}
+        {mode !== "subscription" || model.trim() === "" || isOwnModel(backend, model.trim()) ? null : (
+          <div className={styles.hint}>
+            「{model.trim()}」不是 {backend} 自家的模型。订阅模式用的是本机 CLI 的登录态，这个名字会被发到那个端点，
+            报出来的错会指向模型而不是这个不匹配。要用它就选 API key，填它自己的地址和密钥。
+          </div>
+        )}
         {error === undefined ? null : <div className={styles.error}>{error}</div>}
         <div className={styles.row}>
           <button type="button" className={styles.button} onClick={() => void save()}>

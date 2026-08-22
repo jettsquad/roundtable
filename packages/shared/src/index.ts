@@ -28,3 +28,4 @@ export * from "./seat-provider.ts";
 export * from "./seat-usage.ts";
 export * from "./connection.ts";
 export * from "./agent-template.ts";
+export * from "./agent-check.ts";

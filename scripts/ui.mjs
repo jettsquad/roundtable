@@ -34,7 +34,18 @@ console.log("首次打开会要一个 DeepSeek API key —— 那是 DSH 自己�
 console.log("席位跑的是你本机的 Claude Code 登录，与它无关。");
 console.log("配好之后新建一个会话，命令面板里就能用 /squad-new 等九条命令。\n");
 
-const child = spawn(process.execPath, [harness, "--profile", "squad"], {
+/**
+ * The port, and why it is a flag rather than a patch line.
+ *
+ * The profile's `webserver` row already reads `ctx.webStartup.port ?? 3080`,
+ * and `web-startup` publishes what `--port` named. Pinning the port by
+ * replacing that row's config instead would take the flag out of play — the
+ * override would win over an explicit `--port` on the command line, which is
+ * the opposite of what a flag is for.
+ */
+const port = process.env.SQUAD_PORT ?? "9527";
+
+const child = spawn(process.execPath, [harness, "--profile", "squad", "--port", port], {
   env: { ...process.env, DSH_HOME: dshHome },
   stdio: "inherit",
 });

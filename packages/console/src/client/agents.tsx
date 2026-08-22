@@ -17,6 +17,7 @@ import {
   defaultPermissionMode,
   meaningfulCaps,
   permissionModesFor,
+  overallOf,
   REASONING_EFFORTS,
   type AgentBackend,
   type AgentTemplate,
@@ -26,7 +27,7 @@ import {
   type ReasoningEffort,
   type SeatCaps,
 } from "@squad/shared";
-import { api, useAction } from "./api.ts";
+import { api, useAction, type AgentCheckReport } from "./api.ts";
 import { numberOrUndefined } from "./number-field.ts";
 import styles from "./panel.module.css";
 
@@ -129,6 +130,12 @@ interface AgentsPageProps {
 export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps): JSX.Element {
   const [draft, setDraft] = useState<Draft>(blank);
   const [newConnection, setNewConnection] = useState(false);
+  /**
+   * Per-agent test reports. `"running"` is its own state, not a spinner over
+   * a stale report — a person who clicks 测试 on an agent they just edited
+   * must not read the previous run's green ticks as this one's.
+   */
+  const [reports, setReports] = useState<Record<string, AgentCheckReport | "running">>({});
   const { error, run } = useAction(onChanged);
   const set = (patch: Partial<Draft>): void => setDraft({ ...draft, ...patch });
 
@@ -433,9 +440,50 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                 ? "本机登录"
                 : (connections.find((c) => c.connectionId === agent.connectionId)?.displayName ?? "⚠️ 连接已删除")}
             </div>
+            {(() => {
+              const report = reports[agent.templateId];
+              if (report === undefined) return null;
+              if (report === "running") return <div className={styles.hint}>测试中……</div>;
+              const overall = overallOf(report);
+              return (
+                <div className={styles.report}>
+                  <div className={overall === "fail" ? styles.error : styles.muted}>
+                    {overall === "ok" ? "✅ 都通过了" : overall === "fail" ? "❌ 有问题" : "⚠️ 有检查没跑成"}
+                  </div>
+                  {report.checks.map((check) => (
+                    <div key={check.name} className={check.outcome === "fail" ? styles.error : styles.muted}>
+                      {check.outcome === "ok" ? "✅" : check.outcome === "fail" ? "❌" : "—"} {check.name}：
+                      {check.detail}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             <div className={styles.row}>
               <button type="button" className={styles.button} onClick={() => setDraft(draftOf(agent))}>
                 编辑
+              </button>
+              <button
+                type="button"
+                className={styles.button}
+                onClick={() => {
+                  setReports((current) => ({ ...current, [agent.templateId]: "running" }));
+                  void api
+                    .testAgent({ templateId: agent.templateId })
+                    .then((report) => setReports((current) => ({ ...current, [agent.templateId]: report })))
+                    .catch((failure: Error) =>
+                      setReports((current) => ({
+                        ...current,
+                        [agent.templateId]: {
+                          templateId: agent.templateId,
+                          displayName: agent.displayName,
+                          checks: [{ name: "测试", outcome: "fail", detail: String(failure.message) }],
+                        },
+                      })),
+                    );
+                }}
+              >
+                测试
               </button>
               <button
                 type="button"

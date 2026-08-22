@@ -5,10 +5,10 @@
  * the route cannot disagree about a field name without the build saying so.
  */
 import { useEffect, useState } from "react";
-import type { AgentTemplate, SeatCaps, SeatConnection } from "@squad/shared";
+import type { AgentCheckReport, AgentTemplate, SeatCaps, SeatConnection } from "@squad/shared";
 import type { AgentRequest, DirectoryListing, SquadSnapshot } from "../wire.ts";
 
-export type { AgentTemplate, DirectoryListing, SquadSnapshot };
+export type { AgentCheckReport, AgentTemplate, DirectoryListing, SquadSnapshot };
 export type TeamSummary = SquadSnapshot["teams"][number];
 export type SeatSummary = TeamSummary["seats"][number];
 
@@ -58,6 +58,9 @@ export const api = {
   removeConnection: (body: { connectionId: string }): Promise<unknown> => call("/connections", "DELETE", body),
   saveAgent: (body: AgentRequest): Promise<unknown> => call("/agents", "POST", body),
   removeAgent: (body: { templateId: string }): Promise<unknown> => call("/agents", "DELETE", body),
+  testAgent: (body: { templateId: string }): Promise<AgentCheckReport> => call("/agents/test", "POST", body),
+  resolveCriterion: (body: { id: string; verdict: "accept" | "reject" }): Promise<unknown> =>
+    call("/criteria", "POST", body),
   browse: (body: { path?: string; child?: string }): Promise<DirectoryListing> => call("/browse", "POST", body),
 };
 

@@ -11,6 +11,7 @@ import type { UsageTotals } from "@squad/shared";
 import { useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
 import { AgentsPage } from "./agents.tsx";
 import { Connections } from "./connections.tsx";
+import { CriteriaPage } from "./criteria.tsx";
 import { CreateForm } from "./create.tsx";
 import { SeatEditor } from "./seats.tsx";
 import { panelStore, usePanelOpen } from "./store.ts";
@@ -80,12 +81,13 @@ function TeamCard({
   );
 }
 
-type Page = "teams" | "agents" | "connections";
+type Page = "teams" | "agents" | "connections" | "criteria";
 
 const TABS: readonly { readonly id: Page; readonly label: string }[] = [
   { id: "teams", label: "团队" },
   { id: "agents", label: "Agent 库" },
   { id: "connections", label: "连接" },
+  { id: "criteria", label: "判据" },
 ];
 
 export function TeamPanel(): JSX.Element | null {
@@ -103,6 +105,7 @@ export function TeamPanel(): JSX.Element | null {
           teams: snapshot.data.teams.length,
           agents: snapshot.data.agents.length,
           connections: snapshot.data.connections.length,
+          criteria: snapshot.data.criteria.live.length + snapshot.data.criteria.proposals.length,
         }
       : undefined;
 
@@ -129,8 +132,12 @@ export function TeamPanel(): JSX.Element | null {
             ))}
           </div>
           <div className={styles.row}>
+            {/* The badge is a button now. It used to be a sentence naming an
+                obligation with nowhere to discharge it. */}
             {snapshot.state === "ready" && snapshot.data.criteria.pending > 0 ? (
-              <span className={styles.muted}>{snapshot.data.criteria.pending} 条判据待裁定</span>
+              <button type="button" className={styles.close} onClick={() => setPage("criteria")}>
+                {snapshot.data.criteria.pending} 条判据待裁定 →
+              </button>
             ) : null}
             <button type="button" className={styles.close} onClick={() => panelStore.set(false)}>
               关闭
@@ -153,6 +160,8 @@ export function TeamPanel(): JSX.Element | null {
           </div>
         ) : page === "agents" ? (
           <AgentsPage agents={snapshot.data.agents} connections={snapshot.data.connections} onChanged={again} />
+        ) : page === "criteria" ? (
+          <CriteriaPage criteria={snapshot.data.criteria} onChanged={again} />
         ) : (
           <Connections connections={snapshot.data.connections} onChanged={again} />
         )}

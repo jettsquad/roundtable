@@ -335,3 +335,11 @@
 .pickRow + .pickRow {
   border-top: 1px solid var(--dsh-color-border, #34343a);
 }
+
+.report {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--dsh-color-input, #131317);
+  font-size: 12px;
+}

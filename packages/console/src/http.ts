@@ -37,6 +37,8 @@ import type { Context } from "@deepseek-ai/cordis";
 
 import type {
   AgentRequest,
+  CriterionVerdictRequest,
+  CriterionView,
   TeamMember,
   ConnectionRequest,
   DirectoryListing,
@@ -47,6 +49,10 @@ import type {
   TeamSummary,
 } from "./wire.ts";
 import { parseNewTeam } from "./parse.ts";
+import { providerNameFor, type AgentCheckReport, type CheckResult } from "@squad/shared";
+
+/** Providers the non-claude backends would ask for, if their plugins existed. */
+const PROVIDER_BY_BACKEND_NAME: Readonly<Record<string, string>> = { codex: "codex", dsh: "dsh-sdk" };
 // Imported for the `Context.webServer` declaration merging it carries; an
 // augmentation applies only where its module is part of the compilation.
 import type {} from "@deepseek-ai/dsh-host-webserver";
@@ -55,6 +61,44 @@ import type {} from "@deepseek-ai/dsh-host-webserver";
 export const SQUAD_API_PREFIX = "/api/squad";
 
 /** One team, flattened for the wire. */
+/**
+ * Flatten one criterion for the panel.
+ *
+ * `evidence` becomes a count rather than the ids: the ids point at instances,
+ * which are the user's own occurrences with project detail in them and never
+ * leave the machine. A panel showing them would be the first thing to carry
+ * one across that boundary.
+ */
+function criterionView(
+  criterion: {
+    readonly id: string;
+    readonly claim: string;
+    readonly boundary?: string | undefined;
+    readonly status: "active" | "suspect" | "retired";
+    readonly evidence: readonly string[];
+    readonly trigger: {
+      readonly action: readonly string[];
+      readonly features: readonly string[];
+      readonly step?: readonly string[] | undefined;
+    };
+  },
+  health?: { readonly verdict: string; readonly detail: string },
+): CriterionView {
+  return {
+    id: criterion.id,
+    claim: criterion.claim,
+    ...(criterion.boundary === undefined ? {} : { boundary: criterion.boundary }),
+    status: criterion.status,
+    evidence: criterion.evidence.length,
+    trigger: {
+      action: criterion.trigger.action,
+      features: criterion.trigger.features,
+      ...(criterion.trigger.step === undefined ? {} : { step: criterion.trigger.step }),
+    },
+    ...(health === undefined ? {} : { health: { verdict: health.verdict, detail: health.detail } }),
+  };
+}
+
 /** Build the snapshot the panel renders. Pure read; nothing here starts anything. */
 export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   const teams: TeamSummary[] = [];
@@ -96,14 +140,23 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       usage: team.usage,
     });
   }
-  const [active, pending, connections] = await Promise.all([
+  const [active, pending, connections, health] = await Promise.all([
     ctx.reasoning.criteria(),
     ctx.reasoning.pending(),
     ctx.seatConnections.views(),
+    // Health is per criterion and read from disk, so it is fetched once for
+    // the whole snapshot rather than per row.
+    ctx.reasoning.health(),
   ]);
+  const healthById = new Map(health.map((entry) => [entry.criterionId, entry]));
   return {
     teams,
-    criteria: { active: active.length, pending: pending.length },
+    criteria: {
+      active: active.length,
+      pending: pending.length,
+      proposals: pending.map((criterion) => criterionView(criterion)),
+      live: active.map((criterion) => criterionView(criterion, healthById.get(criterion.id))),
+    },
     connections,
     agents: ctx.agentTemplates.list(),
   };
@@ -282,6 +335,113 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
   });
 }
 
+/** Which CLI each backend needs on PATH. */
+const EXECUTABLE_BY_BACKEND: Readonly<Record<string, string>> = {
+  "claude-code": "claude",
+  codex: "codex",
+  dsh: "dsh",
+};
+
+/**
+ * Test one agent's configuration.
+ *
+ * Four independent answers rather than one verdict, because they fail for
+ * unrelated reasons and each has a different fix. A skipped check is reported
+ * as skipped and never folded into a pass — see `overallOf`.
+ *
+ * Nothing here starts a model turn. A test that spent tokens would be a test
+ * people stop running.
+ */
+export async function checkAgent(ctx: Context, templateId: string): Promise<AgentCheckReport> {
+  const template = ctx.agentTemplates.get(templateId);
+  if (template === undefined) throw new Error(`Agent 库里没有这个模板：${templateId}。`);
+  const checks: CheckResult[] = [];
+
+  // ① A seat backend for this CLI. Today only claude-code has one, and an
+  // agent on any other backend fails at its FIRST ROUND with "no subagent
+  // provider registered" — a message naming a provider the person never
+  // typed. Saying it here is the difference between a configuration you can
+  // fix and a meeting that dies halfway through.
+  const provider = providerNameFor(
+    template.backend === "claude-code" ? (template.connectionId ?? "") : "",
+    template.backend === "claude-code" ? template.permissionMode : undefined,
+  );
+  const wanted =
+    template.backend === "claude-code" ? provider : (PROVIDER_BY_BACKEND_NAME[template.backend] ?? template.backend);
+  const registered = ctx.subagents.getProvider(wanted) !== undefined;
+  checks.push(
+    registered
+      ? { name: "席位后端", outcome: "ok", detail: wanted }
+      : {
+          name: "席位后端",
+          outcome: "fail",
+          detail:
+            `没有注册「${wanted}」。` +
+            (template.backend === "claude-code"
+              ? "通常是这个连接刚被删掉了。"
+              : `Squad 目前只做了 claude-code 的席位插件，${template.backend} 的还没有——这个 agent 一开会就会失败。` +
+                `已注册的有：${ctx.subagents.list().join("、")}`),
+        },
+  );
+
+  // ② The CLI itself.
+  const executable = EXECUTABLE_BY_BACKEND[template.backend];
+  if (executable === undefined) {
+    checks.push({ name: "命令行工具", outcome: "skipped", detail: `不知道 ${template.backend} 用哪个可执行文件。` });
+  } else {
+    try {
+      const path = await ctx.subprocess.resolveExecutable(executable, {});
+      checks.push({ name: "命令行工具", outcome: "ok", detail: path });
+    } catch (failure) {
+      checks.push({
+        name: "命令行工具",
+        outcome: "fail",
+        detail: `PATH 上找不到 ${executable}（${failure instanceof Error ? failure.message : String(failure)}）。`,
+      });
+    }
+  }
+
+  // ③ The credential, when the connection needs one.
+  const connection = template.connectionId === undefined ? undefined : ctx.seatConnections.get(template.connectionId);
+  if (template.connectionId === undefined) {
+    checks.push({ name: "密钥", outcome: "skipped", detail: "用本机登录态，不需要密钥。" });
+  } else if (connection === undefined) {
+    checks.push({ name: "密钥", outcome: "fail", detail: `连接 ${template.connectionId} 不存在了。` });
+  } else if (connection.authMode === "subscription") {
+    checks.push({ name: "密钥", outcome: "skipped", detail: "订阅模式用本机登录态，不需要密钥。" });
+  } else {
+    const views = await ctx.seatConnections.views();
+    const view = views.find((candidate) => candidate.connectionId === connection.connectionId);
+    checks.push(
+      view?.credentialConfigured === true
+        ? { name: "密钥", outcome: "ok", detail: `已配置（${connection.credentialRef}）` }
+        : { name: "密钥", outcome: "fail", detail: `「${connection.credentialRef}」还没有值。` },
+    );
+  }
+
+  // ④ The endpoint. Reachability only — a HEAD that expects no particular
+  // status, because an auth error from the right host still proves the host
+  // is there, and a test that demanded 200 would fail on every gateway that
+  // refuses unauthenticated probes.
+  const endpoint = (connection?.endpoint ?? "").trim();
+  if (endpoint === "") {
+    checks.push({ name: "接口地址", outcome: "skipped", detail: "用后端默认地址。" });
+  } else {
+    try {
+      const response = await fetch(endpoint, { method: "HEAD", signal: AbortSignal.timeout(5000) });
+      checks.push({ name: "接口地址", outcome: "ok", detail: `${endpoint} 有响应（HTTP ${response.status}）` });
+    } catch (failure) {
+      checks.push({
+        name: "接口地址",
+        outcome: "fail",
+        detail: `连不上 ${endpoint}（${failure instanceof Error ? failure.message : String(failure)}）`,
+      });
+    }
+  }
+
+  return { templateId, displayName: template.displayName, checks };
+}
+
 /**
  * List the directories under one path, for the folder picker.
  *
@@ -413,6 +573,20 @@ export function registerSquadApi(ctx: Context): () => void {
             res.end(JSON.stringify({ ok: true }));
             return;
           }
+        }
+        if (suffix === "/agents/test" && req.method === "POST") {
+          const body = await readJson<{ templateId: string }>(req);
+          const report = await checkAgent(ctx, body.templateId);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(report));
+          return;
+        }
+        if (suffix === "/criteria" && req.method === "POST") {
+          const body = await readJson<CriterionVerdictRequest>(req);
+          await ctx.reasoning.resolve(body.id, body.verdict);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
         }
         if (suffix === "/browse" && req.method === "POST") {
           const body = await readJson<{ path?: string; child?: string }>(req);

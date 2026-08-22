@@ -54,8 +54,21 @@ export interface TeamSummary {
 
 export interface SquadSnapshot {
   readonly teams: readonly TeamSummary[];
-  /** Lil X: how many criteria are live, and how many wait on a human. */
-  readonly criteria: { readonly active: number; readonly pending: number };
+  /**
+   * Lil X's judgement library.
+   *
+   * The counts used to be the whole of it, which made the header badge a
+   * dead end: it said one proposal was waiting and offered no way to look at
+   * it. A number that names an obligation has to lead somewhere.
+   */
+  readonly criteria: {
+    readonly active: number;
+    readonly pending: number;
+    /** Proposals awaiting a human verdict. */
+    readonly proposals: readonly CriterionView[];
+    /** Criteria already in force, with what their use has shown. */
+    readonly live: readonly CriterionView[];
+  };
   /** Seat connections, with credential STATUS and never a credential value. */
   readonly connections: readonly ConnectionView[];
   /** The reusable agent library. */
@@ -154,4 +167,35 @@ export interface DirectoryListing {
   readonly parent?: string;
   /** Direct child directories, by name, sorted. Files are not listed. */
   readonly directories: readonly string[];
+}
+
+/** One criterion, flattened for the panel. */
+export interface CriterionView {
+  readonly id: string;
+  /** The claim, in the person's own words. */
+  readonly claim: string;
+  /** Where it does NOT apply. */
+  readonly boundary?: string;
+  readonly status: "active" | "suspect" | "retired";
+  /** How many recorded occurrences back it. */
+  readonly evidence: number;
+  /** When it gets fetched: action kinds, feature flags, framework steps. */
+  readonly trigger: {
+    readonly action: readonly string[];
+    readonly features: readonly string[];
+    readonly step?: readonly string[];
+  };
+  /**
+   * What its use has shown, when it has been used.
+   *
+   * Absent for a proposal — a criterion nobody has been given yet has no
+   * record, and a health verdict on it would be an opinion dressed as one.
+   */
+  readonly health?: { readonly verdict: string; readonly detail: string };
+}
+
+/** A human's verdict on one proposal. */
+export interface CriterionVerdictRequest {
+  readonly id: string;
+  readonly verdict: "accept" | "reject";
 }
