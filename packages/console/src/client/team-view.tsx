@@ -18,6 +18,7 @@ import type { UsageTotals } from "@squad/shared";
 import { useState } from "react";
 import { useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
 import { Agenda } from "./agenda.tsx";
+import { Discussion } from "./discussion.tsx";
 import styles from "./panel.module.css";
 
 /** One team's consumption, in a line. See `panel.tsx` for why cache is separate. */
@@ -79,27 +80,6 @@ function Roster({ team, data }: { readonly team: TeamSummary; readonly data: Squ
   );
 }
 
-function Transcript({ team }: { readonly team: TeamSummary }): JSX.Element {
-  if (team.transcript.length === 0) {
-    return <div className={styles.hint}>还没有讨论。在下面说一句，团队就开始了。</div>;
-  }
-  return (
-    <div className={styles.transcript}>
-      {/* Said, not silently dropped: a record that begins mid-sentence with
-          nothing saying so reads as the whole discussion. */}
-      {team.transcriptOmitted === 0 ? null : (
-        <div className={styles.hint}>前面还有 {team.transcriptOmitted} 条，这里只显示最近的。</div>
-      )}
-      {team.transcript.map((line) => (
-        <div key={line.turnId} className={styles.said}>
-          <div className={styles.saidWho}>{line.speaker}</div>
-          <div className={styles.saidText}>{line.text}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 /**
  * The team owning this session's directory, if any.
  *
@@ -148,7 +128,7 @@ export function TeamView({ folderOf }: { readonly folderOf: () => string | undef
           work happens, and a plan you must leave the room to confirm is a
           plan you confirm without looking at the discussion it came from. */}
       <Agenda team={team} onChanged={() => setNonce((value) => value + 1)} />
-      <Transcript team={team} />
+      <Discussion team={team} autoScroll />
       {/* No input box here. There is exactly one on the screen and it is the
           one at the bottom, in the place people already type — see
           `composer.tsx`. Two boxes with different destinations is what made

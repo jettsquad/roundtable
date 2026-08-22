@@ -19,7 +19,7 @@ import { useEffect, useState } from "react";
 // below takes the bar's PLACE through the composer chain and is built from
 // the same pieces the rest of the app is.
 import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
-import { api, useSnapshot, type SeatReply } from "./api.ts";
+import { api, useSnapshot } from "./api.ts";
 import { parseMentions } from "../mention.ts";
 import styles from "./panel.module.css";
 
@@ -41,7 +41,6 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
   const current = snapshot.state === "ready" ? snapshot.data.teams.find((t) => t.projectFolder === folder) : undefined;
   const [instruction, setInstruction] = useState("");
   const [running, setRunning] = useState(false);
-  const [replies, setReplies] = useState<readonly SeatReply[] | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [elapsed, setElapsed] = useState(0);
 
@@ -80,23 +79,22 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
   const send = async (): Promise<void> => {
     setError(undefined);
     setRunning(true);
-    // Cleared before the run, both of them. A stale set of replies under a
-    // running round reads as this round's answer — and text left sitting in
-    // the box after it was sent is text you send again, which is how one
-    // question became four identical ones in the record.
-    setReplies(undefined);
+    // Text left sitting in the box after it was sent is text you send again,
+    // which is how one question became four identical ones in the record.
     const sent = mentions.instruction;
     const seatIds = named.map((seat) => seat.seatId);
     setInstruction("");
     try {
-      const result = await api.say({
+      await api.say({
         teamId: current.teamId,
         // The roll-call is stripped: a seat that also found 「@架构」 inside
         // its own task would be reading an address as an instruction.
         instruction: sent,
         ...(seatIds.length === 0 ? {} : { seatIds }),
       });
-      setReplies(result.replies);
+      // The answers land in the discussion, which is the ONE place a
+      // conversation is shown. Repeating them here is what put the same
+      // sentences on the screen twice.
       onSent();
     } catch (failure) {
       // Put the text back when it did not go out, so a refusal does not also
@@ -113,17 +111,6 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
       <div className={styles.composerWho}>
         发给团队「{current.displayName}」{current.seats.length === 0 ? " · 还没有成员" : ""}
       </div>
-
-      {(replies ?? []).map((reply) => (
-        <div key={reply.seatId} className={styles.reply}>
-          <div className={styles.row}>
-            <span className={styles.teamName}>{reply.displayName}</span>
-            {reply.failed ? <span className={styles.badgeBad}>失败</span> : null}
-            <span className={styles.muted}>带了 {reply.contextLines} 行讨论</span>
-          </div>
-          <div className={styles.replyText}>{reply.text}</div>
-        </div>
-      ))}
 
       <div className={styles.row}>
         <Input

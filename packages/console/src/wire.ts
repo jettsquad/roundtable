@@ -27,6 +27,8 @@ export interface TeamSummary {
   readonly teamId: string;
   readonly displayName: string;
   readonly projectFolder: string;
+  /** What the host is called in the record, so a view can tell it from a seat. */
+  readonly hostDisplayName: string;
   readonly busy: boolean;
   readonly seats: readonly {
     readonly seatId: string;

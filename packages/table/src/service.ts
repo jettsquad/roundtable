@@ -93,6 +93,8 @@ export interface Team {
   readonly teamId: string;
   readonly displayName: string;
   readonly projectFolder: string;
+  /** What the host is called in the record — the name `recordSpoken` writes. */
+  readonly hostDisplayName: string;
   readonly seats: readonly SeatSpec[];
   /** The host node's session id — the team's durable record. */
   readonly hostSessionId: string;
@@ -484,6 +486,7 @@ export class TeamsService extends Service {
       teamId: record.teamId,
       displayName: record.input.displayName,
       projectFolder: record.input.projectFolder,
+      hostDisplayName: record.input.hostDisplayName,
       seats: record.seats,
       hostSessionId: String(record.handle.agent.session.id),
       host: record.handle.agent,

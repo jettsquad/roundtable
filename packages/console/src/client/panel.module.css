@@ -392,10 +392,7 @@
 }
 
 .viewPad {
-  /* Generous bottom padding: the composer floats over this view, and without
-     it the newest lines of the discussion — the ones you just caused — sit
-     underneath the box you typed into. */
-  padding: 14px 18px 240px;
+  padding: 14px 18px 0;
   font-size: 13px;
   line-height: 1.55;
   color: var(--dsh-color-text, #e8e8ea);
@@ -411,25 +408,6 @@
 .rosterStrip .seat {
   gap: 6px;
   padding: 3px 10px;
-}
-
-.transcript {
-  margin: 10px 0;
-  padding-top: 8px;
-  border-top: 1px solid var(--dsh-color-border, #34343a);
-}
-
-.said + .said {
-  margin-top: 10px;
-}
-
-.saidWho {
-  font-weight: 600;
-}
-
-.saidText {
-  white-space: pre-wrap;
-  opacity: 0.9;
 }
 
 .composerBox {
@@ -449,4 +427,68 @@
 .composerWho {
   font-weight: 600;
   opacity: 0.8;
+}
+
+/*
+ * The discussion, shaped like 1.x's message list rather than a chat's
+ * left/right bubbles. With five participants, alternating sides tells you
+ * nothing — the NAME is what identifies a speaker, so the name is what
+ * carries the colour.
+ */
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 12px 0;
+}
+
+.message {
+  min-width: 0;
+}
+
+.speaker {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--dsh-color-input, #131317);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.speakerHost {
+  background: #2b3350;
+  color: #b9c6f5;
+}
+
+/* The body inherits dsh's own markdown styling — MarkdownText renders the
+   same elements Chat does — so this only owns the width and the gap. */
+.messageBody {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Wide content scrolls inside itself. A GFM table from a seat is often wider
+   than this pane, and a body that pushed the pane sideways would take the
+   composer with it. */
+.messageBody :global(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.messageBody :global(pre) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/*
+ * Room under the last message for the floating composer.
+ *
+ * On the thread's own tail rather than the view's padding: the padding sat
+ * below the composer's own copy of the discussion and did nothing for the
+ * one people actually read.
+ */
+.threadTail {
+  height: 260px;
 }

@@ -176,6 +176,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       teamId,
       displayName: team.displayName,
       projectFolder: team.projectFolder,
+      hostDisplayName: team.hostDisplayName,
       busy: team.busy,
       seats: team.seats.map((seat) => {
         const state = team.seatStates.find((candidate) => candidate.seatId === seat.seatId);
