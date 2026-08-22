@@ -8,6 +8,9 @@
     "@squad/context": "file:/Volumes/Jett/projects/Squad2/packages/context",
     "@squad/reasoning": "file:/Volumes/Jett/projects/Squad2/packages/reasoning",
     "@squad/seat-claude-code": "file:/Volumes/Jett/projects/Squad2/packages/seat-claude-code",
+    "@squad/seat-codex": "file:/Volumes/Jett/projects/Squad2/packages/seat-codex",
+    "@squad/seat-dsh": "file:/Volumes/Jett/projects/Squad2/packages/seat-dsh",
+    "@squad/seat-runtime": "file:/Volumes/Jett/projects/Squad2/packages/seat-runtime",
     "@squad/secretary": "file:/Volumes/Jett/projects/Squad2/packages/secretary",
     "@squad/table": "file:/Volumes/Jett/projects/Squad2/packages/table"
   },

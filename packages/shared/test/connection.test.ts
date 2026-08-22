@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   credentialRefFor,
+  modelArgumentFor,
   capExceeded,
   checkConnection,
   envForConnection,
@@ -163,5 +164,69 @@ describe("credentialRefFor", () => {
   it("空的也给得出名字，而不是一个孤零零的下划线", () => {
     expect(credentialRefFor("")).toBe("SQUAD_CONNECTION_KEY");
     expect(credentialRefFor("---")).toBe("SQUAD_CONNECTION_KEY");
+  });
+});
+
+describe("envForConnection：每个后端读的变量名不一样", () => {
+  const of = (over: Partial<SeatConnection>): SeatConnection => ({
+    connectionId: "c",
+    displayName: "c",
+    authMode: "api-key",
+    backend: "claude-code",
+    ...over,
+  });
+
+  it("codex 拿 CODEX_API_KEY，而不是 ANTHROPIC_*", () => {
+    // 原来所有连接都发 ANTHROPIC_*：codex 席位拿到一堆它不读的变量、
+    // 一个它要的都没有，然后以一个指不到任何地方的鉴权错误失败。
+    const env = envForConnection(of({ backend: "codex", endpoint: "https://x", modelId: "gpt-5" }), "k");
+    expect(env["CODEX_API_KEY"]).toBe("k");
+    expect(env["ANTHROPIC_AUTH_TOKEN"]).toBeUndefined();
+  });
+
+  it("codex 不从环境变量拿模型和端点", () => {
+    // 模型走 --model 命令行参数，端点由 CLI 自己的配置管——这里发出去
+    // 就是发一个没人读的设置。
+    const env = envForConnection(of({ backend: "codex", endpoint: "https://x", modelId: "gpt-5" }), "k");
+    expect(Object.keys(env)).toEqual(["CODEX_API_KEY"]);
+  });
+
+  it("dsh 拿 DEEPSEEK_API_KEY", () => {
+    expect(envForConnection(of({ backend: "dsh" }), "k")["DEEPSEEK_API_KEY"]).toBe("k");
+  });
+
+  it("claude-code 三样照旧", () => {
+    const env = envForConnection(of({ endpoint: "https://gw", modelId: "m" }), "k");
+    expect(env).toEqual({
+      ANTHROPIC_BASE_URL: "https://gw",
+      ANTHROPIC_AUTH_TOKEN: "k",
+      ANTHROPIC_MODEL: "m",
+    });
+  });
+
+  it("订阅模式下，没有环境变量放模型的后端就什么都不发", () => {
+    expect(envForConnection(of({ backend: "codex", authMode: "subscription", modelId: "gpt-5" }))).toEqual({});
+  });
+});
+
+describe("modelArgumentFor", () => {
+  const of = (over: Partial<SeatConnection>): SeatConnection => ({
+    connectionId: "c",
+    displayName: "c",
+    authMode: "api-key",
+    backend: "codex",
+    ...over,
+  });
+
+  it("只有走命令行的后端才给", () => {
+    // claude-code 用 ANTHROPIC_MODEL，再从命令行给一次就是说两遍。
+    expect(modelArgumentFor(of({ backend: "claude-code", modelId: "m" }))).toBeUndefined();
+    expect(modelArgumentFor(of({ modelId: "gpt-5" }))).toBe("gpt-5");
+  });
+
+  it("订阅模式下外来模型不给", () => {
+    // 给了就会被发到登录态自己的端点，报出来的错指向模型而不是这个不匹配。
+    expect(modelArgumentFor(of({ authMode: "subscription", modelId: "deepseek-chat" }))).toBeUndefined();
+    expect(modelArgumentFor(of({ authMode: "subscription", modelId: "gpt-5" }))).toBe("gpt-5");
   });
 });

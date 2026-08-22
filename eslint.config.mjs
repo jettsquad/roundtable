@@ -66,7 +66,37 @@ export default tseslint.config(
     // shared has its own stricter rule above and is excluded here so this one
     // does not relax it.
     files: ["packages/*/**/*.ts"],
-    ignores: ["packages/shared/**/*.ts"],
+    ignores: ["packages/shared/**/*.ts", "packages/seat-runtime/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@squad/*", "!@squad/shared", "!@squad/seat-runtime"],
+              message: "插件之间只通过 ctx 上的服务说话，不互相 import。共用的纯逻辑走 @squad/shared。",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // `@squad/seat-runtime` is the second exception, and it is a LIBRARY, not
+    // a plugin: it registers no service, provides nothing to a context, and
+    // nothing can talk to it through `ctx`. It is the shared body of the
+    // three CLI seat backends, which differ only in executable, arguments and
+    // output format.
+    //
+    // The wall exists so plugins talk through services instead of reaching
+    // into each other. A library nobody can reach through a service is not
+    // what it was defending against — and three hand-kept copies of the
+    // run-handle contract, the cancellation wiring and the silence watchdog
+    // would drift, with the drifted copy being the one nobody reads.
+    //
+    // It may not import a plugin, for the same reason shared may not: that
+    // would make it a back door.
+    files: ["packages/seat-runtime/**/*.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -74,7 +104,7 @@ export default tseslint.config(
           patterns: [
             {
               group: ["@squad/*", "!@squad/shared"],
-              message: "插件之间只通过 ctx 上的服务说话，不互相 import。共用的纯逻辑走 @squad/shared。",
+              message: "seat-runtime 是库不是插件：它可以用 shared，但不得依赖任何插件包。",
             },
           ],
         },

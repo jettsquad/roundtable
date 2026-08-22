@@ -1,5 +1,5 @@
 {
-  "name": "@squad/seat-claude-code",
+  "name": "@squad/seat-codex",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,6 @@
     "@deepseek-ai/cordis": "*"
   },
   "dependencies": {
-    "@squad/shared": "*",
-    "@squad/seat-runtime": "*"
+    "@squad/shared": "*"
   }
 }

@@ -48,10 +48,8 @@ import type {
   TeamSummary,
 } from "./wire.ts";
 import { parseNewTeam } from "./parse.ts";
-import { providerForSeat, providerNameFor, type AgentCheckReport, type CheckResult } from "@squad/shared";
+import { providerForSeat, type AgentCheckReport, type CheckResult } from "@squad/shared";
 
-/** Providers the non-claude backends would ask for, if their plugins existed. */
-const PROVIDER_BY_BACKEND_NAME: Readonly<Record<string, string>> = { codex: "codex", dsh: "dsh-sdk" };
 // Imported for the `Context.webServer` declaration merging it carries; an
 // augmentation applies only where its module is part of the compilation.
 import type {} from "@deepseek-ai/dsh-host-webserver";
@@ -420,12 +418,12 @@ export async function checkAgent(ctx: Context, templateId: string): Promise<Agen
   // provider registered" — a message naming a provider the person never
   // typed. Saying it here is the difference between a configuration you can
   // fix and a meeting that dies halfway through.
-  const provider = providerNameFor(
-    template.backend === "claude-code" ? (template.connectionId ?? "") : "",
-    template.backend === "claude-code" ? template.permissionMode : undefined,
-  );
-  const wanted =
-    template.backend === "claude-code" ? provider : (PROVIDER_BY_BACKEND_NAME[template.backend] ?? template.backend);
+  // Through `providerForSeat`, the same derivation the table uses when it
+  // actually starts the seat. This used to hardcode claude-code and fall back
+  // to a local map for the others, so the test asked whether `codex` was
+  // registered while the seat would ask for `codex/<connection>` — a test
+  // that passes and a round that fails, which is worse than no test.
+  const wanted = providerForSeat(template);
   const registered = ctx.subagents.getProvider(wanted) !== undefined;
   checks.push(
     registered
@@ -450,11 +448,16 @@ export async function checkAgent(ctx: Context, templateId: string): Promise<Agen
     try {
       const path = await ctx.subprocess.resolveExecutable(executable, {});
       checks.push({ name: "命令行工具", outcome: "ok", detail: path });
-    } catch (failure) {
+    } catch {
       checks.push({
         name: "命令行工具",
         outcome: "fail",
-        detail: `PATH 上找不到 ${executable}（${failure instanceof Error ? failure.message : String(failure)}）。`,
+        detail:
+          `PATH 上找不到 ${executable}。` +
+          (template.backend === "dsh"
+            ? "harness 自带一个 dsh 可执行文件，但用 `node …/bin.js` 启动的人通常没有把它链到 PATH 上——" +
+              "把它链上，或者在 profile 里给 squad-seat-dsh 配一个绝对路径的 command。"
+            : `装好它，或者把它所在的目录加进 PATH。`),
       });
     }
   }

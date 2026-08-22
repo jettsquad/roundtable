@@ -137,25 +137,71 @@ export function checkConnection(connection: SeatConnection): readonly Connection
  * this stays pure and testable — the one rule that decides whether a secret
  * is sent should be the easiest thing in the system to check.
  */
+interface EnvNames {
+  /** Where the key goes. */
+  readonly token: string;
+  /** Where the endpoint goes; absent when the CLI has no such variable. */
+  readonly baseUrl?: string;
+  /** Where the model goes; absent when the CLI takes it on the command line. */
+  readonly model?: string;
+}
+
+/**
+ * The environment variables each backend actually reads.
+ *
+ * Per backend, because they do not agree and a single set was simply wrong
+ * for two of the three: every connection used to emit `ANTHROPIC_*`, so a
+ * Codex seat was handed Anthropic variables it ignores and no key it reads,
+ * and it would have failed as an auth error pointing at nothing.
+ *
+ * Codex takes its model on the COMMAND LINE (`--model`) and has no
+ * base-url variable — the CLI's own config owns the provider — so those two
+ * are absent here rather than invented.
+ */
+const ENV_NAMES: Readonly<Record<ConnectionBackend, EnvNames>> = {
+  "claude-code": { token: "ANTHROPIC_AUTH_TOKEN", baseUrl: "ANTHROPIC_BASE_URL", model: "ANTHROPIC_MODEL" },
+  codex: { token: "CODEX_API_KEY" },
+  dsh: { token: "DEEPSEEK_API_KEY" },
+};
+
 export function envForConnection(
   connection: SeatConnection,
   credential?: string | undefined,
 ): Readonly<Record<string, string>> {
+  const names = ENV_NAMES[connection.backend];
   if (connection.authMode === "subscription") {
     // Nothing. Not the endpoint, not a token, and the model only when the
-    // login can actually serve it.
+    // login can actually serve it AND this backend takes a model from the
+    // environment at all.
     const model = (connection.modelId ?? "").trim();
-    return model !== "" && isOwnModel(connection.backend, model) ? { ANTHROPIC_MODEL: model } : {};
+    if (names.model === undefined || model === "" || !isOwnModel(connection.backend, model)) return {};
+    return { [names.model]: model };
   }
 
   const env: Record<string, string> = {};
   const endpoint = (connection.endpoint ?? "").trim();
-  if (endpoint !== "") env["ANTHROPIC_BASE_URL"] = endpoint;
-  if (credential !== undefined && credential !== "") env["ANTHROPIC_AUTH_TOKEN"] = credential;
+  if (names.baseUrl !== undefined && endpoint !== "") env[names.baseUrl] = endpoint;
+  if (credential !== undefined && credential !== "") env[names.token] = credential;
   const model = (connection.modelId ?? "").trim();
   // Any model name is safe here: it travels with its own endpoint and token.
-  if (model !== "") env["ANTHROPIC_MODEL"] = model;
+  if (names.model !== undefined && model !== "") env[names.model] = model;
   return env;
+}
+
+/**
+ * The model this connection wants, when the backend takes it on the command
+ * line rather than from the environment.
+ *
+ * Returned only when it can actually be honoured: a subscription seat given a
+ * foreign model has that name sent to the login's own endpoint, which answers
+ * about the model rather than about the mismatch.
+ */
+export function modelArgumentFor(connection: SeatConnection): string | undefined {
+  if (ENV_NAMES[connection.backend].model !== undefined) return undefined;
+  const model = (connection.modelId ?? "").trim();
+  if (model === "") return undefined;
+  if (connection.authMode === "api-key") return model;
+  return isOwnModel(connection.backend, model) ? model : undefined;
 }
 
 /**

@@ -21,18 +21,11 @@
  * vanishes rather than as a seat that failed.
  */
 import { Service, type Context } from "@deepseek-ai/cordis";
-import {
-  NO_START_CAPABILITIES,
-  resolveChildCwd,
-  settleRunResult,
-  subprocessRunHandle,
-  type SubagentProvider,
-  type SubagentResult,
-  type SubagentRun,
-} from "@deepseek-ai/dsh-subagent";
+import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "@deepseek-ai/dsh-subagent";
 // Imported for the `Context.subprocess` declaration merging it carries: an
 // augmentation applies only where its module is in the compilation.
-import type { SubprocessHandle } from "@deepseek-ai/dsh-subprocess";
+import type {} from "@deepseek-ai/dsh-subprocess";
+import { runCliSeat } from "@squad/seat-runtime";
 import { CLAUDE_PERMISSION_MODES, providerNameFor } from "@squad/shared";
 import { DELEGATION_TOOLS, buildArgv, type PermissionMode } from "./argv.ts";
 import { readStream } from "./stream.ts";
@@ -184,27 +177,14 @@ export class FencedClaudeCodeSeats extends Service {
       inheritsParentContext: false,
 
       async start(request): Promise<SubagentRun> {
-        const cwd = resolveChildCwd("squad-seat-claude-code", undefined, request.parent.session.header.cwd);
-        const executable = await ctx.subprocess.resolveExecutable("claude", config.env ?? {}, request.signal);
-
-        const prompt = request.prompt
-          .map((block) => (typeof block === "object" && block !== null && "text" in block ? String(block.text) : ""))
-          .join("");
-        if (prompt.trim() === "") throw new Error("squad-seat-claude-code: 席位任务不能是空的。");
-
-        const controller = new AbortController();
-        let cancelled = false;
-        const requestCancel = (): void => {
-          cancelled = true;
-          if (!controller.signal.aborted) controller.abort(new Error("squad-seat: cancelled"));
-        };
-        const onAbort = (): void => requestCancel();
-        request.signal.addEventListener("abort", onAbort, { once: true });
-
-        const child = await ctx.subprocess.spawn({
-          argv: [
-            executable,
-            ...buildArgv({
+        const connectionEnv = connectionId === undefined ? {} : await ctx.seatConnections.envFor(connectionId);
+        return runCliSeat({
+          ctx,
+          who: name,
+          request,
+          command: "claude",
+          argv: ({ prompt }) =>
+            buildArgv({
               prompt,
               ...(request.toolFilter === undefined ? {} : { toolFilter: request.toolFilter }),
               ...(request.persona === undefined ? {} : { persona: request.persona }),
@@ -216,188 +196,19 @@ export class FencedClaudeCodeSeats extends Service {
                 DEFAULTS.permissionMode,
               alwaysDeny: config.alwaysDeny ?? DEFAULTS.alwaysDeny,
             }),
-          ],
-          cwd,
-          // Collected with a cap rather than piped: a seat's stdout is read
-          // once, after it exits, and an unbounded buffer would let a chatty
-          // run take the host down with it. Overflow keeps the TAIL, which is
-          // where the answer is.
-          stdio: {
-            stdin: "ignore",
-            stdout: { maxBytes: 8 * 1024 * 1024 },
-            stderr: { maxBytes: 256 * 1024 },
-          },
-          graceMs: config.disposeGraceMs ?? DEFAULTS.disposeGraceMs,
-          signal: controller.signal,
           // Resolved per start, so a rotated key reaches this turn.
-          env: {
-            ...(config.env ?? {}),
-            ...(connectionId === undefined ? {} : await ctx.seatConnections.envFor(connectionId)),
+          env: { ...(config.env ?? {}), ...connectionEnv },
+          parse: readStream,
+          limits: {
+            idleMs: config.idleMs ?? DEFAULTS.idleMs,
+            firstOutputMs: config.firstOutputMs ?? DEFAULTS.firstOutputMs,
+            pollMs: config.pollMs ?? DEFAULTS.pollMs,
           },
-        });
-
-        let output = "";
-        const collectOutput = (): SubagentResult["output"] =>
-          output.trim() === "" ? [] : [{ type: "text", text: readStream(output).text }];
-
-        const attempt = async (): Promise<SubagentResult> => {
-          let silence: "silent" | "no-output" | undefined;
-          const idle = idleWatchdog(
-            async () => (await child.collected.stdout?.readFrom(0))?.nextOffset ?? 0,
-            {
-              idleMs: config.idleMs ?? DEFAULTS.idleMs,
-              firstOutputMs: config.firstOutputMs ?? DEFAULTS.firstOutputMs,
-              pollMs: config.pollMs ?? DEFAULTS.pollMs,
-            },
-            (reason) => {
-              silence = reason;
-              requestCancel();
-            },
-          );
-          try {
-            const outcome = await child.done;
-            output = await readAll(child);
-            const parsed = readStream(output);
-            // A non-zero exit with text still carries the text: a failure that
-            // explains itself is worth more than one that does not.
-            // `exitCode` is null when a signal killed it — which is a
-            // failure, not a zero exit. Comparing against 0 alone would read
-            // a SIGKILLed seat as a clean one.
-            const failed = parsed.failed || outcome.exitCode !== 0;
-            // A seat killed by the watchdog explains itself. Without this the
-            // caller sees an empty answer and a non-zero exit, which reads as
-            // "the model said nothing" — and the person goes looking at the
-            // prompt instead of at the endpoint.
-            const text =
-              silence === "no-output"
-                ? `这个席位 ${Math.round((config.firstOutputMs ?? DEFAULTS.firstOutputMs) / 1000)} 秒内一个字都没输出，` +
-                  `按连不上处理。多半是它的连接端点没有响应——到 Agent 库点「测试」看接口地址那一项。`
-                : silence === "silent"
-                  ? `这个席位停了 ${Math.round((config.idleMs ?? DEFAULTS.idleMs) / 1000)} 秒没有新输出，已经中止。`
-                  : parsed.text;
-            return {
-              output: text === "" ? [] : [{ type: "text", text }],
-              stopReason: failed ? "error" : "completed",
-              // `SubagentResult` declares no usage field, and dsh does not
-              // need one: `observeRun` attaches an observer and returns our
-              // object unchanged, so an extra property survives to the caller.
-              // Verified in the harness source before relying on it.
-              ...(parsed.usage === undefined ? {} : { squadUsage: parsed.usage }),
-            } as SubagentResult;
-          } finally {
-            idle.stop();
-          }
-        };
-
-        return subprocessRunHandle({
-          id: `${request.parent.session.id}/claude-${Date.now().toString(36)}` as never,
-          // Never rejects after publication — the seam's contract, enforced by
-          // dsh's own settlement rather than by our care.
-          result: settleRunResult({
-            attempt,
-            collectOutput,
-            cancelled: () => cancelled,
-            signal: request.signal,
-            onAbort,
-            onError: (error, stopReason) => {
-              ctx.logger.warn(`squad-seat-claude-code: 席位失败（${stopReason}）：${error.message}`);
-            },
-          }),
-          signal: request.signal,
-          onAbort,
-          requestCancel,
-          teardown: async () => {
-            child.terminate();
-            await child.done.catch(() => undefined);
-          },
+          disposeGraceMs: config.disposeGraceMs ?? DEFAULTS.disposeGraceMs,
         });
       },
     };
   }
-}
-
-/** Read everything the child collected, after it exited. */
-async function readAll(child: SubprocessHandle): Promise<string> {
-  // From offset 0 after settlement: the batch result. `lossy` would mean the
-  // in-memory tail lost its head, which for a stream-json run costs the early
-  // assistant blocks — reported rather than silently shortened.
-  const read = await child.collected.stdout?.readFrom(0);
-  return read?.text ?? "";
-}
-
-/**
- * Whether a stretch of silence has become a verdict, and which one.
- *
- * Pure, and separate, because this is the judgement the previous watchdog
- * got wrong: it had one deadline where there are two, and it counted from
- * the start where it should count from the last byte.
- *
- * @param bytesSeen - total output bytes so far; zero means nothing has ever arrived.
- * @param quietFor - milliseconds since the byte count last changed.
- */
-export function silenceVerdict(
-  bytesSeen: number,
-  quietFor: number,
-  limits: { readonly idleMs: number; readonly firstOutputMs: number },
-): "silent" | "no-output" | undefined {
-  // Before the first byte there is nothing to be deep about, so the shorter
-  // deadline applies — and the verdict names the difference, because "never
-  // answered" and "stopped answering" send a person to different places.
-  if (bytesSeen === 0) return quietFor >= limits.firstOutputMs ? "no-output" : undefined;
-  return quietFor >= limits.idleMs ? "silent" : undefined;
-}
-
-/**
- * Cancel a seat that has gone SILENT — not one that is merely slow.
- *
- * The distinction is the whole point, and the previous version claimed it
- * without having it: one `setTimeout` armed at start and never reset, which
- * is a TOTAL deadline wearing an idle deadline's comment. It killed a
- * genuinely long task at ten minutes with work in flight, and it made a seat
- * that could not reach its endpoint sit there for the same ten minutes
- * saying nothing — which is what a person sees as 「进行中」 forever.
- *
- * Now it watches the stream. Bytes arriving reset the clock; silence does
- * not. A CLI streaming partial messages is never quiet for long, so real
- * silence means the far end is gone.
- *
- * `firstOutputMs` is separate and shorter: before ANY byte has arrived there
- * is nothing to be deep about. An endpoint that does not answer is the
- * common cause, and ten minutes is a cruel way to learn it.
- */
-function idleWatchdog(
-  read: () => Promise<number>,
-  options: { readonly idleMs: number; readonly firstOutputMs: number; readonly pollMs: number },
-  onIdle: (reason: "silent" | "no-output") => void,
-): { stop(): void } {
-  let seen = 0;
-  let lastChange = Date.now();
-  let stopped = false;
-
-  const tick = async (): Promise<void> => {
-    if (stopped) return;
-    const bytes = await read().catch(() => seen);
-    if (bytes > seen) {
-      seen = bytes;
-      lastChange = Date.now();
-    }
-    const verdict = silenceVerdict(seen, Date.now() - lastChange, options);
-    if (verdict !== undefined) {
-      stopped = true;
-      onIdle(verdict);
-      return;
-    }
-    const timer = setTimeout(() => void tick(), options.pollMs);
-    timer.unref?.();
-  };
-
-  const first = setTimeout(() => void tick(), options.pollMs);
-  first.unref?.();
-  return {
-    stop: () => {
-      stopped = true;
-    },
-  };
 }
 
 export { DELEGATION_TOOLS, buildArgv } from "./argv.ts";

@@ -40,6 +40,19 @@
     - id: squad-seat-claude-code
       name: '@squad/seat-claude-code'
 
+    # Codex 席位。没有工具围栏，而那是关于 codex 的事实而不是遗漏：
+    # `codex exec` 根本没有可以委派出去的工具。capabilities 里
+    # toolFilter/persona 都声明为 false，于是 seam 会**拒绝**带这两样的
+    # 请求，而不是收下再悄悄不执行。
+    - id: squad-seat-codex
+      name: '@squad/seat-codex'
+
+    # DSH 席位：跑 `dsh --profile headless <任务>`，harness 自己的一次性入口。
+    # 作为子进程跑，和另外两个后端一样——席位就是一个什么都不记得的新进程，
+    # 在本进程里跑会让它拿到宿主自己的上下文，那正好是席位的反面。
+    - id: squad-seat-dsh
+      name: '@squad/seat-dsh'
+
     # ── Squad ────────────────────────────────────────────────────────
     # 桌子：主持人节点 + 席位编排。
     - id: squad-table
