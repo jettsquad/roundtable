@@ -723,7 +723,7 @@ export function registerSquadApi(ctx: Context): () => void {
         }
         if (suffix === "/stop" && req.method === "POST") {
           const body = await readJson<{ teamId: string; reason?: string }>(req);
-          await teamOf(ctx, body.teamId).stopAgenda(body.reason ?? "主持人在面板上叫停。");
+          teamOf(ctx, body.teamId).stop(body.reason ?? "主持人在面板上叫停。");
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true }));
           return;

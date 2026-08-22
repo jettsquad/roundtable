@@ -148,6 +148,13 @@ export interface Team {
    */
   stopAgenda(reason: string): AgendaTermination;
   /**
+   * Stop whatever is running — an agenda, or a plain round.
+   *
+   * `undefined` when it was a round: a round has no termination document, and
+   * an empty one would be a hand-off nobody wrote.
+   */
+  stop(reason: string): AgendaTermination | undefined;
+  /**
    * The team record, flattened — every event, in order, nothing filtered.
    *
    * Faithful on purpose. It is tempting to drop the events a seat obviously
@@ -317,6 +324,7 @@ export class TeamsService extends Service {
       handle,
       roundsInFlight: 0,
       running: undefined,
+      roundAbort: undefined,
       artifacts: [],
       usage: EMPTY_TOTALS,
       perSeat: new Map(),
@@ -409,6 +417,7 @@ export class TeamsService extends Service {
       recordSpoken: (speaker, text, turnId) => recordSpoken(record.handle.agent, speaker, text, turnId),
       runAgenda: (agenda) => this.runAgenda(record, agenda),
       stopAgenda: (reason) => this.stopAgenda(record, reason),
+      stop: (reason) => this.stop(record, reason),
       dispose: () => this.dispose(record),
     };
   }
@@ -452,14 +461,22 @@ export class TeamsService extends Service {
     recordSpoken(host, record.input.hostDisplayName, instruction);
 
     const replies: SeatReply[] = [];
+    // A plain round is cancellable too. It was not: `stop` only reached a
+    // running AGENDA, so 「叫停」 during an ordinary round threw 「这支团队现在
+    // 没有在跑议程」 — and the button swallowed it, which is why it looked
+    // like nothing happened at all.
+    const abort = new AbortController();
+    record.roundAbort = abort;
     record.roundsInFlight += 1;
     try {
       for (const seat of seats) {
+        if (abort.signal.aborted) break;
         const window = windows.get(seat.seatId) ?? { lines: [] };
-        replies.push(await this.runSeat(record, host, seat, instruction, window));
+        replies.push(await this.runSeat(record, host, seat, instruction, window, abort.signal));
       }
     } finally {
       record.roundsInFlight -= 1;
+      record.roundAbort = undefined;
     }
 
     // Signalled AFTER the count drops, so an assembler that asks whether the
@@ -627,6 +644,26 @@ export class TeamsService extends Service {
    * signal rather than being left to finish into a discussion nobody is
    * having any more.
    */
+  /**
+   * Stop whatever this team is doing.
+   *
+   * An agenda when one is running, otherwise the round in flight. Two things
+   * can be stopped and only one of them could be, which made the button a
+   * coin flip: during an agenda it worked, during an ordinary round it threw.
+   *
+   * Returns `undefined` when a plain round was stopped — there is no
+   * termination document for a round, and inventing an empty one would put a
+   * hand-off in the record that nobody wrote.
+   */
+  private stop(record: TeamRecord, reason: string): AgendaTermination | undefined {
+    if (record.running !== undefined) return this.stopAgenda(record, reason);
+    const abort = record.roundAbort;
+    if (abort === undefined) throw new Error("这支团队现在没有在跑任何东西。");
+    abort.abort(new Error(`已叫停：${reason}`));
+    recordSpoken(record.handle.agent, "系统", `⏹ 主持人叫停了这一轮：${reason}`);
+    return undefined;
+  }
+
   private stopAgenda(record: TeamRecord, reason: string): AgendaTermination {
     const running = record.running;
     if (running === undefined) throw new Error("这支团队现在没有在跑议程。");
@@ -820,10 +857,17 @@ export class TeamsService extends Service {
       const usage = usageOfResult(result);
       record.usage = addUsage(record.usage, usage);
       record.perSeat.set(seat.seatId, addUsage(record.perSeat.get(seat.seatId) ?? EMPTY_TOTALS, usage));
+      // A cancelled seat SAYS it was cancelled. Stopping a round left it
+      // returning empty text with `failed`, which reads as "the model had
+      // nothing to say" — the one reading that sends a person to look at the
+      // prompt for a decision they made themselves.
+      const stopped = signal?.aborted === true && text.trim() === "";
+      const answer = stopped ? `⏹ ${seat.displayName} 被叫停，这一轮没有答复。` : text;
+      if (stopped) recordSpoken(host, "系统", answer);
       return {
         seatId: seat.seatId,
         displayName: seat.displayName,
-        text,
+        text: answer,
         failed,
         contextLines: lines.length,
         ...(usage === undefined ? {} : { usage }),
@@ -918,6 +962,15 @@ interface TeamRecord {
   roundsInFlight: number;
   /** Set while an agenda is running; aborting it is how the host stops one. */
   running: RunningAgenda | undefined;
+  /**
+   * Set while a plain round is running.
+   *
+   * Separate from `running` because a round is not an agenda: it has no
+   * phases, no completion account and no termination document. Both are
+   * stoppable and only the agenda used to be, which made 「叫停」 work or throw
+   * depending on which one you happened to be in.
+   */
+  roundAbort: AbortController | undefined;
   /** Project-relative paths this team has written, in order. */
   readonly artifacts: string[];
   /** Everything this team's seats have consumed. */

@@ -14,6 +14,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, useSnapshot, type SeatReply } from "./api.ts";
+import { parseMentions } from "../mention.ts";
 import styles from "./panel.module.css";
 
 interface SquadComposerProps {
@@ -33,7 +34,6 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
   const onSent = (): void => setNonce((value) => value + 1);
   const current = snapshot.state === "ready" ? snapshot.data.teams.find((t) => t.projectFolder === folder) : undefined;
   const [instruction, setInstruction] = useState("");
-  const [picked, setPicked] = useState<readonly string[]>([]);
   const [running, setRunning] = useState(false);
   const [replies, setReplies] = useState<readonly SeatReply[] | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -57,9 +57,19 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
     );
   }
 
-  const asked = picked.length === 0 ? current.seats : current.seats.filter((seat) => picked.includes(seat.seatId));
+  // Who this sentence is addressed to, read out of the sentence itself.
+  const mentions = parseMentions(
+    instruction,
+    current.seats.map((seat) => seat.displayName),
+  );
+  const named = current.seats.filter((seat) => mentions.named.includes(seat.displayName));
+  const asked = named.length === 0 ? current.seats : named;
   const blocked = asked.filter((seat) => seat.blocked !== undefined);
   const allBlocked = asked.length > 0 && blocked.length === asked.length;
+  // A misspelled name is refused rather than quietly widened to everyone:
+  // the box would read as though it were aimed at one person while the
+  // question went to the whole team.
+  const misnamed = mentions.unknown.length > 0;
 
   const send = async (): Promise<void> => {
     setError(undefined);
@@ -70,8 +80,10 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
     try {
       const result = await api.say({
         teamId: current.teamId,
-        instruction,
-        ...(picked.length === 0 ? {} : { seatIds: picked }),
+        // The roll-call is stripped: a seat that also found 「@架构」 inside
+        // its own task would be reading an address as an instruction.
+        instruction: mentions.instruction,
+        ...(named.length === 0 ? {} : { seatIds: named.map((seat) => seat.seatId) }),
       });
       setReplies(result.replies);
       setInstruction("");
@@ -104,7 +116,7 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
         <input
           className={styles.field}
           value={instruction}
-          placeholder={`跟「${current.displayName}」说点什么…`}
+          placeholder={`跟「${current.displayName}」说点什么，@ 点名单独问某人…`}
           disabled={running}
           onChange={(event) => setInstruction(event.target.value)}
           onKeyDown={(event) => {
@@ -114,16 +126,29 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
         <button
           type="button"
           className={styles.button}
-          disabled={running || instruction.trim() === "" || current.seats.length === 0 || allBlocked}
+          disabled={
+            running || mentions.instruction.trim() === "" || current.seats.length === 0 || allBlocked || misnamed
+          }
           onClick={() => void send()}
         >
-          {running ? `进行中 ${elapsed}s` : picked.length === 0 ? "问所有人" : `问 ${picked.length} 位`}
+          {running
+            ? `进行中 ${elapsed}s`
+            : named.length === 0
+              ? "问所有人"
+              : `问 ${named.map((seat) => seat.displayName).join("、")}`}
         </button>
         {!current.busy ? null : (
           <button
             type="button"
             className={styles.button}
-            onClick={() => void api.stop({ teamId: current.teamId }).then(onSent)}
+            onClick={() =>
+              // The refusal is shown. It used to be dropped on the floor,
+              // which is what made the button look dead.
+              void api
+                .stop({ teamId: current.teamId })
+                .then(onSent)
+                .catch((failure: Error) => setError(String(failure.message)))
+            }
           >
             叫停
           </button>
@@ -131,22 +156,17 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
       </div>
 
       <div className={styles.row}>
-        {current.seats.map((seat) => (
-          <label key={seat.seatId} className={styles.check}>
-            <input
-              type="checkbox"
-              checked={picked.includes(seat.seatId)}
-              disabled={running}
-              onChange={() =>
-                setPicked(
-                  picked.includes(seat.seatId) ? picked.filter((id) => id !== seat.seatId) : [...picked, seat.seatId],
-                )
-              }
-            />
-            {seat.displayName}
-          </label>
-        ))}
+        <span className={styles.hint}>
+          成员：{current.seats.map((seat) => seat.displayName).join("、") || "（还没有）"}
+          {named.length === 0 ? " · 不点名就是问所有人" : ""}
+        </span>
       </div>
+
+      {!misnamed ? null : (
+        <div className={styles.error}>
+          没有叫「{mentions.unknown.join("、")}」的成员。名字打错的话这句话会发给全团，所以先改过来。
+        </div>
+      )}
 
       {/* Said while it is still happening. A seat working and a seat hung on
           an endpoint that will never answer look identical from here. */}
