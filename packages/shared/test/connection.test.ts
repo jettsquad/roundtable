@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  credentialRefFor,
   capExceeded,
   checkConnection,
   envForConnection,
@@ -96,7 +97,7 @@ describe("checkConnection", () => {
   });
 
   it("requires a credential reference in api-key mode", () => {
-    expect(checkConnection(apiKey({ credentialRef: "" }))[0]?.detail).toMatch(/凭据引用/);
+    expect(checkConnection(apiKey({ credentialRef: "" }))[0]?.detail).toMatch(/凭据名/);
   });
 });
 
@@ -133,5 +134,34 @@ describe("caps", () => {
 
   it("says nothing when nothing is capped", () => {
     expect(capExceeded({}, { turns: 999, tokens: 999_999, costUsd: 99 }, "api-key")).toBeUndefined();
+  });
+});
+
+describe("credentialRefFor", () => {
+  it("生成的是合法的 POSIX 标识符", () => {
+    // dsh 把 ref 品牌化成 shell 标识符；带连字符的连接 id 直接拿去用是不合法的。
+    expect(credentialRefFor("conn-a1")).toBe("SQUAD_CONN_A1_KEY");
+    expect(credentialRefFor("gw.example/v1")).toBe("SQUAD_GW_EXAMPLE_V1_KEY");
+    for (const id of ["conn-a1", "x", "a--b__c", "中文", "9lives"]) {
+      expect(credentialRefFor(id)).toMatch(/^[A-Z_][A-Z0-9_]*$/);
+    }
+  });
+
+  it("不同连接不会撞名", () => {
+    // 撞名意味着改了一个连接的 key，另一个连接的 key 也跟着变了，而且不报错。
+    const names = new Set(["conn-1", "conn-2", "gw", "login"].map(credentialRefFor));
+    expect(names.size).toBe(4);
+  });
+
+  it("带 SQUAD_ 前缀，避开人自己导出的变量", () => {
+    // credentials.set 在只读来源遮蔽同名引用时会拒绝写入。撞上 shell 里
+    // export 过的 ANTHROPIC_API_KEY，粘 key 就会失败，报的还是遮蔽的错。
+    expect(credentialRefFor("anthropic-api")).not.toBe("ANTHROPIC_API_KEY");
+    expect(credentialRefFor("anything").startsWith("SQUAD_")).toBe(true);
+  });
+
+  it("空的也给得出名字，而不是一个孤零零的下划线", () => {
+    expect(credentialRefFor("")).toBe("SQUAD_CONNECTION_KEY");
+    expect(credentialRefFor("---")).toBe("SQUAD_CONNECTION_KEY");
   });
 });

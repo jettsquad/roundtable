@@ -12,7 +12,7 @@
  * field whose value will be rejected teaches that the form is unreliable.
  */
 import { useState } from "react";
-import { type AuthMode, type ConnectionView, type SeatConnection } from "@squad/shared";
+import { credentialRefFor, type AuthMode, type ConnectionView, type SeatConnection } from "@squad/shared";
 import { api, useAction } from "./api.ts";
 import styles from "./panel.module.css";
 
@@ -28,18 +28,37 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
   const [endpoint, setEndpoint] = useState("");
   const [credentialRef, setCredentialRef] = useState("");
   const [key, setKey] = useState("");
+  /**
+   * Whether the secret already lives under a name of its own.
+   *
+   * Off is the ordinary case: you have a key, you paste it, and the name it
+   * gets filed under is derived. On is the two cases where the name is the
+   * point — the key is already an environment variable, or several
+   * connections share one.
+   */
+  const [existing, setExisting] = useState(false);
   const { error, run } = useAction(onChanged);
 
   const save = async (): Promise<void> => {
+    const connectionId = `conn-${Date.now().toString(36)}`;
     const connection: SeatConnection & { credential?: string } = {
-      connectionId: `conn-${Date.now().toString(36)}`,
+      connectionId,
       displayName: name,
       authMode: mode,
       backend: "claude-code",
       ...(model.trim() === "" ? {} : { modelId: model.trim() }),
       ...(mode === "api-key" && endpoint.trim() !== "" ? { endpoint: endpoint.trim() } : {}),
-      ...(mode === "api-key" && credentialRef.trim() !== "" ? { credentialRef: credentialRef.trim() } : {}),
-      ...(mode === "api-key" && key !== "" ? { credential: key } : {}),
+      // Derived unless the person named an existing secret. A reference is an
+      // environment-variable name, and asking someone to invent one is asking
+      // the wrong question: they have a key, and the filing is the system's
+      // job.
+      ...(mode !== "api-key"
+        ? {}
+        : {
+            credentialRef:
+              existing && credentialRef.trim() !== "" ? credentialRef.trim() : credentialRefFor(connectionId),
+          }),
+      ...(mode === "api-key" && !existing && key !== "" ? { credential: key } : {}),
     };
     if (!(await run(() => api.saveConnection(connection)))) return;
     setName("");
@@ -47,6 +66,7 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
     setEndpoint("");
     setCredentialRef("");
     setKey("");
+    setExisting(false);
   };
 
   return (
@@ -65,8 +85,13 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
             </span>
             {connection.authMode !== "api-key" ? null : connection.credentialConfigured ? (
               <span className={styles.muted}>密钥已配置</span>
-            ) : (
+            ) : connection.credentialWritable ? (
               <span className={styles.badgeBad}>密钥未配置</span>
+            ) : (
+              // `set` refuses while a read-only source shadows the name, so
+              // this connection cannot be fixed from here at all — and
+              // without saying so, the key box would silently keep failing.
+              <span className={styles.badgeBad}>密钥名「{connection.credentialRef}」被只读来源占了，这里改不了</span>
             )}
             <button
               type="button"
@@ -99,26 +124,40 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
         </div>
 
         {mode !== "api-key" ? null : (
-          <div className={styles.row}>
-            <input
-              className={styles.field}
-              value={endpoint}
-              placeholder="端点（留空用默认）"
-              onChange={(event) => setEndpoint(event.target.value)}
-            />
-            <input
-              className={styles.field}
-              value={credentialRef}
-              placeholder="凭据名，如 MY_GATEWAY_KEY"
-              onChange={(event) => setCredentialRef(event.target.value)}
-            />
-            <input
-              className={styles.field}
-              type="password"
-              value={key}
-              placeholder="API key（只写入，永不回显）"
-              onChange={(event) => setKey(event.target.value)}
-            />
+          <div>
+            <div className={styles.row}>
+              <input
+                className={styles.field}
+                value={endpoint}
+                placeholder="接口地址（留空用默认）"
+                onChange={(event) => setEndpoint(event.target.value)}
+              />
+              {existing ? (
+                <input
+                  className={styles.field}
+                  value={credentialRef}
+                  placeholder="环境变量名，如 DEEPSEEK_API_KEY"
+                  onChange={(event) => setCredentialRef(event.target.value)}
+                />
+              ) : (
+                <input
+                  className={styles.field}
+                  type="password"
+                  value={key}
+                  placeholder="API key（只写入，永不回显）"
+                  onChange={(event) => setKey(event.target.value)}
+                />
+              )}
+            </div>
+            <label className={styles.check}>
+              <input type="checkbox" checked={existing} onChange={(event) => setExisting(event.target.checked)} />
+              这把 key 已经在环境变量里了
+            </label>
+            <div className={styles.hint}>
+              {existing
+                ? "填变量名，不填值——每次启动子进程时按这个名字去取，所以你在别处换了 key，下一轮就生效。"
+                : "key 存进宿主的凭据服务，配置里只留一个名字。填过之后不会再显示出来。"}
+            </div>
           </div>
         )}
 

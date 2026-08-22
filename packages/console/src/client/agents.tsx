@@ -13,6 +13,7 @@
  */
 import { useState } from "react";
 import {
+  credentialRefFor,
   defaultPermissionMode,
   meaningfulCaps,
   permissionModesFor,
@@ -53,7 +54,9 @@ interface Draft {
   authMode: AuthMode;
   modelId: string;
   endpoint: string;
+  /** Only when the key already lives under a name of its own. */
   credentialRef: string;
+  useExistingCredential: boolean;
   credential: string;
   maxTurns: string;
   maxTokens: string;
@@ -75,6 +78,7 @@ const blank = (): Draft => ({
   modelId: "",
   endpoint: "",
   credentialRef: "",
+  useExistingCredential: false,
   credential: "",
   maxTurns: "",
   maxTokens: "",
@@ -165,10 +169,20 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                 ...(draft.authMode === "api-key" && draft.endpoint.trim() !== ""
                   ? { endpoint: draft.endpoint.trim() }
                   : {}),
-                ...(draft.authMode === "api-key" && draft.credentialRef.trim() !== ""
-                  ? { credentialRef: draft.credentialRef.trim() }
+                // Derived unless the person named an existing secret; see
+                // `credentialRefFor`. Nobody should be asked to invent an
+                // environment-variable name in order to paste a key.
+                ...(draft.authMode !== "api-key"
+                  ? {}
+                  : {
+                      credentialRef:
+                        draft.useExistingCredential && draft.credentialRef.trim() !== ""
+                          ? draft.credentialRef.trim()
+                          : credentialRefFor(connectionId),
+                    }),
+                ...(draft.authMode === "api-key" && !draft.useExistingCredential && draft.credential !== ""
+                  ? { credential: draft.credential }
                   : {}),
-                ...(draft.authMode === "api-key" && draft.credential !== "" ? { credential: draft.credential } : {}),
               },
             }
           : {}),
@@ -300,26 +314,39 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               />
             </div>
             {draft.authMode !== "api-key" ? null : (
-              <div className={styles.row}>
-                <input
-                  className={styles.field}
-                  value={draft.endpoint}
-                  placeholder="接口地址（留空用默认）"
-                  onChange={(event) => set({ endpoint: event.target.value })}
-                />
-                <input
-                  className={styles.field}
-                  value={draft.credentialRef}
-                  placeholder="凭据名，如 MY_GATEWAY_KEY"
-                  onChange={(event) => set({ credentialRef: event.target.value })}
-                />
-                <input
-                  className={styles.field}
-                  type="password"
-                  value={draft.credential}
-                  placeholder="API key（只写入，永不回显）"
-                  onChange={(event) => set({ credential: event.target.value })}
-                />
+              <div>
+                <div className={styles.row}>
+                  <input
+                    className={styles.field}
+                    value={draft.endpoint}
+                    placeholder="接口地址（留空用默认）"
+                    onChange={(event) => set({ endpoint: event.target.value })}
+                  />
+                  {draft.useExistingCredential ? (
+                    <input
+                      className={styles.field}
+                      value={draft.credentialRef}
+                      placeholder="环境变量名，如 DEEPSEEK_API_KEY"
+                      onChange={(event) => set({ credentialRef: event.target.value })}
+                    />
+                  ) : (
+                    <input
+                      className={styles.field}
+                      type="password"
+                      value={draft.credential}
+                      placeholder="API key（只写入，永不回显）"
+                      onChange={(event) => set({ credential: event.target.value })}
+                    />
+                  )}
+                </div>
+                <label className={styles.check}>
+                  <input
+                    type="checkbox"
+                    checked={draft.useExistingCredential}
+                    onChange={(event) => set({ useExistingCredential: event.target.checked })}
+                  />
+                  这把 key 已经在环境变量里了
+                </label>
               </div>
             )}
           </div>

@@ -36,6 +36,10 @@ export interface SeatConnection {
    *
    * Resolved per operation through `ctx.credentials`, so rotating a secret
    * touches no configuration and a changed key reaches the very next turn.
+   *
+   * A person should almost never type this — see `credentialRefFor`. It is
+   * spelled out only to reuse a secret that already exists under a known
+   * name, which is the one case where inventing a fresh one would be wrong.
    */
   readonly credentialRef?: string | undefined;
 }
@@ -59,6 +63,33 @@ export function isOwnModel(backend: ConnectionBackend, modelId: string): boolean
   const name = modelId.trim().toLowerCase();
   if (name === "") return false;
   return (OWN_NAMESPACE[backend] ?? []).some((prefix) => name.startsWith(prefix));
+}
+
+/**
+ * The credential name a connection gets when nobody chose one.
+ *
+ * A reference is an environment-variable name — dsh brands it as a POSIX
+ * shell identifier — and asking a person to invent one is asking the wrong
+ * question. They have a key; the name is bookkeeping, and bookkeeping the
+ * system can do for itself.
+ *
+ * Deriving it from the connection id also keeps two connections from landing
+ * on one name by accident, which would look like a key that changed itself
+ * the moment the other connection was edited.
+ *
+ * The `SQUAD_` prefix is not decoration: it keeps a derived name out of the
+ * space where a person's own exported variables live. `ctx.credentials.set`
+ * REFUSES to write while a read-only source shadows the reference, so a
+ * derived name that collided with an exported `ANTHROPIC_API_KEY` would make
+ * pasting a key fail, with an error about shadowing that names nothing the
+ * person did.
+ */
+export function credentialRefFor(connectionId: string): string {
+  const body = connectionId
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return `SQUAD_${body === "" ? "CONNECTION" : body}_KEY`;
 }
 
 export interface ConnectionProblem {
@@ -89,7 +120,11 @@ export function checkConnection(connection: SeatConnection): readonly Connection
     }
   } else {
     if ((connection.credentialRef ?? "").trim() === "") {
-      problems.push({ detail: "API key 模式要指定一个凭据引用。" });
+      problems.push({
+        detail:
+          "API key 模式要有一个凭据名（密钥存在宿主的凭据服务里，配置里只留名字）。" +
+          "界面会自己生成一个，所以看到这句话说明是直接调的接口。",
+      });
     }
   }
   return problems;
