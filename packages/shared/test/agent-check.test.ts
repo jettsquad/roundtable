@@ -17,11 +17,21 @@ describe("overallOf", () => {
     expect(overallOf(report(check("ok"), check("fail"), check("skipped")))).toBe("fail");
   });
 
-  it("跳过不算过", () => {
-    // 这是这个函数存在的全部理由：没跑成的检查和跑过了的检查，在一个绿勾里
-    // 长得一模一样，而只有一个是证据。
-    expect(overallOf(report(check("ok"), check("skipped")))).toBe("incomplete");
-    expect(overallOf(report(check("skipped")))).not.toBe("ok");
+  it("没跑成（unknown）不算过", () => {
+    // 想查而查不成，是缺证据；在一个绿勾里它和查过了长得一模一样。
+    expect(overallOf(report(check("ok"), check("unknown")))).toBe("incomplete");
+    expect(overallOf(report(check("unknown")))).not.toBe("ok");
+  });
+
+  it("不适用（skipped）算过", () => {
+    // 「订阅模式不需要密钥」不是没跑成，是没有可查的东西——那是完整的答案。
+    // 混成一件事的时候，一个配置完全正确的订阅 agent 会自称「有检查没跑成」。
+    expect(overallOf(report(check("ok"), check("skipped")))).toBe("ok");
+    expect(overallOf(report(check("skipped"), check("skipped"), check("ok")))).toBe("ok");
+  });
+
+  it("失败压过一切", () => {
+    expect(overallOf(report(check("skipped"), check("fail"), check("unknown")))).toBe("fail");
   });
 
   it("一项都没有也不算过", () => {

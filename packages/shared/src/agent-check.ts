@@ -12,7 +12,20 @@
  * and only one of them is evidence.
  */
 
-export type CheckOutcome = "ok" | "fail" | "skipped";
+/**
+ * What one check concluded.
+ *
+ * `skipped` and `unknown` are different answers and were briefly the same
+ * one, which is how a fully configured subscription agent came back as
+ * ⚠️「有检查没跑成」 with every applicable check green:
+ *
+ *   skipped — there was nothing to check. A subscription seat needs no key; a
+ *             connection with no endpoint uses the backend's default. That is
+ *             a COMPLETE answer, not a gap.
+ *   unknown — we wanted to check and could not. That is missing evidence, and
+ *             it must not read as a pass.
+ */
+export type CheckOutcome = "ok" | "fail" | "skipped" | "unknown";
 
 export interface CheckResult {
   readonly name: string;
@@ -29,17 +42,19 @@ export interface AgentCheckReport {
 /**
  * The overall reading of a report.
  *
- * `fail` if anything failed. Otherwise `incomplete` while anything was
- * skipped — NOT `ok`. Reporting a partly-run test as a pass is how a person
- * concludes an agent works when the only thing that was actually checked is
- * that its name is not empty.
+ * `fail` if anything failed. `incomplete` while any check could not RUN —
+ * reporting a partly-run test as a pass is how a person concludes an agent
+ * works when barely anything was actually checked.
+ *
+ * A `skipped` check does NOT make a report incomplete. It is an answer:
+ * there was nothing there to check. Treating it as a gap made a correctly
+ * configured subscription agent — key not needed, endpoint not needed, and
+ * the real probe green — announce itself as 「有检查没跑成」.
  */
 export function overallOf(report: AgentCheckReport): "ok" | "fail" | "incomplete" {
-  // A report with nothing in it is the same claim as a report of skips: no
-  // evidence was gathered. `ok` here would be a test that checked nothing
-  // and passed.
+  // Nothing at all is not a pass: no evidence was gathered either way.
   if (report.checks.length === 0) return "incomplete";
   if (report.checks.some((check) => check.outcome === "fail")) return "fail";
-  if (report.checks.some((check) => check.outcome === "skipped")) return "incomplete";
+  if (report.checks.some((check) => check.outcome === "unknown")) return "incomplete";
   return "ok";
 }

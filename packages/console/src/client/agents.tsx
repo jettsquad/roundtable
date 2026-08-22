@@ -466,12 +466,20 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               return (
                 <div className={styles.report}>
                   <div className={overall === "fail" ? styles.error : styles.muted}>
-                    {overall === "ok" ? "✅ 都通过了" : overall === "fail" ? "❌ 有问题" : "⚠️ 有检查没跑成"}
+                    {overall === "ok" ? "✅ 能用" : overall === "fail" ? "❌ 有问题" : "⚠️ 有检查没能跑，结论不完整"}
                   </div>
                   {report.checks.map((check) => (
                     <div key={check.name} className={check.outcome === "fail" ? styles.error : styles.muted}>
-                      {check.outcome === "ok" ? "✅" : check.outcome === "fail" ? "❌" : "—"} {check.name}：
-                      {check.detail}
+                      {/* 「—」是不适用，「?」是想查没查成。两者读起来必须不一样：
+                          前者是答案，后者是缺口。 */}
+                      {check.outcome === "ok"
+                        ? "✅"
+                        : check.outcome === "fail"
+                          ? "❌"
+                          : check.outcome === "unknown"
+                            ? "❓"
+                            : "—"}{" "}
+                      {check.name}：{check.detail}
                     </div>
                   ))}
                 </div>

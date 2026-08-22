@@ -629,7 +629,10 @@ export async function checkAgent(ctx: Context, templateId: string): Promise<Agen
   // ② The CLI itself.
   const executable = EXECUTABLE_BY_BACKEND[template.backend];
   if (executable === undefined) {
-    checks.push({ name: "命令行工具", outcome: "skipped", detail: `不知道 ${template.backend} 用哪个可执行文件。` });
+    // Wanted to check and could not — evidence is missing, so `unknown`
+    // rather than `skipped`. Nothing here is "not applicable": a backend with
+    // no known executable is a gap in this code.
+    checks.push({ name: "命令行工具", outcome: "unknown", detail: `不知道 ${template.backend} 用哪个可执行文件。` });
   } else {
     try {
       const path = await ctx.subprocess.resolveExecutable(executable, {});
@@ -703,7 +706,9 @@ export async function checkAgent(ctx: Context, templateId: string): Promise<Agen
   // Skipped rather than faked when the plumbing already failed: starting a
   // seat whose provider is not registered just reproduces the error above.
   if (!registered) {
-    checks.push({ name: "真的问一句", outcome: "skipped", detail: "席位后端都没就绪，问了也只是重复上面那条。" });
+    // Not applicable would be wrong: this is the check that matters, and it
+    // did not run. `unknown` keeps the report from reading as a pass.
+    checks.push({ name: "真的问一句", outcome: "unknown", detail: "席位后端没就绪，问不出去——先解决上面那条。" });
   } else {
     checks.push(await probeSeat(ctx, template));
   }
