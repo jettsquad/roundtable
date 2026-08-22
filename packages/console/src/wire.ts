@@ -60,6 +60,16 @@ export interface TeamSummary {
   readonly recorded: number;
   /** What this team's seats have consumed, when any backend reported it. */
   readonly usage: UsageTotals;
+  /**
+   * The discussion, most recent last.
+   *
+   * Bounded: only the tail travels. The whole record can be thousands of
+   * lines and the panel polls every two seconds — sending all of it would
+   * make reading the roster cost more than holding the meeting.
+   */
+  readonly transcript: readonly { readonly speaker: string; readonly text: string; readonly turnId: string }[];
+  /** How much of the discussion the tail left out. */
+  readonly transcriptOmitted: number;
 }
 
 export interface SquadSnapshot {

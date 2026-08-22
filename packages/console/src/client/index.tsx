@@ -18,9 +18,20 @@ import type {} from "@deepseek-ai/dsh-client-runtime/client";
 // once the package that declares it has merged it into `SlotMap`.
 import type {} from "@deepseek-ai/dsh-client-ui-sidebar/client";
 import type {} from "@deepseek-ai/dsh-client-ui-layout/client";
+// Declares `conversation.view` — the keyed slot Chat and Trajectory are tabs
+// in, and therefore where a team view belongs.
+import type {} from "@deepseek-ai/dsh-client-ui-conversation/client";
 import { TeamButton, TeamPanel } from "./panel.tsx";
+import { TeamView } from "./team-view.tsx";
 
-export const inject = ["slots"];
+/**
+ * `workspaces` as well as `slots`: the team view resolves WHICH team a
+ * session belongs to through its workspace, and the client context refuses a
+ * property that was not declared — the slot crashed with
+ * `cannot get property "workspaces" without inject`, which the tab surfaced
+ * as an empty pane.
+ */
+export const inject = ["slots", "workspaces"];
 
 export function apply(ctx: Context): void {
   // `inject` waits for the slot to be declared before registering.
@@ -29,5 +40,37 @@ export function apply(ctx: Context): void {
   );
   ctx.slots.inject("shell.overlay", () =>
     ctx.slots.register({ name: "shell.overlay", id: "squad-workbench" }, TeamPanel),
+  );
+
+  /**
+   * The team, as a tab beside Chat and Trajectory.
+   *
+   * `conversation.view` is a KEYED slot — that is what makes Chat and
+   * Trajectory tabs — so this is the seam a third view belongs in. The
+   * overlay panel stays for the things that are not about one team:
+   * building teams, the agent library, connections, criteria.
+   *
+   * The session's working directory decides WHICH team: a team registers
+   * its folder as the workspace, so every session in that workspace is a
+   * session of that team.
+   */
+  ctx.slots.inject("conversation.view", () =>
+    ctx.slots.register(
+      {
+        name: "conversation.view",
+        id: "squad-team",
+        order: 20,
+        label: () => "团队",
+        // The session's workspace decides which team. Read from the
+        // workspace list rather than the session's own cwd: the registry
+        // canonicalises paths, and a team stores the canonical spelling
+        // for exactly this comparison.
+        inject: (sessionId: string) => ({
+          folderOf: (): string | undefined =>
+            ctx.workspaces.list.getSnapshot().items.find((workspace) => workspace.sessionIds.includes(sessionId))?.path,
+        }),
+      },
+      TeamView,
+    ),
   );
 }

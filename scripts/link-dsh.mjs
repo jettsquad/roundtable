@@ -64,6 +64,9 @@ const NEEDED = [
   // type-checked it at all.
   "dsh-client-ui-sidebar",
   "dsh-client-ui-layout",
+  // Declares `conversation.view` — the keyed slot Chat and Trajectory are
+  // tabs in, and therefore where a team view belongs.
+  "dsh-client-ui-conversation",
 ];
 
 /**

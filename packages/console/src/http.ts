@@ -119,6 +119,41 @@ function blockedReason(
   return seat.backend === "claude-code" ? `连接不在了（要的是 ${wanted}）` : `Squad 还没有 ${seat.backend} 的席位插件`;
 }
 
+/**
+ * How many lines of discussion travel in a snapshot.
+ *
+ * The panel polls; the record grows without bound. Sending all of it would
+ * make looking at the roster cost more than holding the meeting.
+ */
+const TRANSCRIPT_TAIL = 60;
+
+/**
+ * The tail of the discussion, and how much was left out.
+ *
+ * The omitted COUNT rides along rather than being silently dropped: a
+ * transcript that begins mid-sentence with nothing saying so reads as the
+ * whole discussion, and a person then concludes the team never said the
+ * thing they are looking for.
+ */
+function transcriptTail(events: readonly { kind: string; text: string; turnId: string }[]) {
+  const spoken = events
+    .filter((event) => event.kind === "user/message" && event.text !== "")
+    .map((event) => {
+      // `【甲】说的话` is how the record stores a speaker; split it back apart
+      // so the view can style the name without re-parsing markup.
+      const match = /^【([^】]+)】([\s\S]*)$/.exec(event.text);
+      return {
+        speaker: match?.[1] ?? "",
+        text: (match?.[2] ?? event.text).trim(),
+        turnId: event.turnId,
+      };
+    });
+  return {
+    transcript: spoken.slice(-TRANSCRIPT_TAIL),
+    transcriptOmitted: Math.max(0, spoken.length - TRANSCRIPT_TAIL),
+  };
+}
+
 /** Build the snapshot the panel renders. Pure read; nothing here starts anything. */
 export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   const teams: TeamSummary[] = [];
@@ -159,6 +194,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           }),
       recorded: team.transcript().filter((entry) => entry.kind === "user/message" && entry.text !== "").length,
       usage: team.usage,
+      ...transcriptTail(team.transcript()),
     });
   }
   const [active, pending, connections, health] = await Promise.all([
