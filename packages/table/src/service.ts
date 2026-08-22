@@ -16,6 +16,7 @@
  *   because the table put them in its prompt. Independent rounds are therefore
  *   a fact of the topology rather than a promise made in a system prompt.
  */
+import { existsSync, statSync } from "node:fs";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
@@ -276,18 +277,43 @@ export class TeamsService extends Service {
   async create(input: CreateTeamInput): Promise<Team> {
     const problems = checkRoster(input.seats);
     if (problems.length > 0) throw new Error(problems.map((problem) => problem.detail).join("\n"));
+
+    // The project folder has to EXIST. Every seat runs with it as its working
+    // directory, so a folder that is not there means every round of this
+    // team's life fails at process spawn — and the error names a directory,
+    // not the team that was built on it. Checked here rather than left to the
+    // workspace registry, because a composition without one would otherwise
+    // skip the check entirely.
+    if (!existsSync(input.projectFolder) || !statSync(input.projectFolder).isDirectory()) {
+      throw new Error(`项目文件夹不存在，或者不是个目录：${input.projectFolder}`);
+    }
     const teamId = `team-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // The team's folder becomes a workspace, named after the team.
+    //
+    // A team IS a place you work — a directory plus everything done in it —
+    // which is what a dsh workspace already is. Registering it here rather
+    // than in a surface means every team gets one however it was created, and
+    // the sidebar stops being a list that does not know teams exist.
+    //
+    // Registration also CANONICALISES the folder: `create` resolves symlinks
+    // and `..`, and on macOS `/tmp/x` is really `/private/tmp/x`. Workspace
+    // membership is decided by comparing a session's cwd against that
+    // canonical path, so a team whose own folder stayed uncanonical could
+    // never have a session accepted into its own workspace. The team keeps
+    // the canonical spelling from here on.
+    const projectFolder = (await this.registerWorkspace(input.projectFolder, input.displayName)) ?? input.projectFolder;
 
     // The host node. Its cwd is the team's project folder, which every seat
     // inherits — one team, one working directory.
     const handle = await this.ctx.agents.create({
       sessionId: teamId as never,
-      meta: { cwd: input.projectFolder },
+      meta: { cwd: projectFolder },
     });
 
     const record: TeamRecord = {
       teamId,
-      input,
+      input: { ...input, projectFolder },
       handle,
       roundsInFlight: 0,
       running: undefined,
@@ -301,6 +327,36 @@ export class TeamsService extends Service {
     };
     this.teams.set(teamId, record);
     return this.viewOf(record);
+  }
+
+  /**
+   * Put this team's folder in the workspace registry, and answer its
+   * canonical path.
+   *
+   * `ctx.reflect.get` rather than an `inject` entry: the registry is an app
+   * layer service, and a composition without it — the smoke profile stacks
+   * `dsh-base` alone — would leave this plugin WAITING for a dependency that
+   * is never coming. A team that cannot be listed in a sidebar is a smaller
+   * problem than a table that never starts.
+   *
+   * A failure is reported and swallowed for the same reason: the sidebar is
+   * not what a team is for, and refusing to create one because it could not
+   * be filed would be the tail wagging the dog.
+   */
+  private async registerWorkspace(path: string, title: string): Promise<string | undefined> {
+    const registry = this.ctx.reflect.get("workspaceRegistry") as
+      { create(path: string, title?: string): Promise<{ path: string }> } | undefined;
+    if (registry === undefined) return undefined;
+    try {
+      return (await registry.create(path, title)).path;
+    } catch (error) {
+      // Warned, not thrown, and named: a folder that does not exist is the
+      // usual cause and the person who typed it needs to hear so.
+      this.ctx.logger?.warn?.(
+        `团队「${title}」没能登记成 workspace：${error instanceof Error ? error.message : error}`,
+      );
+      return undefined;
+    }
   }
 
   get(teamId: string): Team | undefined {
