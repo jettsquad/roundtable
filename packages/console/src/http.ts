@@ -48,7 +48,14 @@ import type {
   TeamSummary,
 } from "./wire.ts";
 import { parseNewTeam } from "./parse.ts";
-import { connectionMismatch, providerForSeat, type AgentCheckReport, type CheckResult } from "@squad/shared";
+import { tmpdir } from "node:os";
+import {
+  connectionMismatch,
+  providerForSeat,
+  type AgentCheckReport,
+  type AgentTemplate,
+  type CheckResult,
+} from "@squad/shared";
 
 // Imported for the `Context.webServer` declaration merging it carries; an
 // augmentation applies only where its module is part of the compilation.
@@ -412,6 +419,74 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
   });
 }
 
+/**
+ * Run one real, tiny round through this agent's actual backend.
+ *
+ * It costs a model call. That is the price of an answer to "does this
+ * work", and the alternative — four green ticks over a configuration that
+ * cannot answer anything — already cost more.
+ *
+ * The parent is a throwaway host node in a temp directory, disposed
+ * afterwards: a seat needs a parent agent, and borrowing a team's would
+ * write the probe into that team's discussion.
+ */
+async function probeSeat(ctx: Context, template: AgentTemplate): Promise<CheckResult> {
+  const probeId = `squad-probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const deadline = AbortSignal.timeout(PROBE_TIMEOUT_MS);
+  let handle: { agent: Parameters<typeof ctx.subagents.start>[1]["parent"]; dispose(): Promise<void> } | undefined;
+  try {
+    handle = await ctx.agents.create({ sessionId: probeId as never, meta: { cwd: tmpdir() } });
+    const run = await ctx.subagents.start(providerForSeat(template), {
+      label: `${template.displayName}（测试）`,
+      prompt: [{ type: "text", text: "回答两个字：收到。不要做别的事，不要读写任何文件。" }],
+      parent: handle.agent,
+      signal: deadline,
+    });
+    const result = await run.result;
+    const text = textOfBlocks(result.output).trim();
+    if (result.stopReason !== "completed") {
+      // Our own deadline is named, because 「停在 aborted」 says nothing: it
+      // reads as a cancellation somebody asked for. A CLI that handshakes and
+      // then never answers is the shape a wrong-protocol endpoint has, and
+      // that is worth saying out loud.
+      const timedOut = deadline.aborted;
+      const detail =
+        text !== ""
+          ? text
+          : timedOut
+            ? `${Math.round(PROBE_TIMEOUT_MS / 1000)} 秒内没有答复。多半是这个端点不讲 ${template.backend} 的协议——` +
+              `它能连上不代表它听得懂。`
+            : `停在 ${result.stopReason}，而且什么都没输出。`;
+      return { name: "真的问一句", outcome: "fail", detail };
+    }
+    return {
+      name: "真的问一句",
+      outcome: "ok",
+      detail: `答了：${text.slice(0, 120)}${text.length > 120 ? "…" : ""}`,
+    };
+  } catch (failure) {
+    return {
+      name: "真的问一句",
+      outcome: "fail",
+      detail: failure instanceof Error ? failure.message : String(failure),
+    };
+  } finally {
+    // Disposed on every path. A probe that leaked its host node would leave a
+    // session in the sidebar for every click of a test button.
+    await handle?.dispose().catch(() => undefined);
+  }
+}
+
+/** How long a probe may take before it is a failure in its own right. */
+const PROBE_TIMEOUT_MS = 90_000;
+
+/** The text of a subagent's output blocks. */
+function textOfBlocks(blocks: readonly unknown[]): string {
+  return blocks
+    .map((block) => (typeof block === "object" && block !== null && "text" in block ? String(block.text) : ""))
+    .join("");
+}
+
 /** Which CLI each backend needs on PATH. */
 const EXECUTABLE_BY_BACKEND: Readonly<Record<string, string>> = {
   "claude-code": "claude",
@@ -503,24 +578,46 @@ export async function checkAgent(ctx: Context, templateId: string): Promise<Agen
     );
   }
 
-  // ④ The endpoint. Reachability only — a HEAD that expects no particular
-  // status, because an auth error from the right host still proves the host
-  // is there, and a test that demanded 200 would fail on every gateway that
-  // refuses unauthenticated probes.
+  // ④ The endpoint — REACHABILITY ONLY, and labelled as such. A HEAD that
+  // gets any status proves a host is there; it proves nothing about the
+  // protocol it speaks. This check passed for a MiniMax gateway behind a
+  // claude-code seat, which answers HTTP happily and does not speak the
+  // Anthropic API at all.
   const endpoint = (connection?.endpoint ?? "").trim();
   if (endpoint === "") {
-    checks.push({ name: "接口地址", outcome: "skipped", detail: "用后端默认地址。" });
+    checks.push({ name: "地址可达", outcome: "skipped", detail: "用后端默认地址。" });
   } else {
     try {
-      const response = await fetch(endpoint, { method: "HEAD", signal: AbortSignal.timeout(5000) });
-      checks.push({ name: "接口地址", outcome: "ok", detail: `${endpoint} 有响应（HTTP ${response.status}）` });
+      const response = await fetch(endpoint, { method: "HEAD", signal: AbortSignal.timeout(8000) });
+      checks.push({
+        name: "地址可达",
+        outcome: "ok",
+        detail: `${endpoint} 有响应（HTTP ${response.status}）。只说明主机在，不说明它讲这个后端的协议。`,
+      });
     } catch (failure) {
       checks.push({
-        name: "接口地址",
+        name: "地址可达",
         outcome: "fail",
         detail: `连不上 ${endpoint}（${failure instanceof Error ? failure.message : String(failure)}）`,
       });
     }
+  }
+
+  // ⑤ Actually ask it something.
+  //
+  // The four checks above are PLUMBING. They all passed for two agents that
+  // could not answer a single question — one pointed at a gateway speaking
+  // the wrong protocol, one holding an invalid key — because none of them
+  // ever spoke to a model. A test that passes while the thing fails is worse
+  // than no test, and this is the only check that can tell "configured" from
+  // "works".
+  //
+  // Skipped rather than faked when the plumbing already failed: starting a
+  // seat whose provider is not registered just reproduces the error above.
+  if (!registered) {
+    checks.push({ name: "真的问一句", outcome: "skipped", detail: "席位后端都没就绪，问了也只是重复上面那条。" });
+  } else {
+    checks.push(await probeSeat(ctx, template));
   }
 
   return { templateId, displayName: template.displayName, checks };

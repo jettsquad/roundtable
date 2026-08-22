@@ -56,8 +56,11 @@ export const inject = [
   "reasoning",
   "seatConnections",
   "agentTemplates",
-  // The configuration test asks these two directly: is a provider registered
-  // for this agent's backend, and is that backend's CLI on PATH.
+  // The configuration test asks these directly: is a provider registered for
+  // this agent's backend, is that backend's CLI on PATH, and — the only check
+  // that separates "configured" from "works" — can the seat actually answer,
+  // which needs a throwaway parent agent to run under.
+  "agents",
   "subagents",
   "subprocess",
   "webServer",
@@ -79,6 +82,7 @@ export class SquadConsole extends Service {
     "reasoning",
     "seatConnections",
     "agentTemplates",
+    "agents",
     "subagents",
     "subprocess",
     "webServer",
