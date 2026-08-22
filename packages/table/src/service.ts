@@ -540,6 +540,14 @@ export class TeamsService extends Service {
     seatIds?: readonly string[],
   ): Promise<readonly SeatReply[]> {
     if (record.disposed) throw new Error("团队已销毁。");
+    // One round at a time. Two rounds on one table interleave their
+    // instructions and replies into a single log — the record then shows two
+    // 「主持人」 lines in a row with nobody having answered either — and the
+    // second round's abort controller replaces the first's, so 「叫停」 stops
+    // only whichever started last. `runAgenda` had this guard from the start;
+    // a plain round never did.
+    if (record.running !== undefined) throw new Error("这支团队正在跑议程，等它结束或者叫停。");
+    if (record.roundsInFlight > 0) throw new Error("上一轮还没结束。等它答完，或者按「叫停」。");
     const seats =
       seatIds === undefined || seatIds.length === 0
         ? record.seats

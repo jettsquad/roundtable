@@ -392,7 +392,10 @@
 }
 
 .viewPad {
-  padding: 14px 18px 20px;
+  /* Generous bottom padding: the composer floats over this view, and without
+     it the newest lines of the discussion — the ones you just caused — sit
+     underneath the box you typed into. */
+  padding: 14px 18px 240px;
   font-size: 13px;
   line-height: 1.55;
   color: var(--dsh-color-text, #e8e8ea);

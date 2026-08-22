@@ -80,21 +80,28 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
   const send = async (): Promise<void> => {
     setError(undefined);
     setRunning(true);
-    // Cleared before the run: a stale set of replies under a running round
-    // reads as this round's answer.
+    // Cleared before the run, both of them. A stale set of replies under a
+    // running round reads as this round's answer — and text left sitting in
+    // the box after it was sent is text you send again, which is how one
+    // question became four identical ones in the record.
     setReplies(undefined);
+    const sent = mentions.instruction;
+    const seatIds = named.map((seat) => seat.seatId);
+    setInstruction("");
     try {
       const result = await api.say({
         teamId: current.teamId,
         // The roll-call is stripped: a seat that also found 「@架构」 inside
         // its own task would be reading an address as an instruction.
-        instruction: mentions.instruction,
-        ...(named.length === 0 ? {} : { seatIds: named.map((seat) => seat.seatId) }),
+        instruction: sent,
+        ...(seatIds.length === 0 ? {} : { seatIds }),
       });
       setReplies(result.replies);
-      setInstruction("");
       onSent();
     } catch (failure) {
+      // Put the text back when it did not go out, so a refusal does not also
+      // cost the sentence.
+      setInstruction(sent);
       setError(String((failure as Error).message ?? failure));
     } finally {
       setRunning(false);
