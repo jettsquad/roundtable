@@ -12,7 +12,7 @@
  * while one is running: two rounds started by accident is money, and the
  * second one reads a discussion the first has not finished writing.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type SeatReply, type TeamSummary } from "./api.ts";
 import styles from "./panel.module.css";
 
@@ -26,6 +26,22 @@ export function RoundBox({
   const [instruction, setInstruction] = useState("");
   const [picked, setPicked] = useState<readonly string[]>([]);
   const [running, setRunning] = useState(false);
+  /**
+   * How long this round has been going.
+   *
+   * Shown because 「进行中」 alone is a black hole: a seat working and a seat
+   * hung on an endpoint that will never answer look identical, and the person
+   * has no way to tell how long they have been waiting. The seat backend
+   * gives up on its own — this is what makes the wait legible until it does.
+   */
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    setElapsed(0);
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [running]);
   const [replies, setReplies] = useState<readonly SeatReply[] | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -78,7 +94,7 @@ export function RoundBox({
           disabled={running || instruction.trim() === "" || team.seats.length === 0 || allBlocked}
           onClick={() => void ask()}
         >
-          {running ? "进行中…" : picked.length === 0 ? "问所有人" : `问 ${picked.length} 位`}
+          {running ? `进行中 ${elapsed}s` : picked.length === 0 ? "问所有人" : `问 ${picked.length} 位`}
         </button>
         {!team.busy ? null : (
           <button
@@ -111,6 +127,15 @@ export function RoundBox({
         ))}
       </div>
 
+      {/* Said while it is still happening, not after. A seat that has produced
+          nothing for this long is usually pointed at an endpoint that is not
+          answering — and the backend is about to say so itself. */}
+      {!running || elapsed < 45 ? null : (
+        <div className={styles.hint}>
+          已经等了 {elapsed} 秒还没有回复。如果是新配的连接，多半是接口地址连不上——到 Agent
+          库点「测试」看那一项。席位自己也会超时中止。
+        </div>
+      )}
       {blocked.length === 0 ? null : (
         <div className={styles.error}>
           {allBlocked ? "这一轮问不出去：" : "这几位跑不了，会被跳过："}

@@ -50,6 +50,10 @@ export interface Config {
   readonly permissionMode?: PermissionMode;
   /** Kill a seat that has produced nothing for this long. Idle, not total. */
   readonly idleMs?: number;
+  /** How long a seat may produce nothing at all before it counts as unreachable. */
+  readonly firstOutputMs?: number;
+  /** Watchdog poll interval. */
+  readonly pollMs?: number;
   /** Grace before SIGKILL when tearing a seat down. */
   readonly disposeGraceMs?: number;
   readonly env?: Record<string, string>;
@@ -68,6 +72,17 @@ const DEFAULTS = {
    * heartbeat, which is why they are requested at all.
    */
   idleMs: 600_000,
+  /**
+   * How long a seat may produce NOTHING before it is treated as unreachable.
+   *
+   * Short, because before the first byte there is nothing to be deep about:
+   * the CLI streams partial messages, so a working seat says something
+   * quickly. The usual cause of total silence is an endpoint that is not
+   * answering.
+   */
+  firstOutputMs: 90_000,
+  /** How often the watchdog checks whether anything new arrived. */
+  pollMs: 5_000,
   disposeGraceMs: 5_000,
 };
 
@@ -226,7 +241,19 @@ export class FencedClaudeCodeSeats extends Service {
           output.trim() === "" ? [] : [{ type: "text", text: readStream(output).text }];
 
         const attempt = async (): Promise<SubagentResult> => {
-          const idle = idleWatchdog(config.idleMs ?? DEFAULTS.idleMs, requestCancel);
+          let silence: "silent" | "no-output" | undefined;
+          const idle = idleWatchdog(
+            async () => (await child.collected.stdout?.readFrom(0))?.nextOffset ?? 0,
+            {
+              idleMs: config.idleMs ?? DEFAULTS.idleMs,
+              firstOutputMs: config.firstOutputMs ?? DEFAULTS.firstOutputMs,
+              pollMs: config.pollMs ?? DEFAULTS.pollMs,
+            },
+            (reason) => {
+              silence = reason;
+              requestCancel();
+            },
+          );
           try {
             const outcome = await child.done;
             output = await readAll(child);
@@ -237,8 +264,19 @@ export class FencedClaudeCodeSeats extends Service {
             // failure, not a zero exit. Comparing against 0 alone would read
             // a SIGKILLed seat as a clean one.
             const failed = parsed.failed || outcome.exitCode !== 0;
+            // A seat killed by the watchdog explains itself. Without this the
+            // caller sees an empty answer and a non-zero exit, which reads as
+            // "the model said nothing" — and the person goes looking at the
+            // prompt instead of at the endpoint.
+            const text =
+              silence === "no-output"
+                ? `这个席位 ${Math.round((config.firstOutputMs ?? DEFAULTS.firstOutputMs) / 1000)} 秒内一个字都没输出，` +
+                  `按连不上处理。多半是它的连接端点没有响应——到 Agent 库点「测试」看接口地址那一项。`
+                : silence === "silent"
+                  ? `这个席位停了 ${Math.round((config.idleMs ?? DEFAULTS.idleMs) / 1000)} 秒没有新输出，已经中止。`
+                  : parsed.text;
             return {
-              output: parsed.text === "" ? [] : [{ type: "text", text: parsed.text }],
+              output: text === "" ? [] : [{ type: "text", text }],
               stopReason: failed ? "error" : "completed",
               // `SubagentResult` declares no usage field, and dsh does not
               // need one: `observeRun` attaches an observer and returns our
@@ -288,16 +326,77 @@ async function readAll(child: SubprocessHandle): Promise<string> {
 }
 
 /**
- * Cancel a seat that has gone silent.
+ * Whether a stretch of silence has become a verdict, and which one.
  *
- * Idle rather than total: a deep task legitimately runs longer than any fixed
- * wall clock, and killing a working seat loses the work AND the reason.
+ * Pure, and separate, because this is the judgement the previous watchdog
+ * got wrong: it had one deadline where there are two, and it counted from
+ * the start where it should count from the last byte.
+ *
+ * @param bytesSeen - total output bytes so far; zero means nothing has ever arrived.
+ * @param quietFor - milliseconds since the byte count last changed.
  */
-function idleWatchdog(idleMs: number, onIdle: () => void): { stop(): void } {
-  const timer = setTimeout(onIdle, idleMs);
-  timer.unref?.();
+export function silenceVerdict(
+  bytesSeen: number,
+  quietFor: number,
+  limits: { readonly idleMs: number; readonly firstOutputMs: number },
+): "silent" | "no-output" | undefined {
+  // Before the first byte there is nothing to be deep about, so the shorter
+  // deadline applies — and the verdict names the difference, because "never
+  // answered" and "stopped answering" send a person to different places.
+  if (bytesSeen === 0) return quietFor >= limits.firstOutputMs ? "no-output" : undefined;
+  return quietFor >= limits.idleMs ? "silent" : undefined;
+}
+
+/**
+ * Cancel a seat that has gone SILENT — not one that is merely slow.
+ *
+ * The distinction is the whole point, and the previous version claimed it
+ * without having it: one `setTimeout` armed at start and never reset, which
+ * is a TOTAL deadline wearing an idle deadline's comment. It killed a
+ * genuinely long task at ten minutes with work in flight, and it made a seat
+ * that could not reach its endpoint sit there for the same ten minutes
+ * saying nothing — which is what a person sees as 「进行中」 forever.
+ *
+ * Now it watches the stream. Bytes arriving reset the clock; silence does
+ * not. A CLI streaming partial messages is never quiet for long, so real
+ * silence means the far end is gone.
+ *
+ * `firstOutputMs` is separate and shorter: before ANY byte has arrived there
+ * is nothing to be deep about. An endpoint that does not answer is the
+ * common cause, and ten minutes is a cruel way to learn it.
+ */
+function idleWatchdog(
+  read: () => Promise<number>,
+  options: { readonly idleMs: number; readonly firstOutputMs: number; readonly pollMs: number },
+  onIdle: (reason: "silent" | "no-output") => void,
+): { stop(): void } {
+  let seen = 0;
+  let lastChange = Date.now();
+  let stopped = false;
+
+  const tick = async (): Promise<void> => {
+    if (stopped) return;
+    const bytes = await read().catch(() => seen);
+    if (bytes > seen) {
+      seen = bytes;
+      lastChange = Date.now();
+    }
+    const verdict = silenceVerdict(seen, Date.now() - lastChange, options);
+    if (verdict !== undefined) {
+      stopped = true;
+      onIdle(verdict);
+      return;
+    }
+    const timer = setTimeout(() => void tick(), options.pollMs);
+    timer.unref?.();
+  };
+
+  const first = setTimeout(() => void tick(), options.pollMs);
+  first.unref?.();
   return {
-    stop: () => clearTimeout(timer),
+    stop: () => {
+      stopped = true;
+    },
   };
 }
 
