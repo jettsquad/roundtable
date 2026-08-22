@@ -1,9 +1,15 @@
 /**
  * panel.tsx — the workbench.
+ *
+ * Three pages behind one button, the way 1.x split its window: teams, the
+ * Agent library, and connections. One scrolling column holding all three was
+ * what shipped first, and the complaint it earned was exactly right — the
+ * thing you were looking for was never the thing on screen.
  */
 import { useState } from "react";
 import type { UsageTotals } from "@squad/shared";
-import { useSnapshot, type TeamSummary } from "./api.ts";
+import { useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
+import { AgentsPage } from "./agents.tsx";
 import { Connections } from "./connections.tsx";
 import { CreateForm } from "./create.tsx";
 import { SeatEditor } from "./seats.tsx";
@@ -35,22 +41,30 @@ export function TeamButton(): JSX.Element {
 function usageLine(usage: UsageTotals | undefined): string {
   if (usage === undefined || usage.turns === 0) return "用量：尚未计量";
   const parts = [
-    `用量：${usage.turns} 轮`,
-    `入 ${usage.inputTokens}`,
-    `出 ${usage.outputTokens}`,
-    `缓存 ${usage.cacheCreationTokens + usage.cacheReadTokens}`,
+    `${usage.turns} 轮`,
+    `入 ${usage.inputTokens.toLocaleString()}`,
+    `出 ${usage.outputTokens.toLocaleString()}`,
+    `缓存 ${(usage.cacheCreationTokens + usage.cacheReadTokens).toLocaleString()}`,
   ];
   if (usage.costUsd !== undefined) parts.push(`$${usage.costUsd.toFixed(4)}`);
-  return parts.join(" · ");
+  return `用量：${parts.join(" · ")}`;
 }
 
-function Team({ team, ...rest }: { readonly team: TeamSummary } & Omit<Parameters<typeof SeatEditor>[0], "team">) {
+function TeamCard({
+  team,
+  data,
+  onChanged,
+}: {
+  readonly team: TeamSummary;
+  readonly data: SquadSnapshot;
+  readonly onChanged: () => void;
+}): JSX.Element {
   return (
-    <div className={styles.team}>
-      <div>
-        <span className={styles.teamName}>{team.displayName}</span>{" "}
+    <div className={styles.card}>
+      <div className={styles.row}>
+        <span className={styles.teamName}>{team.displayName}</span>
         <span className={styles.muted}>{team.projectFolder}</span>
-        {team.busy ? <span className={styles.muted}> · 进行中</span> : null}
+        {team.busy ? <span className={styles.badgeRun}>进行中</span> : null}
       </div>
       {team.progress === undefined ? null : (
         <div className={styles.muted}>
@@ -58,20 +72,39 @@ function Team({ team, ...rest }: { readonly team: TeamSummary } & Omit<Parameter
         </div>
       )}
       <div className={styles.muted}>
-        {usageLine(team.usage)} · 记录 {team.recorded} 行
+        {usageLine(team.usage)} · 记录 {team.recorded} 行 · {team.seats.length} 个席位
+        {team.seats.some((seat) => seat.isSecretary) ? "" : " · ⚠️ 没有秘书，排不了议程"}
       </div>
-      <SeatEditor team={team} {...rest} />
+      <SeatEditor team={team} connections={data.connections} agents={data.agents} onChanged={onChanged} />
     </div>
   );
 }
 
+type Page = "teams" | "agents" | "connections";
+
+const TABS: readonly { readonly id: Page; readonly label: string }[] = [
+  { id: "teams", label: "团队" },
+  { id: "agents", label: "Agent 库" },
+  { id: "connections", label: "连接" },
+];
+
 export function TeamPanel(): JSX.Element | null {
   const open = usePanelOpen();
+  const [page, setPage] = useState<Page>("teams");
   const [nonce, setNonce] = useState(0);
   const snapshot = useSnapshot(nonce);
   const again = (): void => setNonce((value) => value + 1);
 
   if (!open) return null;
+
+  const counts =
+    snapshot.state === "ready"
+      ? {
+          teams: snapshot.data.teams.length,
+          agents: snapshot.data.agents.length,
+          connections: snapshot.data.connections.length,
+        }
+      : undefined;
 
   return (
     <div
@@ -82,31 +115,46 @@ export function TeamPanel(): JSX.Element | null {
     >
       <div className={styles.panel}>
         <div className={styles.header}>
-          <span className={styles.title}>
-            Squad 团队
+          <div className={styles.tabs}>
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`${styles.tab} ${page === tab.id ? styles.tabOn : ""}`}
+                onClick={() => setPage(tab.id)}
+              >
+                {tab.label}
+                {counts === undefined ? "" : `（${counts[tab.id]}）`}
+              </button>
+            ))}
+          </div>
+          <div className={styles.row}>
             {snapshot.state === "ready" && snapshot.data.criteria.pending > 0 ? (
-              <span className={styles.muted}> · {snapshot.data.criteria.pending} 条判据待裁定</span>
+              <span className={styles.muted}>{snapshot.data.criteria.pending} 条判据待裁定</span>
             ) : null}
-          </span>
-          <button type="button" className={styles.close} onClick={() => panelStore.set(false)}>
-            关闭
-          </button>
+            <button type="button" className={styles.close} onClick={() => panelStore.set(false)}>
+              关闭
+            </button>
+          </div>
         </div>
 
         {snapshot.state === "loading" ? <div className={styles.muted}>读取中……</div> : null}
         {snapshot.state === "error" ? <div className={styles.error}>{snapshot.detail}</div> : null}
-        {snapshot.state !== "ready" ? null : (
+        {snapshot.state !== "ready" ? null : page === "teams" ? (
           <div>
             {snapshot.data.teams.length === 0 ? (
-              <div className={styles.muted}>还没有团队。用下面的表单建一支，或者在会话里敲 /squad-new。</div>
+              <div className={styles.hint}>还没有团队。用下面的表单建一支，或者在会话里敲 /squad-new。</div>
             ) : (
               snapshot.data.teams.map((team) => (
-                <Team key={team.teamId} team={team} connections={snapshot.data.connections} onChanged={again} />
+                <TeamCard key={team.teamId} team={team} data={snapshot.data} onChanged={again} />
               ))
             )}
-            <Connections connections={snapshot.data.connections} onChanged={again} />
             <CreateForm onCreated={again} />
           </div>
+        ) : page === "agents" ? (
+          <AgentsPage agents={snapshot.data.agents} connections={snapshot.data.connections} onChanged={again} />
+        ) : (
+          <Connections connections={snapshot.data.connections} onChanged={again} />
         )}
       </div>
     </div>

@@ -710,7 +710,10 @@ export class TeamsService extends Service {
    */
   private providerFor(seat: SeatSpec): string {
     const connectionId = (seat.connectionId ?? "").trim();
-    return connectionId === "" ? PROVIDER_BY_BACKEND[seat.backend] : providerNameFor(connectionId);
+    // Non-claude backends keep their plain provider: only the fenced
+    // claude-code backend registers per connection and per permission mode.
+    if (seat.backend !== "claude-code") return PROVIDER_BY_BACKEND[seat.backend];
+    return providerNameFor(connectionId, seat.permissionMode);
   }
 
   private async runSeat(

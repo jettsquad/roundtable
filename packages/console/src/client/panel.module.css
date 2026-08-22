@@ -1,11 +1,11 @@
 /*
  * panel.module.css — the panel's own look.
  *
- * Class names are hashed by the build, so nothing here can collide with the
+ * Class names are hashed by the build, so nothing here collides with the
  * shell's styles or another plugin's. Colours come from the shell's CSS
  * variables where it publishes one, with a literal fallback: a panel that
- * renders black-on-black under a theme we did not anticipate is unusable, and
- * the fallback costs nothing.
+ * renders black-on-black under a theme we did not anticipate is unusable,
+ * and the fallback costs nothing.
  */
 
 .overlay {
@@ -19,10 +19,10 @@
 }
 
 .panel {
-  width: min(760px, 92vw);
-  max-height: 84vh;
+  width: min(1080px, 94vw);
+  max-height: 86vh;
   overflow: auto;
-  padding: 18px 20px;
+  padding: 16px 20px 20px;
   border-radius: 10px;
   background: var(--dsh-color-surface, #1b1b1f);
   color: var(--dsh-color-text, #e8e8ea);
@@ -33,15 +33,39 @@
 }
 
 .header {
+  position: sticky;
+  top: -16px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin: -16px -20px 12px;
+  padding: 12px 20px;
+  background: var(--dsh-color-surface, #1b1b1f);
+  border-bottom: 1px solid var(--dsh-color-border, #34343a);
 }
 
-.title {
-  font-size: 15px;
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  all: unset;
+  cursor: pointer;
+  padding: 5px 12px;
+  border-radius: 6px;
   font-weight: 600;
+  opacity: 0.6;
+}
+
+.tab:hover {
+  opacity: 0.9;
+}
+
+.tabOn {
+  opacity: 1;
+  background: var(--dsh-color-input, #131317);
 }
 
 .close {
@@ -55,9 +79,34 @@
   opacity: 1;
 }
 
-.team {
-  padding: 10px 0;
-  border-top: 1px solid var(--dsh-color-border, #34343a);
+.twoColumn {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@media (width <= 860px) {
+  .twoColumn {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.column {
+  min-width: 0;
+}
+
+.subhead {
+  margin: 12px 0 4px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.card {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--dsh-color-border, #34343a);
 }
 
 .teamName {
@@ -68,48 +117,15 @@
   opacity: 0.62;
 }
 
-.seats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 6px 0;
+.hint {
+  margin: 4px 0;
+  font-size: 12px;
+  opacity: 0.6;
 }
 
-.seat {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--dsh-color-border, #34343a);
-}
-
-/* Running is a state, not a decoration: it is the difference between a seat
-   that will answer and one that already is. */
-.running {
-  border-color: #4c8;
-}
-
-.drop {
-  all: unset;
-  cursor: pointer;
-  opacity: 0.55;
-}
-
-.drop:hover {
-  opacity: 1;
-}
-
-.section {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--dsh-color-border, #34343a);
-}
-
-.sectionToggle {
-  all: unset;
-  cursor: pointer;
-  font-weight: 600;
+.error {
+  margin: 4px 0;
+  color: #f88;
 }
 
 .row {
@@ -120,10 +136,15 @@
   margin-top: 6px;
 }
 
-.field {
-  flex: 1 1 150px;
+.grow {
+  flex: 1 1 100%;
   min-width: 0;
-  padding: 4px 8px;
+}
+
+.field {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 5px 8px;
   border-radius: 5px;
   border: 1px solid var(--dsh-color-border, #34343a);
   background: var(--dsh-color-input, #131317);
@@ -132,32 +153,164 @@
 }
 
 .narrow {
-  flex: 0 1 110px;
+  flex: 0 1 120px;
+}
+
+/* A field the form has a complaint about. The complaint itself sits under
+   the input; this is only what points at which one. */
+.invalid {
+  border-color: #f88;
+}
+
+.textarea {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  background: var(--dsh-color-input, #131317);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
 }
 
 .button {
   all: unset;
   cursor: pointer;
-  padding: 4px 12px;
+  padding: 5px 12px;
   border-radius: 5px;
   border: 1px solid var(--dsh-color-border, #34343a);
+  white-space: nowrap;
 }
 
 .button:hover {
   border-color: var(--dsh-color-text, #e8e8ea);
 }
 
-.error {
-  margin-top: 6px;
-  color: #f88;
+.button:disabled {
+  cursor: default;
+  opacity: 0.4;
 }
 
-.hint {
-  margin-top: 4px;
+.sectionToggle {
+  all: unset;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.swatch {
+  all: unset;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+}
+
+.swatchOn {
+  border-color: var(--dsh-color-text, #e8e8ea);
+}
+
+.seatRow {
+  border-top: 1px solid var(--dsh-color-border, #34343a);
+}
+
+.seatHead {
+  all: unset;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.seatBody {
+  padding: 0 0 8px 17px;
+}
+
+.prompt {
+  margin: 4px 0;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--dsh-color-input, #131317);
+  opacity: 0.75;
+  white-space: pre-wrap;
   font-size: 12px;
-  opacity: 0.6;
+}
+
+.running {
+  color: #6c9;
+}
+
+.badgeRun {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid #4c8;
+  color: #6c9;
+  font-size: 11px;
 }
 
 .badgeBad {
   color: #e9a13b;
+}
+
+.picker {
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  background: var(--dsh-color-input, #131317);
+}
+
+.pickerPath {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+  opacity: 0.85;
+}
+
+.pickerList {
+  max-height: 190px;
+  overflow: auto;
+  margin: 6px 0;
+}
+
+.pickerRow {
+  all: unset;
+  display: block;
+  width: 100%;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.pickerRow:hover {
+  background: var(--dsh-color-surface, #1b1b1f);
+}
+
+.pathBox {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
 }

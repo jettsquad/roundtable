@@ -33,7 +33,7 @@ import {
 // Imported for the `Context.subprocess` declaration merging it carries: an
 // augmentation applies only where its module is in the compilation.
 import type { SubprocessHandle } from "@deepseek-ai/dsh-subprocess";
-import { providerNameFor } from "@squad/shared";
+import { CLAUDE_PERMISSION_MODES, providerNameFor } from "@squad/shared";
 import { DELEGATION_TOOLS, buildArgv, type PermissionMode } from "./argv.ts";
 import { readStream } from "./stream.ts";
 
@@ -96,6 +96,14 @@ export class FencedClaudeCodeSeats extends Service {
   async [Service.init](): Promise<void> {
     // The unconfigured default: the host's own CLI login, nothing injected.
     this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider()));
+    // …and the same login under each permission mode, for a seat that picked
+    // a mode but no connection. Without these that seat asks for
+    // `claude-code-fenced#acceptEdits`, which nothing registered — and the
+    // failure arrives at the first round as an unregistered provider name
+    // nobody typed.
+    for (const mode of CLAUDE_PERMISSION_MODES) {
+      this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, mode)));
+    }
     this.syncConnections();
     this.ctx.effect(() => this.ctx.seatConnections.watch(() => this.syncConnections()));
     this.ctx.effect(() => () => {
@@ -117,14 +125,22 @@ export class FencedClaudeCodeSeats extends Service {
    */
   private syncConnections(): void {
     const wanted = new Set<string>();
+    // Connections × permission modes. The mode is spelled into the provider
+    // name for the same reason the connection is — both are decided when the
+    // child is spawned, and the request carries nothing else that could
+    // select among registrations. The cross product is bounded because the
+    // mode list is closed; the `undefined` entry is the seat that made no
+    // choice, which must keep the plain per-connection name a seat saved
+    // before modes existed still asks for.
+    const combinations: readonly (string | undefined)[] = [undefined, ...CLAUDE_PERMISSION_MODES];
     for (const connection of this.ctx.seatConnections.list()) {
       if (connection.backend !== "claude-code") continue;
-      wanted.add(connection.connectionId);
-      if (this.perConnection.has(connection.connectionId)) continue;
-      this.perConnection.set(
-        connection.connectionId,
-        this.ctx.subagents.registerProvider(this.provider(connection.connectionId)),
-      );
+      for (const mode of combinations) {
+        const key = providerNameFor(connection.connectionId, mode);
+        wanted.add(key);
+        if (this.perConnection.has(key)) continue;
+        this.perConnection.set(key, this.ctx.subagents.registerProvider(this.provider(connection.connectionId, mode)));
+      }
     }
     for (const [connectionId, dispose] of [...this.perConnection]) {
       if (wanted.has(connectionId)) continue;
@@ -136,11 +152,14 @@ export class FencedClaudeCodeSeats extends Service {
     }
   }
 
-  private provider(connectionId?: string): SubagentProvider {
+  private provider(connectionId?: string, permissionMode?: string): SubagentProvider {
     const config = this.config;
     const ctx = this.ctx;
     return {
-      name: connectionId === undefined ? (config.provider ?? DEFAULTS.provider) : providerNameFor(connectionId),
+      name:
+        connectionId === undefined && permissionMode === undefined
+          ? (config.provider ?? DEFAULTS.provider)
+          : providerNameFor(connectionId, permissionMode),
       // Declared honestly: this provider really does apply a tool filter and
       // really does append a persona. The service checks these before
       // dispatching, so declaring one we did not implement would turn a
@@ -174,7 +193,12 @@ export class FencedClaudeCodeSeats extends Service {
               prompt,
               ...(request.toolFilter === undefined ? {} : { toolFilter: request.toolFilter }),
               ...(request.persona === undefined ? {} : { persona: request.persona }),
-              permissionMode: config.permissionMode ?? DEFAULTS.permissionMode,
+              // The registration's mode wins over the plugin default: it is
+              // the one the person picked for this agent.
+              permissionMode:
+                (permissionMode as typeof DEFAULTS.permissionMode | undefined) ??
+                config.permissionMode ??
+                DEFAULTS.permissionMode,
               alwaysDeny: config.alwaysDeny ?? DEFAULTS.alwaysDeny,
             }),
           ],

@@ -4,7 +4,7 @@
  * nothing either way.
  */
 import { describe, expect, it } from "vitest";
-import { parseNewTeam, parseSay } from "../src/parse.ts";
+import { checkTeamFields, parseNewTeam, parseSay } from "../src/parse.ts";
 
 describe("parseNewTeam", () => {
   it("reads a name, a folder and a roster", () => {
@@ -104,5 +104,40 @@ describe("秘书标记", () => {
 
   it("两个 * 被拒", () => {
     expect(() => parseNewTeam("组 | /p | 甲*, 乙*")).toThrow(/只能有一位秘书/);
+  });
+});
+
+describe("checkTeamFields", () => {
+  it("每条抱怨都挂在出问题的那个字段上", () => {
+    // 面板里三个输入框各一个。之前整条斜杠命令用法印在三个空框下面，红的。
+    const problems = checkTeamFields({});
+    expect(problems.map((problem) => problem.field).sort()).toEqual(["displayName", "projectFolder", "roster"]);
+  });
+
+  it("只缺文件夹就只说文件夹", () => {
+    const problems = checkTeamFields({ displayName: "评审组", roster: "甲=架构" });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]?.field).toBe("projectFolder");
+  });
+
+  it("相对路径被挡在字段上，不是挡在语法上", () => {
+    const problems = checkTeamFields({ displayName: "组", projectFolder: "proj", roster: "甲" });
+    expect(problems[0]?.field).toBe("projectFolder");
+    expect(problems[0]?.detail).toMatch(/绝对路径/);
+  });
+
+  it("名册的问题落在名册上", () => {
+    const problems = checkTeamFields({ displayName: "组", projectFolder: "/p", roster: "甲*, 乙*" });
+    expect(problems[0]?.field).toBe("roster");
+    expect(problems[0]?.detail).toMatch(/只能有一位秘书/);
+  });
+
+  it("名字里的竖线会变成字段分隔符，所以拒掉", () => {
+    const problems = checkTeamFields({ displayName: "a|b", projectFolder: "/p", roster: "甲" });
+    expect(problems[0]?.field).toBe("displayName");
+  });
+
+  it("填全了就没有抱怨", () => {
+    expect(checkTeamFields({ displayName: "组", projectFolder: "/p", roster: "甲*=架构, 乙=测试" })).toEqual([]);
   });
 });

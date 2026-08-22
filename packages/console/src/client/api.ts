@@ -1,15 +1,14 @@
 /**
  * api.ts — the browser's half of `/api/squad`.
  *
- * The snapshot type is imported from the route that produces it, type-only,
- * so the two halves cannot disagree about a field name without the build
- * saying so. Type imports are erased, so this crosses no runtime edge.
+ * Types come from `wire.ts`, the module both halves import, so the panel and
+ * the route cannot disagree about a field name without the build saying so.
  */
 import { useEffect, useState } from "react";
-import type { SeatCaps, SeatConnection } from "@squad/shared";
-import type { SquadSnapshot } from "../wire.ts";
+import type { AgentTemplate, SeatCaps, SeatConnection } from "@squad/shared";
+import type { AgentRequest, DirectoryListing, SquadSnapshot } from "../wire.ts";
 
-export type { SquadSnapshot };
+export type { AgentTemplate, DirectoryListing, SquadSnapshot };
 export type TeamSummary = SquadSnapshot["teams"][number];
 export type SeatSummary = TeamSummary["seats"][number];
 
@@ -20,7 +19,7 @@ const PREFIX = "/api/squad";
  *
  * The host refuses with reasons — 「订阅模式不使用自定义端点」, 「只能有一位秘书」
  * — and those sentences are the entire value of the refusal. A generic
- * "保存失败" would throw away the only part that tells the person what to do.
+ * 「保存失败」 would throw away the only part that says what to do next.
  */
 async function call<T>(path: string, method: string, body?: unknown): Promise<T> {
   const response = await fetch(PREFIX + path, {
@@ -40,8 +39,13 @@ export const api = {
   snapshot: (): Promise<SquadSnapshot> => call<SquadSnapshot>("/teams", "GET"),
   createTeam: (body: { displayName: string; projectFolder: string; roster: string }): Promise<{ teamId: string }> =>
     call("/teams", "POST", body),
-  addSeat: (body: { teamId: string; displayName: string; role: string; isSecretary?: boolean }): Promise<unknown> =>
-    call("/seats", "POST", body),
+  addSeat: (body: {
+    teamId: string;
+    templateId?: string;
+    displayName?: string;
+    role?: string;
+    isSecretary?: boolean;
+  }): Promise<unknown> => call("/seats", "POST", body),
   removeSeat: (body: { teamId: string; seatId: string; confirmSecretary?: boolean }): Promise<unknown> =>
     call("/seats", "DELETE", body),
   patchSeat: (body: { teamId: string; seatId: string; connectionId?: string; caps?: SeatCaps }): Promise<unknown> =>
@@ -49,6 +53,9 @@ export const api = {
   saveConnection: (body: SeatConnection & { credential?: string }): Promise<unknown> =>
     call("/connections", "POST", body),
   removeConnection: (body: { connectionId: string }): Promise<unknown> => call("/connections", "DELETE", body),
+  saveAgent: (body: AgentRequest): Promise<unknown> => call("/agents", "POST", body),
+  removeAgent: (body: { templateId: string }): Promise<unknown> => call("/agents", "DELETE", body),
+  browse: (body: { path?: string; child?: string }): Promise<DirectoryListing> => call("/browse", "POST", body),
 };
 
 export type Snapshot =
@@ -60,8 +67,8 @@ export type Snapshot =
  * Poll the snapshot.
  *
  * Polling rather than a subscription because there is no event stream for
- * this yet, and a panel that shows a stale roster after an edit is worse than
- * one that costs a request every two seconds. `nonce` is how a mutation says
+ * this yet, and a panel showing a stale roster after an edit is worse than
+ * one costing a request every two seconds. `nonce` is how a mutation says
  * "read again now" instead of waiting out the interval.
  */
 export function useSnapshot(nonce: number): Snapshot {
@@ -84,4 +91,31 @@ export function useSnapshot(nonce: number): Snapshot {
     };
   }, [nonce]);
   return snapshot;
+}
+
+/**
+ * Run a mutation, keeping its refusal for display.
+ *
+ * Every form in this panel needs the same three things — clear the old error,
+ * re-read on success, keep the reason on failure — and each one having its
+ * own copy is how one of them ends up swallowing the message.
+ */
+export function useAction(onChanged: () => void): {
+  readonly error: string | undefined;
+  readonly setError: (value: string | undefined) => void;
+  readonly run: (work: () => Promise<unknown>) => Promise<boolean>;
+} {
+  const [error, setError] = useState<string | undefined>(undefined);
+  const run = async (work: () => Promise<unknown>): Promise<boolean> => {
+    setError(undefined);
+    try {
+      await work();
+      onChanged();
+      return true;
+    } catch (failure) {
+      setError(String((failure as Error).message ?? failure));
+      return false;
+    }
+  };
+  return { error, setError, run };
 }

@@ -13,7 +13,14 @@
  * second declaration, and a second declaration of a wire format is a bug
  * waiting for a field rename.
  */
-import type { ConnectionView, SeatCaps, SeatConnection, UsageTotals } from "@squad/shared";
+import type {
+  AgentTemplate,
+  ConnectionView,
+  PermissionMode,
+  SeatCaps,
+  SeatConnection,
+  UsageTotals,
+} from "@squad/shared";
 
 export interface TeamSummary {
   readonly teamId: string;
@@ -29,6 +36,13 @@ export interface TeamSummary {
     readonly running: boolean;
     readonly connectionId?: string | undefined;
     readonly caps?: SeatCaps | undefined;
+    readonly permissionMode?: PermissionMode | undefined;
+    /** Where this seat came from, when it was taken from the library. */
+    readonly templateId?: string | undefined;
+    readonly color?: string | undefined;
+    /** The seat's own standing instructions, so a roster can be inspected. */
+    readonly systemPrompt: string;
+    readonly backend: string;
   }[];
   /** Where a running agenda has got to, when one is running. */
   readonly progress?: { readonly phase: string; readonly phaseIndex: number; readonly phaseCount: number } | undefined;
@@ -44,6 +58,8 @@ export interface SquadSnapshot {
   readonly criteria: { readonly active: number; readonly pending: number };
   /** Seat connections, with credential STATUS and never a credential value. */
   readonly connections: readonly ConnectionView[];
+  /** The reusable agent library. */
+  readonly agents: readonly AgentTemplate[];
 }
 
 /** Building a team: the three fields, in the grammar the command uses. */
@@ -56,7 +72,16 @@ export interface CreateTeamRequest {
 /** Adding or removing one seat. */
 export interface SeatRequest {
   readonly teamId: string;
-  /** Adding: the new seat. */
+  /**
+   * Adding from the library: which agent.
+   *
+   * Preferred over spelling the fields out, because the template is the thing
+   * a person configured and can inspect later — a seat assembled field by
+   * field looks identical afterwards and carries no answer to "where did this
+   * one come from".
+   */
+  readonly templateId?: string;
+  /** Adding by hand: the new seat. */
   readonly displayName?: string;
   readonly role?: string;
   readonly isSecretary?: boolean;
@@ -88,3 +113,26 @@ export interface SeatPatch {
  * read and render.
  */
 export type ConnectionRequest = SeatConnection & { readonly credential?: string };
+
+/**
+ * Saving an agent template.
+ *
+ * `credential` and the connection fields are here because a person creating
+ * an agent is usually creating its connection in the same breath — 1.x put
+ * model, endpoint and key on the agent form for exactly that reason. The
+ * route builds or reuses a connection and stores the secret through the
+ * credential service; the template itself only ever holds a connection ID.
+ */
+export interface AgentRequest extends Omit<AgentTemplate, "enabled"> {
+  /** When set, create/update this connection and point the template at it. */
+  readonly connection?: SeatConnection & { readonly credential?: string };
+}
+
+/** One directory, as the folder picker sees it. */
+export interface DirectoryListing {
+  readonly path: string;
+  /** The parent, absent at the filesystem root. */
+  readonly parent?: string;
+  /** Direct child directories, by name, sorted. Files are not listed. */
+  readonly directories: readonly string[];
+}

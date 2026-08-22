@@ -110,3 +110,49 @@ export function parseSay(raw: string, seatNames: readonly string[] = []): SayInp
   }
   return { instruction: trimmed, named: [] };
 }
+
+/** One complaint about a form field. */
+export interface FieldProblem {
+  readonly field: "displayName" | "projectFolder" | "roster";
+  readonly detail: string;
+}
+
+/**
+ * Check the three fields a panel collects, one at a time.
+ *
+ * `parseNewTeam` answers with the command's usage line, which is right for
+ * the command and wrong for the form: a person who filled two boxes and
+ * missed the third got a sentence reciting a slash-command grammar they never
+ * typed, printed in red under all three. Same rules, tagged by field, so each
+ * complaint can sit under the input that caused it.
+ */
+export function checkTeamFields(input: {
+  readonly displayName?: string;
+  readonly projectFolder?: string;
+  readonly roster?: string;
+}): readonly FieldProblem[] {
+  const problems: FieldProblem[] = [];
+  const displayName = (input.displayName ?? "").trim();
+  const projectFolder = (input.projectFolder ?? "").trim();
+  const roster = (input.roster ?? "").trim();
+
+  if (displayName === "") problems.push({ field: "displayName", detail: "给团队起个名字。" });
+  if (displayName.includes("|")) {
+    // The three fields are joined with pipes to reach the shared grammar, so
+    // a pipe typed into one of them would silently become a field boundary.
+    problems.push({ field: "displayName", detail: "名字里不能有「|」。" });
+  }
+  if (projectFolder === "") problems.push({ field: "projectFolder", detail: "选一个项目文件夹。" });
+  else if (!projectFolder.startsWith("/")) {
+    problems.push({ field: "projectFolder", detail: `要绝对路径：「${projectFolder}」不是。` });
+  }
+  if (roster === "") problems.push({ field: "roster", detail: "至少要有一个席位。" });
+  else {
+    try {
+      parseNewTeam([displayName || "占位", projectFolder || "/占位", roster].join(" | "));
+    } catch (failure) {
+      problems.push({ field: "roster", detail: String((failure as Error).message) });
+    }
+  }
+  return problems;
+}

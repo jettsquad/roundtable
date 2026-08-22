@@ -48,7 +48,16 @@ export const name = "squad-console";
  * rest of the system unreachable, which is the state this package exists to
  * end.
  */
-export const inject = ["commands", "teams", "teamContext", "secretary", "reasoning", "seatConnections", "webServer"];
+export const inject = [
+  "commands",
+  "teams",
+  "teamContext",
+  "secretary",
+  "reasoning",
+  "seatConnections",
+  "agentTemplates",
+  "webServer",
+];
 
 export function apply(ctx: Context): void {
   ctx.plugin(SquadConsole);

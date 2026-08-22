@@ -29,11 +29,16 @@
  *   would let a model decide who speaks, which is the one thing this product
  *   must not be, arriving by the back door after the front one was shut.
  */
+import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
 
 import type {
+  AgentRequest,
   ConnectionRequest,
+  DirectoryListing,
   CreateTeamRequest,
   SeatPatch,
   SeatRequest,
@@ -68,8 +73,13 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           role: seat.role,
           isSecretary: seat.isSecretary === true,
           running: state?.running === true,
+          systemPrompt: seat.systemPrompt,
+          backend: seat.backend,
           ...(seat.connectionId === undefined ? {} : { connectionId: seat.connectionId }),
           ...(seat.caps === undefined ? {} : { caps: seat.caps }),
+          ...(seat.permissionMode === undefined ? {} : { permissionMode: seat.permissionMode }),
+          ...(seat.templateId === undefined ? {} : { templateId: seat.templateId }),
+          ...(seat.color === undefined ? {} : { color: seat.color }),
         };
       }),
       ...(team.progress === undefined
@@ -90,7 +100,12 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
     ctx.reasoning.pending(),
     ctx.seatConnections.views(),
   ]);
-  return { teams, criteria: { active: active.length, pending: pending.length }, connections };
+  return {
+    teams,
+    criteria: { active: active.length, pending: pending.length },
+    connections,
+    agents: ctx.agentTemplates.list(),
+  };
 }
 
 /**
@@ -140,15 +155,110 @@ const teamOf = (ctx: Context, teamId: string) => {
  */
 export function addSeatFrom(ctx: Context, request: SeatRequest): void {
   const team = teamOf(ctx, request.teamId);
+  const seatId = `seat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+  const templateId = (request.templateId ?? "").trim();
+  if (templateId !== "") {
+    const template = ctx.agentTemplates.get(templateId);
+    if (template === undefined) throw new Error(`Agent 库里没有这个模板：${templateId}。`);
+    // The template's own answer to "may this be a secretary" is a refusal,
+    // not a default that gets overwritten: an agent whose instructions never
+    // mentioned planning an agenda should not become the seat that plans one
+    // because a checkbox was ticked on the other screen.
+    if (request.isSecretary === true && !template.secretaryCandidate) {
+      throw new Error(`「${template.displayName}」在 Agent 库里没有勾选「可以当秘书」。`);
+    }
+    team.addSeat({
+      seatId,
+      displayName: template.displayName,
+      role: template.role,
+      systemPrompt: template.systemPrompt,
+      backend: template.backend,
+      templateId: template.templateId,
+      color: template.color,
+      ...(request.isSecretary === true ? { isSecretary: true } : {}),
+      ...(template.connectionId === undefined ? {} : { connectionId: template.connectionId }),
+      ...(template.permissionMode === undefined ? {} : { permissionMode: template.permissionMode }),
+      ...(template.caps === undefined ? {} : { caps: template.caps }),
+    });
+    return;
+  }
+
   const role = (request.role ?? "").trim() === "" ? "通用" : (request.role as string).trim();
   team.addSeat({
-    seatId: `seat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    seatId,
     displayName: (request.displayName ?? "").trim(),
     role,
     systemPrompt: `你的角色是${role}。回答简明，有依据。`,
     backend: "claude-code",
     ...(request.isSecretary === true ? { isSecretary: true } : {}),
   });
+}
+
+/**
+ * Save an agent template, and the connection it was configured with.
+ *
+ * The connection comes first: a template that named a connection which the
+ * next statement failed to create would point at nothing, and the failure
+ * would surface at the first round as a missing provider.
+ */
+export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promise<void> {
+  let connectionId = request.connectionId;
+  if (request.connection !== undefined) {
+    const { credential, ...connection } = request.connection;
+    await ctx.seatConnections.save(connection);
+    if (credential !== undefined && credential !== "") {
+      await ctx.seatConnections.setCredential(connection.connectionId, credential);
+    }
+    connectionId = connection.connectionId;
+  }
+  await ctx.agentTemplates.save({
+    templateId: request.templateId,
+    displayName: request.displayName,
+    role: request.role,
+    systemPrompt: request.systemPrompt,
+    backend: request.backend,
+    secretaryCandidate: request.secretaryCandidate,
+    color: request.color,
+    enabled: true,
+    ...(connectionId === undefined || connectionId === "" ? {} : { connectionId }),
+    ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
+    ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
+    ...(request.caps === undefined ? {} : { caps: request.caps }),
+  });
+}
+
+/**
+ * List the directories under one path, for the folder picker.
+ *
+ * A browser has no native folder dialog, and a text box asking for an
+ * absolute path is a text box people mistype. This is the smallest thing that
+ * replaces it: names of direct child directories, nothing else — no files, no
+ * sizes, no contents. Read-only by construction, and the server it rides on
+ * is the local one the person already has open.
+ *
+ * Unreadable children are skipped rather than failing the listing: a home
+ * directory usually contains something the user cannot stat, and refusing to
+ * show the other forty entries because of it helps nobody.
+ */
+export async function browseDirectory(target?: string): Promise<DirectoryListing> {
+  const path = target === undefined || target.trim() === "" ? homedir() : resolve(target.trim());
+  if (!isAbsolute(path)) throw new Error(`要绝对路径：「${path}」不是。`);
+  const entries = await readdir(path, { withFileTypes: true }).catch((failure: NodeJS.ErrnoException) => {
+    throw new Error(`读不了这个目录：${path}（${failure.code ?? failure.message}）`);
+  });
+  const directories = entries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+  const parent = dirname(path);
+  return { path, directories, ...(parent === path ? {} : { parent }) };
+}
+
+/** Join a browsed directory with a child name, without letting `..` through. */
+export function childPath(path: string, name: string): string {
+  if (name.includes("/") || name === "..") throw new Error(`不是一个目录名：「${name}」。`);
+  return join(path, name);
 }
 
 /** Remove a seat. Its past words stay in the record — the discussion happened. */
@@ -235,6 +345,29 @@ export function registerSquadApi(ctx: Context): () => void {
             res.end(JSON.stringify({ ok: true }));
             return;
           }
+        }
+        if (suffix === "/agents") {
+          if (req.method === "POST") {
+            await saveAgentFrom(ctx, await readJson<AgentRequest>(req));
+            res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          if (req.method === "DELETE") {
+            await ctx.agentTemplates.remove((await readJson<{ templateId: string }>(req)).templateId);
+            res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+        }
+        if (suffix === "/browse" && req.method === "POST") {
+          const body = await readJson<{ path?: string; child?: string }>(req);
+          const base = body.path === undefined || body.path === "" ? undefined : body.path;
+          const target = body.child === undefined || body.child === "" ? base : childPath(base ?? "", body.child);
+          const listing = await browseDirectory(target);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(listing));
+          return;
         }
         if (suffix === "/seats" && req.method === "PATCH") {
           const body = await readJson<SeatPatch>(req);

@@ -1,4 +1,4 @@
-import type { SeatCaps } from "@squad/shared";
+import type { PermissionMode, SeatCaps } from "@squad/shared";
 /**
  * seat.ts — a seat's configuration, and how it becomes a subagent request.
  *
@@ -42,6 +42,18 @@ export interface SeatSpec {
   readonly connectionId?: string | undefined;
   /** Spend limits. Which ones can bind depends on the connection's auth mode. */
   readonly caps?: SeatCaps | undefined;
+  /**
+   * How much this seat's CLI may do without asking.
+   *
+   * Decided when the child is spawned, so it travels in the PROVIDER NAME
+   * rather than the request — see `providerNameFor`. Absent means the seat
+   * backend's own default.
+   */
+  readonly permissionMode?: PermissionMode | undefined;
+  /** Where this seat came from, when it was taken from the agent library. */
+  readonly templateId?: string | undefined;
+  /** A tint, carried from the template so a roster is readable at a glance. */
+  readonly color?: string | undefined;
 }
 
 /** What a seat is asked in one round, before it becomes prompt text. */

@@ -21,11 +21,20 @@ export const SEAT_PROVIDER = "claude-code-fenced";
 export const STOCK_SEAT_PROVIDER = "claude-code";
 
 /**
- * The provider name serving one connection.
+ * The provider name serving one process configuration.
  *
- * The seam carries no per-request environment, so credentials attach at
- * registration — and the only thing a request carries that can select among
- * registrations is the provider name. Encoding the connection into it is what
- * lets one seat use a gateway while another uses the host's login.
+ * The seam carries no per-request environment and no per-request argv, so
+ * both attach at REGISTRATION — and the only thing a request carries that can
+ * select among registrations is the provider name. Encoding the connection
+ * into it is what lets one seat use a gateway while another uses the host's
+ * login; the permission mode rides the same argument one axis further,
+ * because it is likewise decided when the child process is spawned.
+ *
+ * Without this a per-agent permission mode would be storable, renderable, and
+ * ignored — a setting the person believes is in force, which is worse than
+ * not offering it.
  */
-export const providerNameFor = (connectionId: string): string => `${SEAT_PROVIDER}/${connectionId}`;
+export function providerNameFor(connectionId?: string, permissionMode?: string): string {
+  const base = connectionId === undefined || connectionId === "" ? SEAT_PROVIDER : `${SEAT_PROVIDER}/${connectionId}`;
+  return permissionMode === undefined || permissionMode === "" ? base : `${base}#${permissionMode}`;
+}
