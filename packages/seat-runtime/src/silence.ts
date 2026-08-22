@@ -21,6 +21,41 @@ export interface SilenceLimits {
 export type SilenceReason = "silent" | "no-output";
 
 /**
+ * The thresholds every seat backend uses, in ONE place.
+ *
+ * 1.x had this number written out three times — claude-code, codex and the
+ * harness executor — plus a fourth in the secretary, each with its own copy
+ * of the comment. They happened to agree; nothing made them agree. Here the
+ * backends read these and may override them from config, so a divergence is
+ * a deliberate line in a profile rather than a constant somebody forgot.
+ *
+ * `idleMs` is 1.x's number exactly: fifteen minutes of SILENCE, not of work.
+ * There is no total-duration cap, and there should not be — a deep task
+ * legitimately runs far longer than any wall clock, and a CLI that is working
+ * streams as it goes, so it never goes quiet for long. Too short a window
+ * kills real work; a long one only delays reclaiming a truly stuck process.
+ *
+ * `firstOutputMs` is ours, and 1.x had no equivalent. Before the first byte
+ * there is nothing to be deep ABOUT: a seat that has not said a word is
+ * usually pointed at an endpoint that will never answer, and making a person
+ * wait fifteen minutes to be told that is a quarter of an hour spent proving
+ * something a connection test proves in a second.
+ *
+ * Five minutes, and the number comes from a measurement rather than a guess:
+ * a dsh seat on a real round took about 100 seconds to produce its first
+ * byte — profile boot, then the model's first token. It was 33 seconds from
+ * being killed as unreachable while it was working perfectly well. A deadline
+ * that close to observed behaviour is a deadline that will eventually fire on
+ * a healthy seat, and a watchdog that cries wolf gets ignored on the day it
+ * is right.
+ */
+export const SEAT_SILENCE_LIMITS: SilenceLimits = {
+  idleMs: 900_000,
+  firstOutputMs: 300_000,
+  pollMs: 2_000,
+};
+
+/**
  * Whether a stretch of silence has become a verdict, and which one.
  *
  * @param bytesSeen - total output bytes so far; zero means nothing ever arrived.
@@ -83,7 +118,8 @@ export function watchSilence(
 /** What a watchdog kill should say, so the reason reaches the person. */
 export function silenceMessage(reason: SilenceReason, limits: Pick<SilenceLimits, "idleMs" | "firstOutputMs">): string {
   return reason === "no-output"
-    ? `这个席位 ${Math.round(limits.firstOutputMs / 1000)} 秒内一个字都没输出，按连不上处理。` +
+    ? `这个席位 ${Math.round(limits.firstOutputMs / 60_000)} 分钟内一个字都没输出，按连不上处理。` +
         `多半是它的连接端点没有响应——到 Agent 库点「测试」看接口地址那一项。`
-    : `这个席位停了 ${Math.round(limits.idleMs / 1000)} 秒没有新输出，已经中止。`;
+    : `这个席位连续 ${Math.round(limits.idleMs / 60_000)} 分钟没有任何新输出，判定为卡死，已经中止。` +
+        `判据是静默：只要有输出（哪怕是思考过程）就重新计时，所以跑得久本身不会被中止。`;
 }

@@ -28,7 +28,7 @@ import type {} from "@deepseek-ai/dsh-subprocess";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCliSeat } from "@squad/seat-runtime";
+import { runCliSeat, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { CLAUDE_PERMISSION_MODES, providerNameFor } from "@squad/shared";
 import { DELEGATION_TOOLS, buildArgv, type PermissionMode } from "./argv.ts";
 import { readStream } from "./stream.ts";
@@ -59,26 +59,10 @@ const DEFAULTS = {
   provider: "claude-code-fenced",
   alwaysDeny: DELEGATION_TOOLS,
   permissionMode: "acceptEdits" as PermissionMode,
-  /**
-   * Ten minutes of SILENCE, not of work.
-   *
-   * A deep task legitimately runs far longer than any fixed wall clock, and
-   * killing a seat that is visibly working is worse than waiting: the work is
-   * lost and the reason is invisible. Partial messages give this clock a
-   * heartbeat, which is why they are requested at all.
-   */
-  idleMs: 600_000,
-  /**
-   * How long a seat may produce NOTHING before it is treated as unreachable.
-   *
-   * Short, because before the first byte there is nothing to be deep about:
-   * the CLI streams partial messages, so a working seat says something
-   * quickly. The usual cause of total silence is an endpoint that is not
-   * answering.
-   */
-  firstOutputMs: 90_000,
+  idleMs: SEAT_SILENCE_LIMITS.idleMs,
+  firstOutputMs: SEAT_SILENCE_LIMITS.firstOutputMs,
   /** How often the watchdog checks whether anything new arrived. */
-  pollMs: 5_000,
+  pollMs: SEAT_SILENCE_LIMITS.pollMs,
   disposeGraceMs: 5_000,
 };
 

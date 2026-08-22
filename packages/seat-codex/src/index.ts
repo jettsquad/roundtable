@@ -25,7 +25,7 @@ import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "
 // Imported for the `Context.subprocess` declaration merging it carries.
 import type {} from "@deepseek-ai/dsh-subprocess";
 import { CODEX_PERMISSION_MODES, modelArgumentFor, providerName, type SeatConnection } from "@squad/shared";
-import { runCliSeat } from "@squad/seat-runtime";
+import { runCliSeat, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { buildCodexArgv, isCodexMode } from "./argv.ts";
 import { readCodexStream } from "./stream.ts";
 
@@ -49,9 +49,9 @@ const DEFAULTS = {
   provider: "codex",
   /** The documented safe combination, and what a person means by "let it work". */
   permissionMode: "workspace" as const,
-  idleMs: 600_000,
-  firstOutputMs: 90_000,
-  pollMs: 5_000,
+  idleMs: SEAT_SILENCE_LIMITS.idleMs,
+  firstOutputMs: SEAT_SILENCE_LIMITS.firstOutputMs,
+  pollMs: SEAT_SILENCE_LIMITS.pollMs,
   disposeGraceMs: 5_000,
 };
 

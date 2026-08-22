@@ -129,6 +129,9 @@
 }
 
 .row {
+  /* The `@` list hangs above the input, so the row it sits in is the thing it
+     is positioned against. */
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -547,4 +550,117 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── One message, boxed ────────────────────────────────────────────────
+   A run of unboxed paragraphs is what made a long round unreadable: the
+   text said what was said and nothing said where one answer ended. The
+   host's own lines sit right; among five members sides would mean nothing,
+   so their colour goes on the name and a left edge on the body. */
+.messageMine {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.messageMine .messageHead {
+  flex-direction: row-reverse;
+}
+
+.bodyTheirs {
+  padding: 9px 13px;
+  border-radius: 4px 12px 12px 12px;
+  border-left: 3px solid var(--dsh-color-border, #34343a);
+  background: var(--dsh-color-surface, #1b1b1f);
+}
+
+.bodyMine {
+  max-width: 82%;
+  padding: 9px 13px;
+  border-radius: 12px 4px 12px 12px;
+  background: #2b3350;
+  color: #dfe6ff;
+}
+
+.clock {
+  font-size: 11px;
+  opacity: 0.45;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── The @ list ───────────────────────────────────────────────────────── */
+.mentionList {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 6px;
+  z-index: 30;
+  min-width: 220px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  background: var(--dsh-color-surface, #1b1b1f);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+.mentionItem {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.mentionItem:hover,
+.mentionOn {
+  background: var(--dsh-color-input, #131317);
+}
+
+/* ── Live seat state ──────────────────────────────────────────────────── */
+.statusStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.statusChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Colour carries the judgement, so it must not carry it alone: every chip
+   also spells its state out, for the same reason a warning light has a
+   label. */
+.streaming {
+  border-color: #4c8;
+  color: #6c9;
+}
+
+.quiet {
+  border-color: #a83;
+  color: #d9a54a;
+}
+
+.stalling {
+  border-color: #b44;
+  color: #f88;
+}
+
+.blocked {
+  border-color: #b44;
+  color: #f88;
 }

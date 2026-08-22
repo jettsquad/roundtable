@@ -37,6 +37,7 @@ import {
   type SeatUsage,
   type UsageTotals,
 } from "@squad/shared";
+import { activityFor, activityKey, type SeatActivity } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
 import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "./roster.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
@@ -205,6 +206,16 @@ export interface SeatState {
   readonly running: boolean;
   /** What it is answering, while it is answering. */
   readonly instruction?: string | undefined;
+  /**
+   * How the run is actually going, while it is going.
+   *
+   * `running: true` says a promise has not settled; it cannot tell a seat
+   * that is thinking from one wedged against an endpoint that will never
+   * answer. This is the difference: bytes produced, and when the last of them
+   * arrived. Present only for a backend that reports it (all three CLI ones
+   * do) and only while the child lives.
+   */
+  readonly activity?: SeatActivity | undefined;
 }
 
 /**
@@ -231,6 +242,14 @@ export interface TranscriptEvent {
   readonly text: string;
   /** Stable identity of this entry, used to cut windows at a checkpoint. */
   readonly turnId: string;
+  /**
+   * When the log recorded it, in Unix epoch milliseconds.
+   *
+   * From the session event's own `time`, not stamped on read: a transcript
+   * restored from disk must show when a thing was SAID, not when the page
+   * was opened.
+   */
+  readonly at: number;
 }
 
 /**
@@ -516,13 +535,22 @@ export class TeamsService extends Service {
         return secretaryOf(record.seats);
       },
       get seatStates() {
-        return record.seats.map((seat) => ({
-          seatId: seat.seatId,
-          displayName: seat.displayName,
-          ...(record.speaking.get(seat.seatId) === undefined
-            ? { running: false }
-            : { running: true, instruction: record.speaking.get(seat.seatId) }),
-        }));
+        const session = String(record.handle.agent.session.id);
+        return record.seats.map((seat) => {
+          const instruction = record.speaking.get(seat.seatId);
+          if (instruction === undefined) return { seatId: seat.seatId, displayName: seat.displayName, running: false };
+          // Addressed by the same label the request carried — `runSeat` sends
+          // `label: seat.displayName` — so this asks the backend what it is
+          // doing rather than guessing from what we asked it to do.
+          const activity = activityFor(activityKey(session, seat.displayName));
+          return {
+            seatId: seat.seatId,
+            displayName: seat.displayName,
+            running: true,
+            instruction,
+            ...(activity === undefined ? {} : { activity }),
+          };
+        });
       },
       get progress() {
         return record.running === undefined ? undefined : record.running.progress;
@@ -1253,6 +1281,7 @@ function transcriptOf(host: Agent): readonly TranscriptEvent[] {
       // The message id when there is one; otherwise the sequence number, which
       // is contiguous and unique by the log's own contract.
       turnId: typeof data?.id === "string" ? data.id : `seq-${event.seq}`,
+      at: event.time,
     };
   });
 }

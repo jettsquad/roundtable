@@ -26,9 +26,12 @@ import type { SubprocessHandle } from "@deepseek-ai/dsh-subprocess";
 import type { Context } from "@deepseek-ai/cordis";
 import type { SeatUsage } from "@squad/shared";
 import { silenceMessage, watchSilence, type SilenceLimits } from "./silence.ts";
+import { activityKey, beginActivity, endActivity, reportActivity } from "./activity.ts";
 
-export { silenceVerdict, watchSilence, silenceMessage } from "./silence.ts";
+export { silenceVerdict, watchSilence, silenceMessage, SEAT_SILENCE_LIMITS } from "./silence.ts";
 export type { SilenceLimits, SilenceReason } from "./silence.ts";
+export { activityFor, activityKey, beginActivity, endActivity, reportActivity, resetActivity } from "./activity.ts";
+export type { SeatActivity } from "./activity.ts";
 
 /** What a backend's parser makes of one run's output. */
 export interface SeatOutcome {
@@ -169,10 +172,23 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
   const collectOutput = (): SubagentResult["output"] =>
     output.trim() === "" ? [] : [{ type: "text", text: spec.parse(output).text }];
 
+  // Announced before the first tick, so a seat that has produced nothing yet
+  // still reports as running. Registered only if the caller labelled the
+  // request: an unlabelled run has no address to report under.
+  const activity = request.label === undefined ? undefined : activityKey(request.parent.session.id, request.label);
+  if (activity !== undefined) beginActivity(activity);
+
   const attempt = async (): Promise<SubagentResult> => {
     let silence: "silent" | "no-output" | undefined;
     const watch = watchSilence(
-      async () => (await child.collected.stdout?.readFrom(0))?.nextOffset ?? 0,
+      async () => {
+        const bytes = (await child.collected.stdout?.readFrom(0))?.nextOffset ?? 0;
+        // The same number the watchdog judges on. Reading it twice from two
+        // places is how a display comes to disagree with the decision it is
+        // supposed to be explaining.
+        if (activity !== undefined) reportActivity(activity, bytes);
+        return bytes;
+      },
       limits,
       (reason) => {
         silence = reason;
@@ -214,6 +230,9 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
       } as SubagentResult;
     } finally {
       watch.stop();
+      // In the `finally`: an entry nobody clears reports a seat as working
+      // forever, which is worse than showing nothing, because it is a claim.
+      if (activity !== undefined) endActivity(activity);
       await spec.cleanup?.().catch(() => undefined);
     }
   };

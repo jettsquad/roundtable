@@ -22,7 +22,19 @@ import { useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
 import { Agenda } from "./agenda.tsx";
 import { ContextPanel } from "./context-panel.tsx";
 import { Discussion } from "./discussion.tsx";
+import { describeSeat, describeTeam, type SeatStatus } from "../seat-status.ts";
 import styles from "./panel.module.css";
+
+/** One seat's live state, read the same way everywhere it is shown. */
+function statusOf(team: TeamSummary, seat: TeamSummary["seats"][number]): SeatStatus {
+  return describeSeat({
+    running: seat.running,
+    blocked: seat.blocked,
+    activity: seat.activity,
+    silence: team.silence,
+    now: Date.now(),
+  });
+}
 
 /** One team's consumption, in a line. See `panel.tsx` for why cache is separate. */
 function usageLine(usage: UsageTotals | undefined): string {
@@ -45,8 +57,22 @@ function usageLine(usage: UsageTotals | undefined): string {
  * while stuck looks the same in both states, and only one of them is fine.
  */
 function statusLine(team: TeamSummary): string {
-  const speaking = team.seats.filter((seat) => seat.running);
-  if (speaking.length > 0) return `工作中：${speaking.map((seat) => seat.displayName).join("、")} 正在发言。`;
+  // Each name carries what that seat is actually doing. 「正在发言」 was true
+  // of a seat streaming an answer and equally true of one wedged against a
+  // dead endpoint, which is the whole complaint this replaces.
+  const live = describeTeam(
+    team.seats.map((seat) => ({
+      displayName: seat.displayName,
+      status: describeSeat({
+        running: seat.running,
+        blocked: seat.blocked,
+        activity: seat.activity,
+        silence: team.silence,
+        now: Date.now(),
+      }),
+    })),
+  );
+  if (live !== undefined) return `工作中：${live}`;
   if (team.progress !== undefined) {
     return `议程进行中：${team.progress.phase}（第 ${team.progress.phaseIndex + 1}/${team.progress.phaseCount} 阶段）。`;
   }
@@ -81,8 +107,11 @@ function Roster({ team, data }: { readonly team: TeamSummary; readonly data: Squ
           {seat.blocked !== undefined ? (
             <span className={styles.badgeBad}>⚠️ {seat.blocked}</span>
           ) : seat.running ? (
-            <span className={styles.badgeRun} title={seat.instruction}>
-              工作中
+            <span
+              className={`${styles.badgeRun} ${styles[statusOf(team, seat).phase] ?? ""}`}
+              title={statusOf(team, seat).detail ?? seat.instruction}
+            >
+              {statusOf(team, seat).label}
             </span>
           ) : (
             <span className={styles.badgeIdle}>待命</span>

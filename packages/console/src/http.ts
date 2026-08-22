@@ -51,6 +51,7 @@ import type {
   SquadSnapshot,
   TeamSummary,
 } from "./wire.ts";
+import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { parseNewTeam } from "./parse.ts";
 import { tmpdir } from "node:os";
 import { assertPublicHostCommand, checkAgendaAgainstRoster, type AgendaSpec } from "@squad/shared";
@@ -149,7 +150,7 @@ const TRANSCRIPT_TAIL = 60;
  * whole discussion, and a person then concludes the team never said the
  * thing they are looking for.
  */
-function transcriptTail(events: readonly { kind: string; text: string; turnId: string }[]) {
+function transcriptTail(events: readonly { kind: string; text: string; turnId: string; at: number }[]) {
   const spoken = events
     .filter((event) => event.kind === "user/message" && event.text !== "")
     .map((event) => {
@@ -160,6 +161,7 @@ function transcriptTail(events: readonly { kind: string; text: string; turnId: s
         speaker: match?.[1] ?? "",
         text: (match?.[2] ?? event.text).trim(),
         turnId: event.turnId,
+        at: event.at,
       };
     });
   return {
@@ -233,6 +235,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           isSecretary: seat.isSecretary === true,
           running: state?.running === true,
           ...(state?.running === true && state.instruction !== undefined ? { instruction: state.instruction } : {}),
+          ...(state?.activity === undefined ? {} : { activity: state.activity }),
           systemPrompt: seat.systemPrompt,
           backend: seat.backend,
           ...(seat.connectionId === undefined ? {} : { connectionId: seat.connectionId }),
@@ -258,6 +261,10 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       ...transcriptTail(team.transcript()),
       ...(draftOf(teamId) === undefined ? {} : { draft: draftOf(teamId) }),
       context: contextOf(ctx, teamId, team.checkpointCoefficient),
+      // Sent rather than hardcoded in the panel: a profile may override these,
+      // and a screen that states a threshold the runtime does not use is worse
+      // than one that states none.
+      silence: { idleMs: SEAT_SILENCE_LIMITS.idleMs, firstOutputMs: SEAT_SILENCE_LIMITS.firstOutputMs },
     });
   }
   const [active, pending, connections, health] = await Promise.all([

@@ -58,7 +58,28 @@ export interface TeamSummary {
     /** The seat's own standing instructions, so a roster can be inspected. */
     readonly systemPrompt: string;
     readonly backend: string;
+    /**
+     * How a running seat's run is going, while it is going.
+     *
+     * `running` alone is a fact about a promise, not about the seat: it is
+     * equally true of a model composing a long answer and of a CLI pointed at
+     * a dead endpoint. These three numbers are the difference, and they come
+     * from the same byte count the silence watchdog judges on — so what the
+     * screen says and what the watchdog will do cannot disagree.
+     */
+    readonly activity?:
+      | {
+          readonly startedAt: number;
+          readonly bytes: number;
+          readonly lastOutputAt: number;
+        }
+      | undefined;
   }[];
+  /**
+   * When a seat counts as wedged, so the screen can say it rather than leave
+   * a person guessing at a number that lives in a constant.
+   */
+  readonly silence: { readonly idleMs: number; readonly firstOutputMs: number };
   /** Where a running agenda has got to, when one is running. */
   readonly progress?:
     | {
@@ -88,7 +109,13 @@ export interface TeamSummary {
    * lines and the panel polls every two seconds — sending all of it would
    * make reading the roster cost more than holding the meeting.
    */
-  readonly transcript: readonly { readonly speaker: string; readonly text: string; readonly turnId: string }[];
+  readonly transcript: readonly {
+    readonly speaker: string;
+    readonly text: string;
+    readonly turnId: string;
+    /** When it was said, Unix epoch milliseconds. */
+    readonly at: number;
+  }[];
   /** How much of the discussion the tail left out. */
   readonly transcriptOmitted: number;
   /**

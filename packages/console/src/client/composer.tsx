@@ -12,7 +12,7 @@
  * on a team's session puts this in its place: same position, same habit, and
  * it goes to the team.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 // dsh's own primitives, which ARE shared: `Button` and `Input` are exported
 // from the platform module table. Its INPUT BAR is not — that component is
 // internal to ui-conversation and wired to dsh's own send path — so the box
@@ -20,7 +20,8 @@ import { useEffect, useState } from "react";
 // the same pieces the rest of the app is.
 import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, useSnapshot } from "./api.ts";
-import { parseMentions } from "../mention.ts";
+import { applyMention, mentionCandidates, mentionDraftAt, parseMentions } from "../mention.ts";
+import { describeSeat } from "../seat-status.ts";
 import { clearQuotes, toggleQuote } from "./quotes.ts";
 import { useQuotes } from "./use-quotes.ts";
 import styles from "./panel.module.css";
@@ -48,6 +49,26 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [elapsed, setElapsed] = useState(0);
+  // A wrapper, not the input itself: dsh's `Input` does not forward a ref, and
+  // reaching for the element through the row we own is honest about that —
+  // the alternative would be dropping the shared primitive for a bare
+  // `<input>` and losing the app's own field styling on the one box people
+  // type into most.
+  const row = useRef<HTMLDivElement>(null);
+  const boxOf = (): HTMLInputElement | null => row.current?.querySelector("input") ?? null;
+  // Where the caret is, tracked because the `@` list is decided by what sits
+  // to the LEFT of it — reading the whole value would offer names for an `@`
+  // the person has already moved past.
+  const [caret, setCaret] = useState(0);
+  const [highlight, setHighlight] = useState(0);
+  // A clock of its own, so the live status ticks between polls. Without it a
+  // seat's 「思考中 12 秒」 freezes until the next fetch and reads like a
+  // seat that stopped.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((value) => value + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!running) return;
@@ -76,10 +97,53 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
   const asked = named.length === 0 ? current.seats : named;
   const blocked = asked.filter((seat) => seat.blocked !== undefined);
   const allBlocked = asked.length > 0 && blocked.length === asked.length;
+  const seatNames = current.seats.map((seat) => seat.displayName);
+  // The `@` being typed right now, and the names worth offering for it. Both
+  // decided against the real roster — a list built from shape alone would
+  // offer names for 「联系我 @公司邮箱」.
+  const draft = running ? undefined : mentionDraftAt(instruction, caret, seatNames);
+  const candidates = draft === undefined ? [] : mentionCandidates(draft, seatNames);
+  const pick = (name: string): void => {
+    if (draft === undefined) return;
+    const applied = applyMention(instruction, caret, draft, name);
+    setInstruction(applied.text);
+    setCaret(applied.caret);
+    setHighlight(0);
+    // Put the caret back where the completion left it. React restores the
+    // value but not the selection, so without this every pick sends the
+    // cursor to the end and the next `@` lands in the wrong place.
+    requestAnimationFrame(() => {
+      const box = boxOf();
+      box?.focus();
+      box?.setSelectionRange(applied.caret, applied.caret);
+    });
+  };
+
   // A misspelled name is refused rather than quietly widened to everyone:
   // the box would read as though it were aimed at one person while the
   // question went to the whole team.
   const misnamed = mentions.unknown.length > 0;
+
+  // Recomputed every second by the tick above, so these are live rather than
+  // frozen at the last poll.
+  const now = Date.now();
+  const statuses = current.seats
+    .map((seat) => ({
+      seatId: seat.seatId,
+      displayName: seat.displayName,
+      color: seat.color,
+      status: describeSeat({
+        running: seat.running,
+        blocked: seat.blocked,
+        activity: seat.activity,
+        silence: current.silence,
+        now,
+      }),
+    }))
+    .filter((entry) => entry.status.phase !== "idle");
+  // The one line worth reading when something is wrong: the detail of the
+  // seat that is closest to being given up on.
+  const worry = statuses.find((entry) => entry.status.phase === "stalling")?.status.detail;
 
   const send = async (): Promise<void> => {
     setError(undefined);
@@ -122,17 +186,72 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
         发给团队「{current.displayName}」{current.seats.length === 0 ? " · 还没有成员" : ""}
       </div>
 
-      <div className={styles.row}>
+      <div className={styles.row} ref={row}>
         <Input
           className={styles.grow ?? ""}
           value={instruction}
           placeholder={`跟「${current.displayName}」说点什么，@ 点名单独问某人…`}
           disabled={running}
-          onChange={(event) => setInstruction(event.target.value)}
+          onChange={(event) => {
+            setInstruction(event.target.value);
+            setCaret(event.target.selectionStart ?? event.target.value.length);
+            setHighlight(0);
+          }}
+          onSelect={(event) => setCaret((event.target as HTMLInputElement).selectionStart ?? 0)}
           onKeyDown={(event) => {
+            // While the list is open it owns the arrow keys and Enter. Letting
+            // Enter fall through would send the message the moment someone
+            // tried to choose a name, which is the one keystroke they meant
+            // for the list.
+            if (candidates.length > 0) {
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                const step = event.key === "ArrowDown" ? 1 : candidates.length - 1;
+                setHighlight((value) => (value + step) % candidates.length);
+                return;
+              }
+              if (event.key === "Enter" || event.key === "Tab") {
+                event.preventDefault();
+                pick(candidates[highlight] ?? candidates[0] ?? "");
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                // Closed by moving the caret out of the draft rather than by a
+                // flag: one source of truth for "is the list open".
+                setCaret(instruction.length);
+                return;
+              }
+            }
             if (event.key === "Enter" && !running && instruction.trim() !== "") void send();
           }}
         />
+        {candidates.length === 0 ? null : (
+          <div className={styles.mentionList}>
+            {candidates.map((name, index) => {
+              const seat = current.seats.find((candidate) => candidate.displayName === name);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  className={`${styles.mentionItem} ${index === highlight ? styles.mentionOn : ""}`}
+                  // `onMouseDown` rather than `onClick`: a click would blur the
+                  // input first, the caret would move, and the draft this pick
+                  // depends on would be gone before it ran.
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    pick(name);
+                  }}
+                >
+                  <span className={styles.dot} style={{ background: seat?.color ?? "#5a5a62" }} />
+                  {seat?.isSecretary === true ? "★ " : ""}
+                  {name}
+                  <span className={styles.muted}>{seat?.role ?? ""}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         <Button
           type="button"
           variant="primary"
@@ -200,13 +319,22 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
         </div>
       )}
 
-      {/* Said while it is still happening. A seat working and a seat hung on
-          an endpoint that will never answer look identical from here. */}
-      {!running || elapsed < 45 ? null : (
-        <div className={styles.hint}>
-          已经等了 {elapsed} 秒还没有回复。多半是这个席位的接口地址连不上——到 Agent 库点「测试」看那一项。
+      {/* What every seat is doing, while it is doing it.
+          This used to be a single guess — 「等了 45 秒，多半连不上」 — which was
+          a rule of thumb standing in for the numbers we actually have. Now each
+          seat reports its own bytes and its own silence, so the screen says
+          which one is quiet and how long the runtime will still wait. */}
+      {statuses.length === 0 ? null : (
+        <div className={styles.statusStrip}>
+          {statuses.map((entry) => (
+            <span key={entry.seatId} className={`${styles.statusChip} ${styles[entry.status.phase] ?? ""}`}>
+              <span className={styles.dot} style={{ background: entry.color ?? "#5a5a62" }} />
+              {entry.displayName} · {entry.status.label}
+            </span>
+          ))}
         </div>
       )}
+      {worry === undefined ? null : <div className={styles.hint}>{worry}</div>}
       {blocked.length === 0 ? null : (
         <div className={styles.error}>
           {allBlocked ? "这一轮问不出去：" : "这几位跑不了，会被跳过："}

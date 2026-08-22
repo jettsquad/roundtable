@@ -11,12 +11,15 @@
  * file names in backticks — and rendering that as preformatted text was the
  * difference between a discussion you can read and a wall of pipes.
  *
- * The layout follows 1.x rather than a chat's left/right bubbles: a coloured
- * speaker pill above the body, every message the same shape. With five
- * participants, alternating sides means nothing — the NAME is what tells you
- * who spoke, so it is what gets the colour.
+ * Two things carry WHO said something, and they carry different halves of it.
+ * The host's own lines sit on the RIGHT, because in a room with five members
+ * the one distinction that never blurs is "mine" against "theirs". Among the
+ * members, sides would be meaningless — five of them, two sides — so each
+ * body gets a boxed background and the NAME gets the colour. A flat run of
+ * unboxed paragraphs was the thing that made a long round unreadable: the
+ * text told you what was said and nothing told you where one answer ended.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { TeamSummary } from "./api.ts";
 import { toggleQuote } from "./quotes.ts";
@@ -27,6 +30,87 @@ import styles from "./panel.module.css";
 function tintOf(team: TeamSummary, speaker: string): string | undefined {
   if (speaker === "系统") return undefined;
   return team.seats.find((seat) => seat.displayName === speaker)?.color;
+}
+
+/**
+ * The clock time a line was said.
+ *
+ * Time of day rather than "3 分钟前": a discussion is read after the fact as
+ * often as during it, and a relative age silently keeps changing under a
+ * transcript that has not. The date joins in only when the line is not from
+ * today, which is when it starts to matter.
+ */
+function clockOf(at: number): string {
+  const said = new Date(at);
+  const time = said.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  const today = new Date();
+  const sameDay =
+    said.getFullYear() === today.getFullYear() &&
+    said.getMonth() === today.getMonth() &&
+    said.getDate() === today.getDate();
+  return sameDay ? time : `${said.getMonth() + 1}/${said.getDate()} ${time}`;
+}
+
+/** Put text on the clipboard, and say whether it landed. */
+function copyText(text: string): Promise<boolean> {
+  // The async clipboard first, and the 2010 trick behind it. `writeText` needs
+  // a permission and a user activation, and it is refused outright in some
+  // embedded webviews — verified here, where it answered
+  // `NotAllowedError: Write permission denied`. A copy button that works in
+  // Chrome and does nothing in the app people actually run it in is exactly
+  // the failure this project keeps finding, so the fallback is not optional.
+  const legacy = (): boolean => {
+    const carrier = document.createElement("textarea");
+    carrier.value = text;
+    // Off-screen but focusable: `display: none` cannot be selected, and an
+    // unselectable carrier makes `execCommand` a no-op that reports success.
+    carrier.style.cssText = "position:fixed;top:-1000px;opacity:0";
+    document.body.appendChild(carrier);
+    carrier.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      carrier.remove();
+    }
+  };
+  if (navigator.clipboard?.writeText === undefined) return Promise.resolve(legacy());
+  return navigator.clipboard
+    .writeText(text)
+    .then(() => true)
+    .catch(() => legacy());
+}
+
+/**
+ * Copy one message.
+ *
+ * Its own component because it owns a moment of state: a copy that says
+ * nothing is indistinguishable from a button that did nothing, and the
+ * clipboard gives no other feedback.
+ */
+function CopyButton({ text }: { readonly text: string }): JSX.Element {
+  const [state, setState] = useState<"idle" | "done" | "failed">("idle");
+  return (
+    <button
+      type="button"
+      className={`${styles.quoteButton} ${state === "failed" ? styles.stalling : ""}`}
+      title="复制这段的原文"
+      onClick={() => {
+        // The raw Markdown, not the rendered text: what people paste this
+        // into is another Markdown box more often than not, and a copy that
+        // silently flattened the tables would be worth less than the screen.
+        void copyText(text).then((ok) => {
+          // A failure that says nothing is a button that looks broken. Said
+          // out loud, and cleared, so the next attempt starts honest.
+          setState(ok ? "done" : "failed");
+          setTimeout(() => setState("idle"), 1500);
+        });
+      }}
+    >
+      {state === "done" ? "已复制 ✓" : state === "failed" ? "复制失败" : "复制"}
+    </button>
+  );
 }
 
 export function Discussion({
@@ -58,8 +142,9 @@ export function Discussion({
       {team.transcript.map((line) => {
         const tint = tintOf(team, line.speaker);
         const host = line.speaker === team.hostDisplayName;
+        const picked = quoted.includes(line.turnId);
         return (
-          <article key={line.turnId} className={styles.message}>
+          <article key={line.turnId} className={`${styles.message} ${host ? styles.messageMine : ""}`}>
             <div className={styles.messageHead}>
               <span
                 className={`${styles.speaker} ${host ? styles.speakerHost : ""}`}
@@ -67,18 +152,25 @@ export function Discussion({
               >
                 {line.speaker}
               </span>
-              {/* Pointing at a line is how you say "this is what I mean" without
-                  retyping it. The quote travels as an ID and is resolved from
-                  the record when the round starts — see `quotesFrom`. */}
+              <span className={styles.clock}>{clockOf(line.at)}</span>
+              {/* Pointing at a line is how you say "this is what I mean"
+                  without retyping it. The quote travels as an ID and is
+                  resolved from the record when the round starts — see
+                  `quotesFrom`. */}
               <button
                 type="button"
-                className={`${styles.quoteButton} ${quoted.includes(line.turnId) ? styles.quoted : ""}`}
+                className={`${styles.quoteButton} ${picked ? styles.quoted : ""}`}
+                title="下一轮特别强调这一段"
                 onClick={() => toggleQuote(team.teamId, line.turnId)}
               >
-                {quoted.includes(line.turnId) ? "已引用 ✓" : "引用"}
+                {picked ? "已引用 ✓" : "引用"}
               </button>
+              <CopyButton text={line.text} />
             </div>
-            <div className={styles.messageBody}>
+            <div
+              className={`${styles.messageBody} ${host ? styles.bodyMine : styles.bodyTheirs}`}
+              style={tint === undefined || host ? undefined : { borderLeftColor: tint }}
+            >
               <MarkdownText text={line.text} />
             </div>
           </article>

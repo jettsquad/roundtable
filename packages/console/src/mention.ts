@@ -69,3 +69,64 @@ export function parseMentions(raw: string, seatNames: readonly string[]): Mentio
   }
   return { instruction: rest, named, unknown };
 }
+
+/** An `@` the person is in the middle of typing, and what they have typed. */
+export interface MentionDraft {
+  /** Index of the `@` itself. */
+  readonly at: number;
+  /** What follows it, up to the caret. Empty right after typing `@`. */
+  readonly typed: string;
+}
+
+/**
+ * The `@` being typed at the caret, if any — what a name list should offer for.
+ *
+ * Bounded by the same rule `parseMentions` enforces: only the leading
+ * roll-call counts, so the list appears exactly where a pick would actually
+ * do something. Offering names for an `@` in the middle of a sentence would
+ * be a menu whose choices are then read as prose.
+ */
+export function mentionDraftAt(raw: string, caret: number, seatNames: readonly string[]): MentionDraft | undefined {
+  const head = raw.slice(0, caret);
+  const at = head.lastIndexOf("@");
+  if (at < 0) return undefined;
+  const typed = head.slice(at + 1);
+  // A space ends a mention: past it the person is writing the instruction.
+  if (/[\s]/.test(typed)) return undefined;
+  // Everything before this `@` must itself be a completed roll-call, or the
+  // `@` is inside the sentence rather than in front of it.
+  const before = raw.slice(0, at);
+  if (before.trim() !== "" && parseMentions(before, seatNames).instruction.trim() !== "") return undefined;
+  return { at, typed };
+}
+
+/**
+ * The names worth offering for a draft, best match first.
+ *
+ * Prefix matches before contained ones, so typing the start of a name puts it
+ * at the top where Enter will take it.
+ */
+export function mentionCandidates(draft: MentionDraft, seatNames: readonly string[]): readonly string[] {
+  const typed = draft.typed.toLowerCase();
+  if (typed === "") return seatNames;
+  const prefix = seatNames.filter((name) => name.toLowerCase().startsWith(typed));
+  const rest = seatNames.filter((name) => !prefix.includes(name) && name.toLowerCase().includes(typed));
+  return [...prefix, ...rest];
+}
+
+/**
+ * Put a chosen name into the text, and say where the caret goes.
+ *
+ * A trailing space is part of the completion: without it the next character
+ * typed extends the name, and `parseMentions` then reports a seat nobody has.
+ */
+export function applyMention(
+  raw: string,
+  caret: number,
+  draft: MentionDraft,
+  name: string,
+): { readonly text: string; readonly caret: number } {
+  const inserted = `@${name} `;
+  const text = raw.slice(0, draft.at) + inserted + raw.slice(caret);
+  return { text, caret: draft.at + inserted.length };
+}

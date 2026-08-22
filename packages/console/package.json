@@ -13,7 +13,8 @@
     "@deepseek-ai/cordis": "*"
   },
   "dependencies": {
-    "@squad/shared": "*"
+    "@squad/shared": "*",
+    "@squad/seat-runtime": "*"
   },
   "dsh": {
     "client": {

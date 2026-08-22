@@ -20,7 +20,7 @@ import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "
 // Imported for the `Context.subprocess` declaration merging it carries.
 import type {} from "@deepseek-ai/dsh-subprocess";
 import { providerName, type SeatConnection } from "@squad/shared";
-import { runCliSeat } from "@squad/seat-runtime";
+import { runCliSeat, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,9 +58,9 @@ const DEFAULTS = {
   provider: "dsh-sdk",
   command: "dsh",
   profile: "headless",
-  idleMs: 600_000,
-  firstOutputMs: 90_000,
-  pollMs: 5_000,
+  idleMs: SEAT_SILENCE_LIMITS.idleMs,
+  firstOutputMs: SEAT_SILENCE_LIMITS.firstOutputMs,
+  pollMs: SEAT_SILENCE_LIMITS.pollMs,
   disposeGraceMs: 5_000,
 };
 
