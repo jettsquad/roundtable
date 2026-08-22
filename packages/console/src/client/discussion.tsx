@@ -19,6 +19,8 @@
 import { useEffect, useRef } from "react";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { TeamSummary } from "./api.ts";
+import { toggleQuote } from "./quotes.ts";
+import { useQuotes } from "./use-quotes.ts";
 import styles from "./panel.module.css";
 
 /** The colour a speaker's pill takes, from the roster. */
@@ -36,6 +38,7 @@ export function Discussion({
   readonly autoScroll?: boolean;
 }): JSX.Element {
   const end = useRef<HTMLDivElement>(null);
+  const quoted = useQuotes(team.teamId);
   const count = team.transcript.length;
   useEffect(() => {
     if (autoScroll) end.current?.scrollIntoView({ block: "end" });
@@ -57,12 +60,24 @@ export function Discussion({
         const host = line.speaker === team.hostDisplayName;
         return (
           <article key={line.turnId} className={styles.message}>
-            <span
-              className={`${styles.speaker} ${host ? styles.speakerHost : ""}`}
-              style={tint === undefined ? undefined : { background: tint, color: "#fff" }}
-            >
-              {line.speaker}
-            </span>
+            <div className={styles.messageHead}>
+              <span
+                className={`${styles.speaker} ${host ? styles.speakerHost : ""}`}
+                style={tint === undefined ? undefined : { background: tint, color: "#fff" }}
+              >
+                {line.speaker}
+              </span>
+              {/* Pointing at a line is how you say "this is what I mean" without
+                  retyping it. The quote travels as an ID and is resolved from
+                  the record when the round starts — see `quotesFrom`. */}
+              <button
+                type="button"
+                className={`${styles.quoteButton} ${quoted.includes(line.turnId) ? styles.quoted : ""}`}
+                onClick={() => toggleQuote(team.teamId, line.turnId)}
+              >
+                {quoted.includes(line.turnId) ? "已引用 ✓" : "引用"}
+              </button>
+            </div>
             <div className={styles.messageBody}>
               <MarkdownText text={line.text} />
             </div>

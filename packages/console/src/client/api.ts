@@ -71,6 +71,7 @@ export const api = {
     teamId: string;
     instruction: string;
     seatIds?: readonly string[];
+    quoteIds?: readonly string[];
   }): Promise<{ replies: readonly SeatReply[] }> => call("/say", "POST", body),
   stop: (body: { teamId: string; reason?: string }): Promise<unknown> => call("/stop", "POST", body),
   draftAgenda: (body: { teamId: string; command: string }): Promise<unknown> => call("/agenda/draft", "POST", body),

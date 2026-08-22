@@ -140,7 +140,11 @@ export interface Team {
    */
   readonly host: Agent;
   /** Ask the named seats (or all of them) and return what they said. */
-  ask(instruction: string, seatIds?: readonly string[]): Promise<readonly SeatReply[]>;
+  ask(
+    instruction: string,
+    seatIds?: readonly string[],
+    quotes?: readonly { readonly speaker: string; readonly text: string }[],
+  ): Promise<readonly SeatReply[]>;
   /**
    * Run an agenda the host has already confirmed.
    *
@@ -527,7 +531,7 @@ export class TeamsService extends Service {
       removeSeat: (seatId, options) => this.removeSeat(record, seatId, options),
       rename: (displayName) => this.rename(record, displayName),
       checkpointCoefficient: record.input.checkpointCoefficient,
-      ask: (instruction, seatIds) => this.ask(record, instruction, seatIds),
+      ask: (instruction, seatIds, quotes) => this.ask(record, instruction, seatIds, quotes),
       transcript: () => transcriptOf(record.handle.agent),
       recordSpoken: (speaker, text, turnId) => recordSpoken(record.handle.agent, speaker, text, turnId),
       runAgenda: (agenda) => this.runAgenda(record, agenda),
@@ -550,6 +554,7 @@ export class TeamsService extends Service {
     record: TeamRecord,
     instruction: string,
     seatIds?: readonly string[],
+    quotes?: readonly { readonly speaker: string; readonly text: string }[],
   ): Promise<readonly SeatReply[]> {
     if (record.disposed) throw new Error("团队已销毁。");
     // One round at a time. Two rounds on one table interleave their
@@ -595,7 +600,7 @@ export class TeamsService extends Service {
       for (const seat of seats) {
         if (abort.signal.aborted) break;
         const window = windows.get(seat.seatId) ?? { lines: [] };
-        replies.push(await this.runSeat(record, host, seat, instruction, window, abort.signal));
+        replies.push(await this.runSeat(record, host, seat, instruction, window, abort.signal, quotes));
       }
     } finally {
       record.roundsInFlight -= 1;
@@ -929,6 +934,7 @@ export class TeamsService extends Service {
     instruction: string,
     window: WindowAttempt,
     signal?: AbortSignal,
+    quotes?: readonly { readonly speaker: string; readonly text: string }[],
   ): Promise<SeatReply> {
     const provider = this.providerFor(seat);
     try {
@@ -958,7 +964,12 @@ export class TeamsService extends Service {
       }
       record.speaking.set(seat.seatId, instruction);
       const lines = window.lines ?? [];
-      const prompt = composeSeatPrompt({ seat, instruction, context: lines });
+      const prompt = composeSeatPrompt({
+        seat,
+        instruction,
+        context: lines,
+        ...(quotes === undefined || quotes.length === 0 ? {} : { quotes }),
+      });
       const request: SubagentStartRequest = {
         label: seat.displayName,
         prompt: [{ type: "text", text: prompt }],

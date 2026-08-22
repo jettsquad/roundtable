@@ -21,6 +21,8 @@ import { useEffect, useState } from "react";
 import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, useSnapshot } from "./api.ts";
 import { parseMentions } from "../mention.ts";
+import { clearQuotes, toggleQuote } from "./quotes.ts";
+import { useQuotes } from "./use-quotes.ts";
 import styles from "./panel.module.css";
 
 interface SquadComposerProps {
@@ -40,6 +42,9 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
   const onSent = (): void => setNonce((value) => value + 1);
   const current = snapshot.state === "ready" ? snapshot.data.teams.find((t) => t.projectFolder === folder) : undefined;
   const [instruction, setInstruction] = useState("");
+  // Keyed by team, not by folder: the store is per team and this component is
+  // mounted per session.
+  const quoted = useQuotes(current?.teamId ?? "");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [elapsed, setElapsed] = useState(0);
@@ -87,11 +92,16 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
     try {
       await api.say({
         teamId: current.teamId,
+        ...(quoted.length === 0 ? {} : { quoteIds: quoted }),
         // The roll-call is stripped: a seat that also found 「@架构」 inside
         // its own task would be reading an address as an instruction.
         instruction: sent,
         ...(seatIds.length === 0 ? {} : { seatIds }),
       });
+      // Cleared after a successful send: a quote is about the question you
+      // just asked, and leaving it selected would silently attach it to the
+      // next one too.
+      clearQuotes(current.teamId);
       // The answers land in the discussion, which is the ONE place a
       // conversation is shown. Repeating them here is what put the same
       // sentences on the screen twice.
@@ -153,6 +163,29 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
           </Button>
         )}
       </div>
+
+      {quoted.length === 0 ? null : (
+        <div className={styles.row}>
+          <span className={styles.hint}>已引用 {quoted.length} 段（在讨论之外额外强调）：</span>
+          {quoted.map((turnId) => {
+            const line = current.transcript.find((entry) => entry.turnId === turnId);
+            return (
+              <button
+                key={turnId}
+                type="button"
+                className={styles.quoteChip}
+                title="取消引用"
+                onClick={() => toggleQuote(current.teamId, turnId)}
+              >
+                {(line?.speaker ?? "?") + "：" + (line?.text ?? "").slice(0, 14)}… ×
+              </button>
+            );
+          })}
+          <button type="button" className={styles.drop} onClick={() => clearQuotes(current.teamId)}>
+            全部取消
+          </button>
+        </div>
+      )}
 
       <div className={styles.row}>
         <span className={styles.hint}>

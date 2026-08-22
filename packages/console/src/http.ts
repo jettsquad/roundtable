@@ -188,6 +188,30 @@ function contextOf(ctx: Context, teamId: string, coefficient: number | undefined
   };
 }
 
+/**
+ * Resolve quoted line ids against the record.
+ *
+ * From the RECORD, never from the request body: a quote is a claim about
+ * what someone said, and one carried as text from a browser is only what
+ * that browser last rendered. Unknown ids are dropped rather than refused —
+ * a line can be folded into a checkpoint between the click and the send, and
+ * losing the emphasis is better than losing the round.
+ */
+function quotesFrom(
+  events: readonly { kind: string; text: string; turnId: string }[],
+  ids: readonly string[],
+): readonly { readonly speaker: string; readonly text: string }[] {
+  if (ids.length === 0) return [];
+  const wanted = new Set(ids);
+  const quotes: { speaker: string; text: string }[] = [];
+  for (const event of events) {
+    if (event.kind !== "user/message" || !wanted.has(event.turnId)) continue;
+    const match = /^【([^】]+)】([\s\S]*)$/.exec(event.text);
+    quotes.push({ speaker: match?.[1] ?? "", text: (match?.[2] ?? event.text).trim() });
+  }
+  return quotes;
+}
+
 /** Build the snapshot the panel renders. Pure read; nothing here starts anything. */
 export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   const teams: TeamSummary[] = [];
@@ -988,10 +1012,20 @@ export function registerSquadApi(ctx: Context): () => void {
           // person clicking a button in the panel is exactly as much a person
           // as one typing a slash command. The invariant this product keeps
           // is that no MODEL takes the chair, not that only typing counts.
-          const body = await readJson<{ teamId: string; instruction: string; seatIds?: readonly string[] }>(req);
+          const body = await readJson<{
+            teamId: string;
+            instruction: string;
+            seatIds?: readonly string[];
+            quoteIds?: readonly string[];
+          }>(req);
           const team = teamOf(ctx, body.teamId);
           if (body.instruction.trim() === "") throw new Error("指令是空的。");
-          const replies = await team.ask(body.instruction.trim(), body.seatIds);
+          // Quotes travel as IDS and are resolved from the record here. The
+          // panel could have sent the text, and then a quote would be
+          // whatever the browser last saw rather than what the team actually
+          // said — a difference nobody could spot afterwards.
+          const quotes = quotesFrom(team.transcript(), body.quoteIds ?? []);
+          const replies = await team.ask(body.instruction.trim(), body.seatIds, quotes);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ replies: replies.map((reply) => ({ ...reply })) }));
           return;

@@ -502,3 +502,49 @@
   font-size: 11px;
   opacity: 0.55;
 }
+
+.messageHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Visible only on hover, so a discussion reads as a discussion rather than a
+   row of controls — but always reachable, and always present once picked. */
+.quoteButton {
+  all: unset;
+  cursor: pointer;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  opacity: 0;
+  border: 1px solid var(--dsh-color-border, #34343a);
+}
+
+.message:hover .quoteButton,
+.quoteButton.quoted {
+  opacity: 0.75;
+}
+
+.quoteButton:hover {
+  opacity: 1;
+}
+
+.quoted {
+  border-color: #4c8;
+  color: #6c9;
+}
+
+.quoteChip {
+  all: unset;
+  cursor: pointer;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid #4c8;
+  color: #6c9;
+  font-size: 11px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
