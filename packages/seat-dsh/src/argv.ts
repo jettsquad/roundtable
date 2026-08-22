@@ -18,6 +18,14 @@ export interface DshArgvInput {
   readonly prompt: string;
   /** The dsh profile to boot. `headless` is the one that answers and exits. */
   readonly profile: string;
+  /**
+   * A one-shot profile patch, when this seat's connection names a model.
+   *
+   * Without it the stock profile's own provider answers — DeepSeek's official
+   * endpoint — and the connection's endpoint and model are stored, displayed
+   * and ignored.
+   */
+  readonly patchPath?: string | undefined;
 }
 
 export function buildDshArgv(input: DshArgvInput): readonly string[] {
@@ -25,5 +33,8 @@ export function buildDshArgv(input: DshArgvInput): readonly string[] {
   // multiple words with spaces, so splitting it here would silently collapse
   // the seat's newlines — and the prompt's structure (the carried discussion,
   // the fence, the round's instruction) is load-bearing.
-  return ["--profile", input.profile, input.prompt];
+  const argv = ["--profile", input.profile];
+  if (input.patchPath !== undefined && input.patchPath !== "") argv.push("--patch", input.patchPath);
+  argv.push(input.prompt);
+  return argv;
 }

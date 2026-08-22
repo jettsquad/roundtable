@@ -70,6 +70,9 @@ export const api = {
     seatIds?: readonly string[];
   }): Promise<{ replies: readonly SeatReply[] }> => call("/say", "POST", body),
   stop: (body: { teamId: string; reason?: string }): Promise<unknown> => call("/stop", "POST", body),
+  draftAgenda: (body: { teamId: string; command: string }): Promise<unknown> => call("/agenda/draft", "POST", body),
+  resolveAgenda: (body: { teamId: string; verdict: "confirm" | "discard" }): Promise<unknown> =>
+    call("/agenda", "POST", body),
 };
 
 export type Snapshot =

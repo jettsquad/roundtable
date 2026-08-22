@@ -53,6 +53,14 @@ export interface SeatRunSpec {
   readonly parse: (raw: string) => SeatOutcome;
   readonly limits: SilenceLimits;
   readonly disposeGraceMs: number;
+  /**
+   * Run after the child settles, whatever happened.
+   *
+   * For temporary files a backend had to write to configure the run: leaving
+   * one behind means a description of where a seat sends its traffic sits in
+   * a shared temp directory until something else cleans it.
+   */
+  readonly cleanup?: (() => Promise<void>) | undefined;
 }
 
 /** The text blocks of a start request, joined. */
@@ -206,6 +214,7 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
       } as SubagentResult;
     } finally {
       watch.stop();
+      await spec.cleanup?.().catch(() => undefined);
     }
   };
 

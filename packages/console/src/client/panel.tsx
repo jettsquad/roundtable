@@ -9,6 +9,7 @@
 import { useState } from "react";
 import type { UsageTotals } from "@squad/shared";
 import { api, useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
+import { Agenda } from "./agenda.tsx";
 import { AgentsPage } from "./agents.tsx";
 import { Connections } from "./connections.tsx";
 import { CriteriaPage } from "./criteria.tsx";
@@ -97,6 +98,7 @@ function TeamCard({
           That tab only exists once the SESSION has content of its own, and a
           fresh session in a team's workspace has none — so you could talk to
           the team and never see a word of what it said back. */}
+      <Agenda team={team} onChanged={onChanged} />
       <Transcript team={team} />
       {/* The panel builds and edits teams; talking to one happens in its own
           session, in the composer at the bottom. Putting a second send box

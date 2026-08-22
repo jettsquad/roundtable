@@ -11,6 +11,12 @@
  * strict, and the roster check runs afterwards because the shape being legal
  * says nothing about the seats being real.
  */
+// Re-exported so existing importers keep working; the RULE lives in shared
+// because it is about the host's own sentence, not about this service — and
+// the console needs it too, on the other side of the plugin wall.
+import { assertPublicHostCommand } from "@squad/shared";
+
+export { assertPublicHostCommand };
 import { ACTION_KINDS, FEATURE_FLAGS, checkAgendaAgainstRoster, parseAgendaSpec, type AgendaSpec } from "@squad/shared";
 
 /** One seat as the drafting prompt needs to see it. */
@@ -24,20 +30,6 @@ export interface AgendaDraftInput {
   readonly command: string;
   readonly topic: string;
   readonly seats: readonly RosterSeat[];
-}
-
-/**
- * Refuse a host command that references private material.
- *
- * `@something` is how the host points at material only they can see. The
- * secretary is private-blind by design, so passing one through would either
- * leak it or — worse, because it is silent — produce an agenda built around
- * a reference the secretary could not read and quietly guessed at.
- */
-export function assertPublicHostCommand(command: string): void {
-  if (/(^|\s)@[^\s]+/.test(command)) {
-    throw new Error("主持人指令里的 @ 引用不会发给秘书，请改成公开措辞后重发。");
-  }
 }
 
 /** Build the drafting instruction. English on purpose: it asks for JSON, and the schema names are English. */

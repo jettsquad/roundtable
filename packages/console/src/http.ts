@@ -40,8 +40,10 @@ import type {
   PickerKind,
   DirectoryListing as WireDirectoryListing,
   TeamMember,
+  AgendaVerdictRequest,
   ConnectionRequest,
   CreateTeamRequest,
+  DraftAgendaRequest,
   SeatPatch,
   SeatRequest,
   SquadSnapshot,
@@ -49,6 +51,7 @@ import type {
 } from "./wire.ts";
 import { parseNewTeam } from "./parse.ts";
 import { tmpdir } from "node:os";
+import { assertPublicHostCommand, checkAgendaAgainstRoster, type AgendaSpec } from "@squad/shared";
 import {
   connectionMismatch,
   providerForSeat,
@@ -199,11 +202,13 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
               phase: team.progress.phase,
               phaseIndex: team.progress.phaseIndex,
               phaseCount: team.progress.phaseCount,
+              completedPhases: team.progress.completedPhases,
             },
           }),
       recorded: team.transcript().filter((entry) => entry.kind === "user/message" && entry.text !== "").length,
       usage: team.usage,
       ...transcriptTail(team.transcript()),
+      ...(draftOf(teamId) === undefined ? {} : { draft: draftOf(teamId) }),
     });
   }
   const [active, pending, connections, health] = await Promise.all([
@@ -236,6 +241,89 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
     picker: pickerKind(ctx),
   };
 }
+
+/**
+ * Drafts waiting on a host, by team.
+ *
+ * Held on the SERVER and not in a browser tab. The confirmation is the
+ * decision this whole product exists to keep with a person, and a draft that
+ * lived in one tab would vanish on a reload and be invisible to every other
+ * surface — the host would end up confirming from memory.
+ *
+ * In memory rather than in storage, deliberately: a draft is a proposal for
+ * the next few minutes, and one that outlived a restart would be confirmed
+ * against a discussion that had moved on.
+ */
+const drafts = new Map<string, AgendaSpec>();
+
+/**
+ * Ask the secretary to turn the host's sentence into phases.
+ *
+ * It DRAFTS; it never executes. The table runs only what the host confirmed —
+ * which is the one thing that keeps a wrong agenda costing a click instead of
+ * a meeting.
+ */
+export async function draftAgendaFor(ctx: Context, request: DraftAgendaRequest): Promise<AgendaSpec> {
+  const team = teamOf(ctx, request.teamId);
+  const secretary = team.secretary;
+  if (secretary === undefined) throw new Error("这支团队没有秘书，排不了议程。到面板里指一位。");
+  if (request.command.trim() === "") throw new Error("先说要做什么。");
+  // Refused BEFORE the model is contacted: `@` is how the host points at
+  // material only they can see, and the secretary is private-blind.
+  assertPublicHostCommand(request.command);
+
+  const draft = await ctx.secretary.draftAgenda({
+    parent: team.host,
+    secretary,
+    command: request.command,
+    topic: team.displayName,
+    seats: team.seats.map((seat) => ({ seatId: seat.seatId, displayName: seat.displayName })),
+  });
+  // Checked against the REAL roster before it is ever shown. A hallucinated
+  // seat id survives parsing, and at execution a task nobody can run looks
+  // exactly like a seat that had nothing to say.
+  const problems = checkAgendaAgainstRoster(
+    draft,
+    team.seats.map((seat) => seat.seatId),
+  );
+  if (problems.length > 0) {
+    throw new Error(problems.map((problem) => `「${problem.phase}」：${problem.detail}`).join("\n"));
+  }
+  drafts.set(request.teamId, draft);
+  return draft;
+}
+
+/**
+ * The host's verdict.
+ *
+ * Confirming RUNS it, and the run is not awaited here: an agenda is minutes
+ * of work and the click that started it must not hang on it. Progress shows
+ * in the snapshot, and 「叫停」 reaches it.
+ */
+export function resolveAgenda(ctx: Context, request: AgendaVerdictRequest): void {
+  const team = teamOf(ctx, request.teamId);
+  const held = request.agenda ?? drafts.get(request.teamId);
+  if (held === undefined) throw new Error("没有待确认的议程。");
+  drafts.delete(request.teamId);
+  if (request.verdict === "discard") return;
+
+  // An edited draft is re-checked. The panel lets a host retype an
+  // instruction and a seat id, and the roster rule has to run on what they
+  // actually confirmed rather than on what the secretary first proposed.
+  const problems = checkAgendaAgainstRoster(
+    held,
+    team.seats.map((seat) => seat.seatId),
+  );
+  if (problems.length > 0) {
+    throw new Error(problems.map((problem) => `「${problem.phase}」：${problem.detail}`).join("\n"));
+  }
+  void team.runAgenda(held).catch((error: Error) => {
+    ctx.logger.warn(`议程失败：${error.message}`);
+  });
+}
+
+/** The draft this team is holding, if any. */
+export const draftOf = (teamId: string): AgendaSpec | undefined => drafts.get(teamId);
 
 /**
  * Create a team from the panel.
@@ -827,6 +915,18 @@ export function registerSquadApi(ctx: Context): () => void {
         }
         if (suffix === "/teams" && req.method === "DELETE") {
           await disbandTeam(ctx, (await readJson<{ teamId: string }>(req)).teamId);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/agenda/draft" && req.method === "POST") {
+          const draft = await draftAgendaFor(ctx, await readJson<DraftAgendaRequest>(req));
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(draft));
+          return;
+        }
+        if (suffix === "/agenda" && req.method === "POST") {
+          resolveAgenda(ctx, await readJson<AgendaVerdictRequest>(req));
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true }));
           return;

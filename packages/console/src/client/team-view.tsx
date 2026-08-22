@@ -15,7 +15,9 @@
  */
 
 import type { UsageTotals } from "@squad/shared";
+import { useState } from "react";
 import { useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
+import { Agenda } from "./agenda.tsx";
 import styles from "./panel.module.css";
 
 /** One team's consumption, in a line. See `panel.tsx` for why cache is separate. */
@@ -112,7 +114,8 @@ function teamForCwd(data: SquadSnapshot, cwd: string | undefined): TeamSummary |
 
 export function TeamView({ folderOf }: { readonly folderOf: () => string | undefined }): JSX.Element {
   const cwd = folderOf();
-  const snapshot = useSnapshot(0);
+  const [nonce, setNonce] = useState(0);
+  const snapshot = useSnapshot(nonce);
 
   if (snapshot.state === "loading") return <div className={styles.viewPad}>读取中……</div>;
   if (snapshot.state === "error") return <div className={styles.viewPad}>{snapshot.detail}</div>;
@@ -141,6 +144,10 @@ export function TeamView({ folderOf }: { readonly folderOf: () => string | undef
       </div>
 
       <Roster team={team} data={snapshot.data} />
+      {/* The agenda lives here as well as in the panel: this is where the
+          work happens, and a plan you must leave the room to confirm is a
+          plan you confirm without looking at the discussion it came from. */}
+      <Agenda team={team} onChanged={() => setNonce((value) => value + 1)} />
       <Transcript team={team} />
       {/* No input box here. There is exactly one on the screen and it is the
           one at the bottom, in the place people already type — see

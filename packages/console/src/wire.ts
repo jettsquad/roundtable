@@ -14,6 +14,7 @@
  * waiting for a field rename.
  */
 import type {
+  AgendaSpec,
   AgentTemplate,
   ConnectionView,
   PermissionMode,
@@ -55,7 +56,23 @@ export interface TeamSummary {
     readonly backend: string;
   }[];
   /** Where a running agenda has got to, when one is running. */
-  readonly progress?: { readonly phase: string; readonly phaseIndex: number; readonly phaseCount: number } | undefined;
+  readonly progress?:
+    | {
+        readonly phase: string;
+        readonly phaseIndex: number;
+        readonly phaseCount: number;
+        readonly completedPhases: number;
+      }
+    | undefined;
+  /**
+   * A draft the secretary wrote, waiting on the host.
+   *
+   * Held on the SERVER, not in the panel, because the confirmation is the
+   * decision this product exists to keep with a person: a draft that lived
+   * only in one browser tab would be lost by a reload and invisible to every
+   * other surface, and the host would confirm from memory.
+   */
+  readonly draft?: AgendaSpec | undefined;
   /** Lines of recorded discussion. */
   readonly recorded: number;
   /** What this team's seats have consumed, when any backend reported it. */
@@ -271,4 +288,19 @@ export interface CriterionVerdictRequest {
  */
 export interface PanelConnection extends ConnectionView {
   readonly providerReady: boolean;
+}
+
+/** Asking the secretary to turn a plain instruction into phases. */
+export interface DraftAgendaRequest {
+  readonly teamId: string;
+  /** The host's own words. `@` references are refused — the secretary is private-blind. */
+  readonly command: string;
+}
+
+/** The host's verdict on a draft. */
+export interface AgendaVerdictRequest {
+  readonly teamId: string;
+  readonly verdict: "confirm" | "discard";
+  /** An edited draft replaces the held one; absent confirms it as written. */
+  readonly agenda?: AgendaSpec;
 }

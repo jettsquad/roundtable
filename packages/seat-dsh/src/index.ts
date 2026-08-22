@@ -21,7 +21,11 @@ import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "
 import type {} from "@deepseek-ai/dsh-subprocess";
 import { providerName, type SeatConnection } from "@squad/shared";
 import { runCliSeat } from "@squad/seat-runtime";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildDshArgv } from "./argv.ts";
+import { buildDshPatch, COMPAT_API_KEY_ENV } from "./patch.ts";
 import { readDshOutput } from "./stream.ts";
 
 export const name = "squad-seat-dsh";
@@ -115,16 +119,57 @@ export class SquadSeatDsh extends Service {
       inheritsParentContext: false,
 
       async start(request): Promise<SubagentRun> {
+        // The connection's model and endpoint, as a one-shot profile patch.
+        // dsh has no environment variable for either, so this is the only
+        // way they can take effect — and without it a MiniMax key goes to
+        // DeepSeek's endpoint and comes back as an invalid key.
+        const patch =
+          connection === undefined
+            ? undefined
+            : buildDshPatch({
+                model: (connection.modelId ?? "").trim(),
+                baseUrl: (connection.endpoint ?? "").trim(),
+              });
+        let patchDir: string | undefined;
+        let patchPath: string | undefined;
+        if (patch !== undefined) {
+          patchDir = await mkdtemp(join(tmpdir(), "squad-dsh-"));
+          patchPath = join(patchDir, "seat.patch.yml");
+          // 0600: the file names an env var rather than carrying the secret,
+          // but it still describes where this seat sends its traffic.
+          await writeFile(patchPath, patch, { mode: 0o600 });
+        }
+
+        const env = {
+          ...(config.env ?? {}),
+          ...(connection === undefined ? {} : await ctx.seatConnections.envFor(connection.connectionId)),
+        };
+        // The compat provider reads its key from its own variable. Set from
+        // whatever the connection resolved, so one credential serves both
+        // routes and neither is left unset depending on the model's family.
+        const key = env["DEEPSEEK_API_KEY"];
+        if (key !== undefined) env[COMPAT_API_KEY_ENV] = key;
+
         return runCliSeat({
           ctx,
           who: name,
           request,
           command: config.command ?? DEFAULTS.command,
-          argv: ({ prompt }) => buildDshArgv({ prompt, profile: config.profile ?? DEFAULTS.profile }),
-          env: {
-            ...(config.env ?? {}),
-            ...(connection === undefined ? {} : await ctx.seatConnections.envFor(connection.connectionId)),
-          },
+          argv: ({ prompt }) =>
+            buildDshArgv({
+              prompt,
+              profile: config.profile ?? DEFAULTS.profile,
+              ...(patchPath === undefined ? {} : { patchPath }),
+            }),
+          env,
+          // Removed after the run either way. A patch left behind describes
+          // where a seat sent its traffic, in a world-readable temp dir.
+          cleanup:
+            patchDir === undefined
+              ? undefined
+              : async () => {
+                  await rm(patchDir, { recursive: true, force: true }).catch(() => undefined);
+                },
           parse: readDshOutput,
           limits: {
             idleMs: config.idleMs ?? DEFAULTS.idleMs,
@@ -143,4 +188,5 @@ export function apply(ctx: Context, config?: Config): void {
 }
 
 export { buildDshArgv } from "./argv.ts";
+export { buildDshPatch, COMPAT_API_KEY_ENV, COMPAT_ROUTE, isDeepSeekModel } from "./patch.ts";
 export { readDshOutput } from "./stream.ts";
