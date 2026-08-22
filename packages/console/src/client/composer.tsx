@@ -13,6 +13,12 @@
  * it goes to the team.
  */
 import { useEffect, useState } from "react";
+// dsh's own primitives, which ARE shared: `Button` and `Input` are exported
+// from the platform module table. Its INPUT BAR is not — that component is
+// internal to ui-conversation and wired to dsh's own send path — so the box
+// below takes the bar's PLACE through the composer chain and is built from
+// the same pieces the rest of the app is.
+import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, useSnapshot, type SeatReply } from "./api.ts";
 import { parseMentions } from "../mention.ts";
 import styles from "./panel.module.css";
@@ -113,8 +119,8 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
       ))}
 
       <div className={styles.row}>
-        <input
-          className={styles.field}
+        <Input
+          className={styles.grow ?? ""}
           value={instruction}
           placeholder={`跟「${current.displayName}」说点什么，@ 点名单独问某人…`}
           disabled={running}
@@ -123,9 +129,9 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
             if (event.key === "Enter" && !running && instruction.trim() !== "") void send();
           }}
         />
-        <button
+        <Button
           type="button"
-          className={styles.button}
+          variant="primary"
           disabled={
             running || mentions.instruction.trim() === "" || current.seats.length === 0 || allBlocked || misnamed
           }
@@ -136,11 +142,10 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
             : named.length === 0
               ? "问所有人"
               : `问 ${named.map((seat) => seat.displayName).join("、")}`}
-        </button>
+        </Button>
         {!current.busy ? null : (
-          <button
+          <Button
             type="button"
-            className={styles.button}
             onClick={() =>
               // The refusal is shown. It used to be dropped on the floor,
               // which is what made the button look dead.
@@ -151,7 +156,7 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
             }
           >
             叫停
-          </button>
+          </Button>
         )}
       </div>
 

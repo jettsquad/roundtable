@@ -67,6 +67,10 @@ const NEEDED = [
   // Declares `conversation.view` — the keyed slot Chat and Trajectory are
   // tabs in, and therefore where a team view belongs.
   "dsh-client-ui-conversation",
+  // Shared UI primitives — a platform module, so the bundle keeps it external
+  // and the shell's own instance is used. This is the part of dsh's composer
+  // that IS reusable; the input bar itself is not exported.
+  "dsh-client-ui-primitives",
 ];
 
 /**

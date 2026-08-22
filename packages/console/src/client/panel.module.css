@@ -430,10 +430,12 @@
 }
 
 .composerBox {
+  /* Same footprint as dsh's own input bar, so taking its place does not move
+     the thing people aim at. */
   margin: 0 auto;
   padding: 10px 14px 12px;
   width: min(760px, 92%);
-  border-radius: 10px;
+  border-radius: 14px;
   border: 1px solid var(--dsh-color-border, #34343a);
   background: var(--dsh-color-surface, #1b1b1f);
   color: var(--dsh-color-text, #e8e8ea);

@@ -18,7 +18,8 @@
     "dsh-client-runtime",
     "dsh-client-ui-sidebar",
     "dsh-client-ui-layout",
-    "dsh-client-ui-conversation"
+    "dsh-client-ui-conversation",
+    "dsh-client-ui-primitives"
   ],
-  "linkedAt": "2026-08-22T15:16:19.350Z"
+  "linkedAt": "2026-08-22T16:00:56.189Z"
 }

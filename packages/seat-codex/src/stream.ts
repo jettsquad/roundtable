@@ -17,7 +17,13 @@ export interface CodexOutcome {
   readonly text: string;
   /** The CLI reported a failure, or nothing usable arrived. */
   readonly failed: boolean;
-  /** The reason, when the CLI gave one. */
+  /**
+   * The reason, when the CLI gave one.
+   *
+   * Handed to `failureText`, which puts it ahead of the stderr tail: a
+   * `turn.failed` message is the CLI's own account and beats whatever noise
+   * it logged on the way there.
+   */
   readonly detail?: string | undefined;
   /**
    * What the turn consumed, when `turn.completed` carried it.
