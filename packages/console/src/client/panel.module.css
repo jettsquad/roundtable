@@ -732,3 +732,42 @@
   opacity: 0;
   pointer-events: none;
 }
+
+/*
+ * Jump to the top or the bottom of the discussion.
+ *
+ * Fixed to the viewport's right edge rather than placed in the flow: the
+ * whole point is to be reachable from anywhere in a long thread, and a
+ * control that scrolls away with the content cannot do that. Sat above the
+ * composer, which floats over the same corner.
+ */
+.scrollNav {
+  position: fixed;
+  right: 18px;
+  bottom: 190px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scrollButton {
+  all: unset;
+  cursor: pointer;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  background: var(--dsh-color-surface, #1b1b1f);
+  color: var(--dsh-color-text, #e8e8ea);
+  font-size: 14px;
+  opacity: 0.55;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 35%);
+}
+
+.scrollButton:hover {
+  opacity: 1;
+}

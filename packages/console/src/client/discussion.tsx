@@ -162,6 +162,7 @@ export function Discussion({
   readonly onChanged?: () => void;
 }): JSX.Element {
   const end = useRef<HTMLDivElement>(null);
+  const start = useRef<HTMLDivElement>(null);
   const quoted = useQuotes(team.teamId);
   const secretaryNames = team.seats.filter((seat) => seat.isSecretary).map((seat) => seat.displayName);
   const count = team.transcript.length;
@@ -175,6 +176,18 @@ export function Discussion({
 
   return (
     <div className={styles.thread}>
+      {/* Sentinels, not a scroll-container hunt. The thread lives inside dsh's
+          own scrollport, which this plugin does not own and should not go
+          looking for by class name — `scrollIntoView` asks the browser to
+          bring an element into view whatever is scrolling, and keeps working
+          if that layout ever changes.
+
+          No `behavior: "smooth"`, and not as a style choice: in dsh's
+          scrollport a smooth request moves nothing at all — measured, the
+          element stayed at the same offset while the default jumped it into
+          view. A control that animates nowhere reads exactly like a dead
+          button. */}
+      <div ref={start} />
       {/* Said out loud: a discussion that begins mid-sentence with nothing
           saying so reads as the whole of it. */}
       {team.transcriptOmitted === 0 ? null : (
@@ -241,6 +254,31 @@ export function Discussion({
           composer rather than guessed: a fixed padding on the container was
           not enough once a reply grew. */}
       <div ref={end} className={styles.threadTail} />
+
+      {/* Only once there is enough to scroll through. Two buttons floating
+          over a three-line discussion are furniture. */}
+      {count < 4 ? null : (
+        <div className={styles.scrollNav}>
+          <button
+            type="button"
+            className={styles.scrollButton}
+            title="回到最上面"
+            aria-label="回到最上面"
+            onClick={() => start.current?.scrollIntoView({ block: "start" })}
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            className={styles.scrollButton}
+            title="到最下面"
+            aria-label="到最下面"
+            onClick={() => end.current?.scrollIntoView({ block: "end" })}
+          >
+            ↓
+          </button>
+        </div>
+      )}
     </div>
   );
 }
