@@ -25,12 +25,16 @@ import type { CheckpointPromptInput } from "./checkpoint.ts";
 import type { AgendaSpec } from "@squad/shared";
 import type { AgendaDraftInput } from "./agenda.ts";
 import {
+  agendaFromReplyWith,
+  assistWith,
   draftAgendaWith,
   writeCheckpointWith,
   writeTerminationWith,
   type TerminationInput,
   type TextTaskRunner,
 } from "./tasks.ts";
+import type { AssistInput } from "./assist.ts";
+import { personaPlan } from "./persona.ts";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -83,6 +87,17 @@ export type WriteCheckpointInput = CheckpointPromptInput & SecretaryRun;
 
 export type DraftAgendaInput = AgendaDraftInput & SecretaryRun;
 
+/** One ad-hoc job for the host: read the discussion, write a draft. */
+export type AssistTaskInput = AssistInput & SecretaryRun;
+
+/**
+ * Turning something the secretary already said into an agenda.
+ *
+ * `reply` is text the CALLER took from the record. Whether it was really the
+ * secretary's own is the caller's job — this service never sees a record.
+ */
+export type AgendaFromReplyInput = AgendaDraftInput & SecretaryRun & { readonly reply: string };
+
 /** Everything the hand-off needs, fed in by the caller — nothing is remembered here. */
 export type WriteTerminationInput = TerminationInput & SecretaryRun;
 
@@ -101,6 +116,16 @@ export class SecretaryService extends Service {
     return draftAgendaWith(this.runner(input), input);
   }
 
+  /** Do one job for the host. The answer is a draft, not a turn. */
+  async assist(input: AssistTaskInput): Promise<string> {
+    return assistWith(this.runner(input), input);
+  }
+
+  /** Re-express one of the secretary's own replies as a structured agenda. */
+  async agendaFromReply(input: AgendaFromReplyInput): Promise<AgendaSpec> {
+    return agendaFromReplyWith(this.runner(input), input);
+  }
+
   async writeCheckpoint(input: WriteCheckpointInput): Promise<string> {
     return writeCheckpointWith(this.runner(input), input);
   }
@@ -112,20 +137,31 @@ export class SecretaryService extends Service {
   /** A runner backed by one fresh one-shot subagent per task, thrown away after. */
   private runner(run: SecretaryRun): TextTaskRunner {
     return async (label, prompt) => {
-      const request: SubagentStartRequest = {
-        label,
-        prompt: [{ type: "text", text: prompt }],
-        parent: run.parent,
-        signal: run.signal ?? new AbortController().signal,
-        ...(run.secretary === undefined || run.secretary.systemPrompt.trim() === ""
-          ? {}
-          : { persona: run.secretary.systemPrompt }),
-      };
       // The named seat's own provider wins. Derived here, from the seat, so
       // no caller can supply the standing instructions without the model they
       // are meant to run under.
       const provider =
         run.secretary === undefined ? (run.provider ?? DEFAULT_PROVIDER) : providerForSeat(run.secretary);
+      // Asked, not assumed. Only the Claude Code backend declares `persona`;
+      // codex and dsh truthfully declare it false, and the seam REFUSES a
+      // request carrying one rather than dropping it. Every secretary task
+      // used to pass the persona unconditionally, so a secretary on either of
+      // those backends could do nothing at all — and the error named a
+      // capability, which reads as an internal detail rather than as "this
+      // seat cannot be your secretary".
+      const supported = this.ctx.subagents.getProvider(provider)?.capabilities.persona === true;
+      const plan = personaPlan({
+        persona: run.secretary?.systemPrompt,
+        prompt,
+        supported,
+      });
+      const request: SubagentStartRequest = {
+        label,
+        prompt: [{ type: "text", text: plan.prompt }],
+        parent: run.parent,
+        signal: run.signal ?? new AbortController().signal,
+        ...(plan.persona === undefined ? {} : { persona: plan.persona }),
+      };
       const started = await this.ctx.subagents.start(provider, request);
       const result = await started.result;
       return { text: stripReasoning(textOf(result.output)), stopReason: result.stopReason };

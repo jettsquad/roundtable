@@ -67,6 +67,12 @@ export const api = {
   renameTeam: (body: { teamId: string; displayName: string }): Promise<unknown> => call("/teams/rename", "POST", body),
   fold: (body: { teamId: string }): Promise<unknown> => call("/checkpoint", "POST", body),
   revokeCheckpoint: (body: { teamId: string; revokeId: string }): Promise<unknown> => call("/checkpoint", "POST", body),
+  /** Ask the secretary to do one job. The answer is a draft, not a turn. */
+  assist: (body: { teamId: string; instruction: string }): Promise<{ text: string }> =>
+    call("/secretary/assist", "POST", body),
+  /** Re-express one of the secretary's own replies as a structured agenda. */
+  agendaFromReply: (body: { teamId: string; turnId: string }): Promise<unknown> =>
+    call("/agenda/from-reply", "POST", body),
   /** The record this session should use, created on first sight. */
   sitting: (body: { projectFolder: string; sessionId: string }): Promise<{ teamId?: string }> =>
     call("/sitting", "POST", body),

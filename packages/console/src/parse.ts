@@ -82,6 +82,8 @@ export interface SayInput {
   readonly named: readonly string[];
 }
 
+import { parseMentions } from "./mention.ts";
+
 /**
  * Read an optional roll-call off the front of an instruction.
  *
@@ -108,6 +110,12 @@ export function parseSay(raw: string, seatNames: readonly string[] = []): SayInp
       return { instruction: rest, named: names };
     }
   }
+  // Then `@`, which is what the panel uses and what 1.x used. The command had
+  // only its own colon syntax, so the same sentence addressed one seat in the
+  // box and the whole team on the command line — with nothing saying which
+  // you had got.
+  const mentioned = parseMentions(trimmed, seatNames);
+  if (mentioned.named.length > 0) return { instruction: mentioned.instruction, named: [...mentioned.named] };
   return { instruction: trimmed, named: [] };
 }
 

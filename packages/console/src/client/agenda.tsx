@@ -12,6 +12,7 @@
  */
 import { useState } from "react";
 import type { AgendaSpec } from "@squad/shared";
+import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, useAction, type TeamSummary } from "./api.ts";
 import styles from "./panel.module.css";
 
@@ -155,6 +156,98 @@ export function Agenda({
         </div>
       )}
       {error === undefined ? null : <div className={styles.error}>{error}</div>}
+
+      <SecretaryDesk team={team} />
+    </div>
+  );
+}
+
+/**
+ * The secretary doing a job for the host.
+ *
+ * 1.x had this and 2.0 did not, which is most of what 「秘书没有协调、组织
+ * 其它 agent 的能力」 names: the only thing you could ask a secretary for was
+ * an agenda. Everything else it is for — 总结到这里的讨论、把分歧列出来、
+ * 谁还欠什么、按这些结论重排分工 — had nowhere to go.
+ *
+ * The answer lands HERE and not in the discussion, on purpose. A summary
+ * written by the secretary and a claim made by a member are different kinds
+ * of thing; recording them the same way would make the next round inherit the
+ * summary as something the team said.
+ */
+function SecretaryDesk({ team }: { readonly team: TeamSummary }): JSX.Element | null {
+  const [instruction, setInstruction] = useState("");
+  const [running, setRunning] = useState(false);
+  const [answer, setAnswer] = useState<string | undefined>(undefined);
+  const [failure, setFailure] = useState<string | undefined>(undefined);
+  const secretary = team.seats.find((seat) => seat.isSecretary);
+  if (secretary === undefined) return null;
+
+  const ask = (text: string): void => {
+    setRunning(true);
+    setFailure(undefined);
+    setAnswer(undefined);
+    void api
+      .assist({ teamId: team.teamId, instruction: text })
+      .then((result) => setAnswer(result.text))
+      .catch((error: Error) => setFailure(String(error.message)))
+      .finally(() => setRunning(false));
+  };
+
+  return (
+    <div className={styles.section}>
+      <div className={styles.subhead}>秘书台</div>
+      <div className={styles.row}>
+        <input
+          className={styles.field}
+          value={instruction}
+          placeholder="让秘书做一件事：总结、列分歧、点出谁还欠什么…"
+          disabled={running}
+          onChange={(event) => setInstruction(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !running && instruction.trim() !== "") ask(instruction);
+          }}
+        />
+        <button
+          type="button"
+          className={styles.button}
+          disabled={running || instruction.trim() === ""}
+          onClick={() => ask(instruction)}
+        >
+          {running ? "秘书在做…" : "交给秘书"}
+        </button>
+      </div>
+      {/* The three jobs people actually want, as one click each. Typed out in
+          full rather than abbreviated: what goes to the secretary is exactly
+          what is written here, and a button whose real instruction is hidden
+          is a button whose answer cannot be judged. */}
+      <div className={styles.row}>
+        {[
+          "把到目前为止的讨论总结成要点，分成「已定」和「未定」两部分。",
+          "把讨论里还没有解决的分歧列出来，每条注明是谁和谁的分歧。",
+          "按目前的讨论，说明每位成员接下来该做什么，以及先后顺序。",
+        ].map((preset) => (
+          <button
+            key={preset}
+            type="button"
+            className={styles.quoteChip}
+            title={preset}
+            disabled={running}
+            onClick={() => ask(preset)}
+          >
+            {preset.slice(0, 10)}…
+          </button>
+        ))}
+      </div>
+      <div className={styles.hint}>
+        秘书（{secretary.displayName}）只看公开讨论，看不到你的私有材料；答案只给你看，不进讨论记录。
+      </div>
+      {failure === undefined ? null : <div className={styles.error}>{failure}</div>}
+      {answer === undefined ? null : (
+        <div className={styles.card}>
+          <MarkdownText text={answer} />
+        </div>
+      )}
     </div>
   );
 }

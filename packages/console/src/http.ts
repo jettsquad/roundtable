@@ -352,6 +352,83 @@ export async function draftAgendaFor(ctx: Context, request: DraftAgendaRequest):
 }
 
 /**
+ * Ask the secretary to do one job and hand back a draft.
+ *
+ * Not recorded as a turn. That is the whole distinction 1.x drew and this
+ * restores: a summary written BY the secretary and a claim made IN the
+ * discussion are different kinds of thing, and a record that mixes them
+ * cannot be read afterwards — the next round would inherit the summary as
+ * something the team said.
+ */
+export async function assistFor(
+  ctx: Context,
+  request: { readonly teamId: string; readonly instruction: string },
+): Promise<string> {
+  const team = teamOf(ctx, request.teamId);
+  const secretary = team.secretary;
+  if (secretary === undefined) throw new Error("这支团队没有秘书。到面板里指一位。");
+  if (request.instruction.trim() === "") throw new Error("先说要秘书做什么。");
+  assertPublicHostCommand(request.instruction);
+  return ctx.secretary.assist({
+    parent: team.host,
+    secretary,
+    instruction: request.instruction,
+    topic: team.displayName,
+    // The whole tail the panel shows, in the same order. The secretary reads
+    // what the team can see and nothing else.
+    discussion: transcriptTail(team.transcript()).transcript.map((line) => ({
+      speaker: line.speaker,
+      text: line.text,
+    })),
+    seats: team.seats.map((seat) => ({ displayName: seat.displayName, role: seat.role })),
+  });
+}
+
+/**
+ * Turn one of the secretary's own replies into an agenda draft.
+ *
+ * The turn is looked up in the RECORD and its speaker checked against the
+ * roster's secretary. 1.x refused the same way — 「只能将当前团队秘书的已完成
+ * 回复转为议程」 — and the reason is not tidiness: any seat can be asked to
+ * propose a division of labour, and converting one of those would let a
+ * member schedule the team while the confirmation dialog said the secretary
+ * had.
+ */
+export async function agendaFromReplyFor(
+  ctx: Context,
+  request: { readonly teamId: string; readonly turnId: string },
+): Promise<AgendaSpec> {
+  const team = teamOf(ctx, request.teamId);
+  const secretary = team.secretary;
+  if (secretary === undefined) throw new Error("这支团队没有秘书，排不了议程。到面板里指一位。");
+  const line = transcriptTail(team.transcript()).transcript.find((entry) => entry.turnId === request.turnId);
+  if (line === undefined) throw new Error("找不到这条回复。");
+  if (line.speaker !== secretary.displayName) {
+    throw new Error(
+      `只能把秘书（${secretary.displayName}）自己的回复转成议程，这条是${line.speaker}说的。` +
+        `换个人来排，确认框上写的还是秘书排的——那就不是这道确认在守的东西了。`,
+    );
+  }
+  const draft = await ctx.secretary.agendaFromReply({
+    parent: team.host,
+    secretary,
+    reply: line.text,
+    command: "把上面这段安排转成结构化议程。",
+    topic: team.displayName,
+    seats: team.seats.map((seat) => ({ seatId: seat.seatId, displayName: seat.displayName })),
+  });
+  const problems = checkAgendaAgainstRoster(
+    draft,
+    team.seats.map((seat) => seat.seatId),
+  );
+  if (problems.length > 0) {
+    throw new Error(problems.map((problem) => `「${problem.phase}」：${problem.detail}`).join("\n"));
+  }
+  drafts.set(request.teamId, draft);
+  return draft;
+}
+
+/**
  * The host's verdict.
  *
  * Confirming RUNS it, and the run is not awaited here: an agenda is minutes
@@ -1006,6 +1083,18 @@ export function registerSquadApi(ctx: Context): () => void {
         }
         if (suffix === "/agenda/draft" && req.method === "POST") {
           const draft = await draftAgendaFor(ctx, await readJson<DraftAgendaRequest>(req));
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(draft));
+          return;
+        }
+        if (suffix === "/secretary/assist" && req.method === "POST") {
+          const answer = await assistFor(ctx, await readJson<{ teamId: string; instruction: string }>(req));
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ text: answer }));
+          return;
+        }
+        if (suffix === "/agenda/from-reply" && req.method === "POST") {
+          const draft = await agendaFromReplyFor(ctx, await readJson<{ teamId: string; turnId: string }>(req));
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify(draft));
           return;

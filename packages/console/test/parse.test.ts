@@ -182,3 +182,24 @@ describe("checkTeamDraft", () => {
     ).toEqual([]);
   });
 });
+
+describe("/squad-say 也认 @", () => {
+  it("开头的 @ 点名，并且从正文里挖掉", () => {
+    // 面板用 @，1.x 也用 @。命令行只认冒号语法的话，同一句话在输入框里问的是
+    // 一个人，在命令行问的是全队——而且没有任何东西说你拿到的是哪一种。
+    expect(parseSay("@甲 看看这个", ["甲", "乙"])).toEqual({ instruction: "看看这个", named: ["甲"] });
+  });
+
+  it("句中的 @ 也点名，但正文原样保留", () => {
+    expect(parseSay("这段请 @甲 复核", ["甲"])).toEqual({ instruction: "这段请 @甲 复核", named: ["甲"] });
+  });
+
+  it("冒号语法优先，行为不变", () => {
+    expect(parseSay("甲,乙: 一起看", ["甲", "乙"])).toEqual({ instruction: "一起看", named: ["甲", "乙"] });
+  });
+
+  it("认不出的 @ 不改变任何东西", () => {
+    // 「联系我 @公司邮箱」是正常写作，不该被当成点名，也不该被拦下来。
+    expect(parseSay("发到 @公司邮箱 那边", ["甲"])).toEqual({ instruction: "发到 @公司邮箱 那边", named: [] });
+  });
+});

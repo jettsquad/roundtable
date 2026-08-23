@@ -11,6 +11,7 @@ import type { AgendaSpec } from "@squad/shared";
 import { assertPublicHostCommand, buildAgendaPrompt, parseAgendaReply, type AgendaDraftInput } from "./agenda.ts";
 import { buildCheckpointPrompt, validateCheckpoint, type CheckpointPromptInput } from "./checkpoint.ts";
 import { buildTeamAgendaTerminationPrompt, validateTeamAgendaTerminationSummary } from "./termination.ts";
+import { buildAssistPrompt, validateAssist, type AssistInput } from "./assist.ts";
 
 /** What one finished text task produced. */
 export interface TextTaskResult {
@@ -108,4 +109,52 @@ export async function draftAgendaWith(run: TextTaskRunner, input: AgendaDraftInp
   assertPublicHostCommand(input.command);
   const text = await settled(run, "秘书 · 议程草案", buildAgendaPrompt(input));
   return parseAgendaReply(text, input.seats);
+}
+
+/**
+ * Do one job for the host, off the record.
+ *
+ * The private-material check runs first, as it does for the agenda: the point
+ * is that the reference never reaches the secretary, and checking on the way
+ * back would mean it already had.
+ *
+ * The answer is returned, not recorded. It is a draft for the host — the
+ * caller decides whether any of it becomes something the team said.
+ */
+export async function assistWith(run: TextTaskRunner, input: AssistInput): Promise<string> {
+  assertPublicHostCommand(input.instruction);
+  const text = await settled(run, "秘书 · 助理任务", buildAssistPrompt(input));
+  const check = validateAssist(text);
+  if (!check.ok) throw new Error(`秘书没有交出可用的结果：${check.detail ?? "内容为空"}`);
+  return text;
+}
+
+/**
+ * Turn something the secretary already said into a structured agenda.
+ *
+ * 1.x's move, and the one that makes a secretary an organiser rather than a
+ * note-taker: you ask it IN THE DISCUSSION how the work should be divided, it
+ * answers in prose the whole team can see and argue with, and only then is
+ * that prose converted into phases and tasks. The alternative — asking for
+ * JSON up front — hides the plan inside a schema at exactly the moment it
+ * should be readable.
+ *
+ * The reply travels as text the CALLER pulled from the record, and the caller
+ * is responsible for it having been the secretary's own. Nothing here can
+ * check that: this layer never sees the record.
+ */
+export async function agendaFromReplyWith(
+  run: TextTaskRunner,
+  input: AgendaDraftInput & { readonly reply: string },
+): Promise<AgendaSpec> {
+  const command = [
+    "把下面这段你自己写过的安排，原样转成结构化议程。",
+    "不要改变分工、顺序或者谁做什么；这一步只是换一种表示，不是重新规划。",
+    "如果那段话里没有说清某个阶段该谁做，就按它字面上的意思来，不要替它补。",
+    "=== 你写过的安排 ===",
+    input.reply,
+    "=== 主持人的原始要求 ===",
+    input.command,
+  ].join("\n");
+  return draftAgendaWith(run, { ...input, command });
 }

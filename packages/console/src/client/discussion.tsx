@@ -21,7 +21,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
-import type { TeamSummary } from "./api.ts";
+import { api, type TeamSummary } from "./api.ts";
 import { toggleQuote } from "./quotes.ts";
 import { useQuotes } from "./use-quotes.ts";
 import styles from "./panel.module.css";
@@ -113,6 +113,42 @@ function CopyButton({ text }: { readonly text: string }): JSX.Element {
   );
 }
 
+/**
+ * Turn one secretary reply into an agenda draft.
+ *
+ * Its own component for the same reason `CopyButton` is: it owns a moment of
+ * state, and a button that says nothing while a model works reads as a button
+ * that did nothing.
+ */
+function ToAgendaButton({ team, turnId }: { readonly team: TeamSummary; readonly turnId: string }): JSX.Element {
+  const [state, setState] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [detail, setDetail] = useState<string | undefined>(undefined);
+  return (
+    <>
+      <button
+        type="button"
+        className={`${styles.quoteButton} ${state === "failed" ? styles.stalling : ""}`}
+        title="把这段安排转成结构化议程，交给你确认后才会跑"
+        disabled={state === "running"}
+        onClick={() => {
+          setState("running");
+          setDetail(undefined);
+          void api
+            .agendaFromReply({ teamId: team.teamId, turnId })
+            .then(() => setState("done"))
+            .catch((error: Error) => {
+              setState("failed");
+              setDetail(String(error.message));
+            });
+        }}
+      >
+        {state === "running" ? "转换中…" : state === "done" ? "已成草案 ✓" : "转成议程"}
+      </button>
+      {detail === undefined ? null : <span className={styles.error}>{detail}</span>}
+    </>
+  );
+}
+
 export function Discussion({
   team,
   autoScroll = false,
@@ -123,6 +159,7 @@ export function Discussion({
 }): JSX.Element {
   const end = useRef<HTMLDivElement>(null);
   const quoted = useQuotes(team.teamId);
+  const secretaryNames = team.seats.filter((seat) => seat.isSecretary).map((seat) => seat.displayName);
   const count = team.transcript.length;
   useEffect(() => {
     if (autoScroll) end.current?.scrollIntoView({ block: "end" });
@@ -166,6 +203,14 @@ export function Discussion({
                 {picked ? "已引用 ✓" : "引用"}
               </button>
               <CopyButton text={line.text} />
+              {/* Only on the secretary's own lines. This is 1.x's move and the
+                  one that makes a secretary an organiser rather than a
+                  note-taker: ask it in the DISCUSSION how the work should be
+                  divided, argue with the answer in prose, and only then turn
+                  that prose into phases. Offering it on anyone's reply would
+                  let a member schedule the team while the confirmation said
+                  the secretary had. */}
+              {!secretaryNames.includes(line.speaker) ? null : <ToAgendaButton team={team} turnId={line.turnId} />}
             </div>
             <div
               className={`${styles.messageBody} ${host ? styles.bodyMine : styles.bodyTheirs}`}
