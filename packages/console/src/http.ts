@@ -268,7 +268,13 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       recorded: team.transcript().filter((entry) => entry.kind === "user/message" && entry.text !== "").length,
       usage: team.usage,
       ...transcriptTail(team.transcript()),
-      ...(team.draft === undefined ? {} : { draft: team.draft.agenda, draftedAt: team.draft.at }),
+      ...(team.draft === undefined
+        ? {}
+        : {
+            draft: team.draft.agenda,
+            draftedAt: team.draft.at,
+            ...(team.draft.fromTurnId === undefined ? {} : { draftFromTurnId: team.draft.fromTurnId }),
+          }),
       context: contextOf(ctx, teamId, team.checkpointCoefficient),
       // Sent rather than hardcoded in the panel: a profile may override these,
       // and a screen that states a threshold the runtime does not use is worse
@@ -435,7 +441,7 @@ export async function agendaFromReplyFor(
   if (problems.length > 0) {
     throw new Error(problems.map((problem) => `「${problem.phase}」：${problem.detail}`).join("\n"));
   }
-  team.setDraft(draft);
+  team.setDraft(draft, request.turnId);
   return draft;
 }
 

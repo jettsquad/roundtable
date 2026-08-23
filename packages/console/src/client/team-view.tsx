@@ -250,7 +250,7 @@ export function TeamView({
       <Materials team={team} onChanged={again} />
       <ContextPanel team={team} onChanged={again} />
       <Agenda team={team} onChanged={again} />
-      <Discussion team={team} autoScroll />
+      <Discussion team={team} autoScroll onChanged={again} />
       {/* No input box here. There is exactly one on the screen and it is the
           one at the bottom, in the place people already type — see
           `composer.tsx`. Two boxes with different destinations is what made

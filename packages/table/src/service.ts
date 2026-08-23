@@ -124,9 +124,16 @@ export interface Team {
    * lived in one browser tab — or in one process's memory — is a decision
    * that can disappear without anybody deciding it.
    */
-  readonly draft: { readonly agenda: AgendaSpec; readonly at: number } | undefined;
-  /** Put a draft up for confirmation, or clear the one standing. */
-  setDraft(draft: AgendaSpec | undefined): void;
+  readonly draft: { readonly agenda: AgendaSpec; readonly at: number; readonly fromTurnId?: string } | undefined;
+  /**
+   * Put a draft up for confirmation, or clear the one standing.
+   *
+   * `fromTurnId` is the secretary reply it was converted from. Carried so the
+   * draft can be shown where it came from — a plan that appears at the top of
+   * the page, far from the sentence that produced it, is a plan nobody reads
+   * next to the reasoning behind it.
+   */
+  setDraft(draft: AgendaSpec | undefined, fromTurnId?: string): void;
   /** Background material every seat reads, oldest first. */
   readonly materials: readonly Material[];
   /** Attach one document. Refused for the reasons `checkMaterial` names. */
@@ -313,7 +320,7 @@ export interface TeamAssembler {
 }
 
 export class TeamsService extends Service {
-  static readonly inject = ["agents", "subagents", "seatConnections", "storageDomain", "sessions"];
+  static readonly inject = ["agents", "subagents", "seatConnections", "storageDomain"];
 
   private readonly teams = new Map<string, TeamRecord>();
   private assembler: TeamAssembler | undefined;
@@ -346,6 +353,26 @@ export class TeamsService extends Service {
       await domain.close();
     });
 
+    // Restoring happens AFTER init returns, not inside it.
+    //
+    // `Service.init` is on the boot path, and boot asserts that every entry
+    // activated within a deadline. Each saved record costs an
+    // `agents.resume`, so a table with a handful of sittings took longer than
+    // that window — `teams` had not published yet, and the whole tree failed
+    // with 「@squad/context: pending (waiting for service: teams)」, naming
+    // everything except the cause. Nothing about restoring a team belongs on
+    // the critical path of the process starting.
+    //
+    // What this costs: for a moment after boot, a team exists on disk and not
+    // in `get()`. Every surface polls, so it appears; and a team that is
+    // slow to come back is visibly absent rather than invisibly blocking.
+    void this.restoreAll(domain).catch((error: unknown) => {
+      this.ctx.logger.warn(`恢复团队时出错：${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
+  /** Bring every saved team back, one at a time, off the boot path. */
+  private async restoreAll(domain: Domain<typeof SQUAD_TABLE_DOMAIN>): Promise<void> {
     // Bases first, then sittings. A sitting shares its base's roster BY
     // REFERENCE, so restoring one before its base has nothing to point at —
     // and the map's iteration order is insertion order on disk, which says
@@ -353,7 +380,16 @@ export class TeamsService extends Service {
     const saved = [...domain.table("teams").entries()].map(([, row]) => row);
     for (const row of restoreOrder(saved)) {
       try {
-        await this.restore(row);
+        // Bounded. `agents.resume` reads a session log, and one that never
+        // settles takes the whole boot with it: `Service.init` never returns,
+        // the service never publishes, and every plugin that injects `teams`
+        // sits pending behind an error that names none of this. It happened
+        // here — a table with five saved records simply stopped starting.
+        //
+        // A team that cannot be restored is reported and skipped, which is
+        // what the comment above always claimed; a hang is the one failure
+        // that claim did not actually cover.
+        await withTimeout(this.restore(row), RESTORE_TIMEOUT_MS, `恢复超时（${RESTORE_TIMEOUT_MS / 1000} 秒）`);
       } catch (error) {
         this.ctx.logger.warn(
           `团队「${row.displayName}」没能恢复：${error instanceof Error ? error.message : String(error)}`,
@@ -396,7 +432,14 @@ export class TeamsService extends Service {
       authModes: new Map(),
       seats: base?.seats ?? [...input.seats],
       speaking: new Map(),
-      draft: saved.draft === undefined ? undefined : { agenda: saved.draft, at: saved.draftedAt ?? Date.now() },
+      draft:
+        saved.draft === undefined
+          ? undefined
+          : {
+              agenda: saved.draft,
+              at: saved.draftedAt ?? Date.now(),
+              ...(saved.draftFromTurnId === undefined ? {} : { fromTurnId: saved.draftFromTurnId }),
+            },
       // The base's own array when this is a sitting: material is the team's,
       // and copying it would let one session's import be invisible in another.
       materials: base?.materials ?? [...(saved.materials ?? [])],
@@ -427,7 +470,13 @@ export class TeamsService extends Service {
         : { checkpointCoefficient: record.input.checkpointCoefficient }),
       seats: record.seats as unknown as TeamPersisted["seats"],
       usage: record.usage,
-      ...(record.draft === undefined ? {} : { draft: record.draft.agenda, draftedAt: record.draft.at }),
+      ...(record.draft === undefined
+        ? {}
+        : {
+            draft: record.draft.agenda,
+            draftedAt: record.draft.at,
+            ...(record.draft.fromTurnId === undefined ? {} : { draftFromTurnId: record.draft.fromTurnId }),
+          }),
       ...(record.materials.length === 0 ? {} : { materials: record.materials }),
       createdAt: existing?.createdAt ?? Date.now(),
     };
@@ -659,7 +708,23 @@ export class TeamsService extends Service {
    */
   private markSession(sessionId: string, teamName: string): void {
     try {
-      const session = this.ctx.sessions.get(sessionId as never);
+      // `ctx.reflect.get` rather than an `inject` entry, for the same reason
+      // the workspace registry uses it: injecting a service this plugin can
+      // work without means WAITING for it forever in a composition that does
+      // not provide it at this scope. Listing `sessions` in `inject` did
+      // exactly that — the table never started, and everything that injects
+      // `teams` sat pending behind it with no error naming the cause.
+      const sessions = this.ctx.reflect.get("sessions") as
+        | {
+            get(id: string):
+              | {
+                  events: readonly { type: string }[];
+                  append(type: string, data: unknown, options?: unknown): void;
+                }
+              | undefined;
+          }
+        | undefined;
+      const session = sessions?.get(sessionId);
       if (session === undefined) return;
       // Decided from the SESSION's own state, not from "we just made a
       // record". The first version marked only on creation, and dsh reuses an
@@ -784,8 +849,11 @@ export class TeamsService extends Service {
       get draft() {
         return record.draft;
       },
-      setDraft: (draft) => {
-        record.draft = draft === undefined ? undefined : { agenda: draft, at: Date.now() };
+      setDraft: (draft, fromTurnId) => {
+        record.draft =
+          draft === undefined
+            ? undefined
+            : { agenda: draft, at: Date.now(), ...(fromTurnId === undefined ? {} : { fromTurnId }) };
         this.persist(record);
       },
       get materials() {
@@ -1488,7 +1556,7 @@ interface TeamRecord {
   /** seatId → what it is answering right now. */
   readonly speaking: Map<string, string>;
   /** An agenda waiting on the host, and when it was drafted. */
-  draft: { readonly agenda: AgendaSpec; readonly at: number } | undefined;
+  draft: { readonly agenda: AgendaSpec; readonly at: number; readonly fromTurnId?: string } | undefined;
   /**
    * Background material every seat reads.
    *
@@ -1632,3 +1700,28 @@ const textOf = (blocks: readonly ContentBlock[]): string =>
     )
     .join("")
     .trim();
+
+/** How long one team may take to come back before it is skipped. */
+const RESTORE_TIMEOUT_MS = 20_000;
+
+/**
+ * Reject if a promise has not settled in time.
+ *
+ * The timer is unref'd so a pending restore cannot hold the process open, and
+ * the original promise is left to finish or not — there is nothing to cancel
+ * and nobody waiting on it any more.
+ */
+async function withTimeout<T>(work: Promise<T>, ms: number, detail: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(detail)), ms);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}

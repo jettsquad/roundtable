@@ -680,3 +680,19 @@
   background: rgb(68 204 136 / 8%);
   font-size: 12px;
 }
+
+/* The draft, inside the thread. Bordered so it reads as a decision sitting in
+   the conversation rather than as another thing somebody said. */
+.draftCard {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #4c8;
+  background: rgb(68 204 136 / 6%);
+}
+
+/* An unchecked phase stays readable — it is still part of what the secretary
+   proposed, and dimming it to nothing would hide what you are declining. */
+.phaseOff {
+  opacity: 0.45;
+}

@@ -22,6 +22,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, type TeamSummary } from "./api.ts";
+import { DraftCard } from "./draft-card.tsx";
 import { toggleQuote } from "./quotes.ts";
 import { useQuotes } from "./use-quotes.ts";
 import styles from "./panel.module.css";
@@ -152,10 +153,13 @@ function ToAgendaButton({ team, turnId }: { readonly team: TeamSummary; readonly
 export function Discussion({
   team,
   autoScroll = false,
+  onChanged,
 }: {
   readonly team: TeamSummary;
   /** Follow the newest message. On in the working view, off in the panel. */
   readonly autoScroll?: boolean;
+  /** Called after the host resolves a draft rendered inside the thread. */
+  readonly onChanged?: () => void;
 }): JSX.Element {
   const end = useRef<HTMLDivElement>(null);
   const quoted = useQuotes(team.teamId);
@@ -218,9 +222,19 @@ export function Discussion({
             >
               <MarkdownText text={line.text} />
             </div>
+            {/* The plan, directly under the sentence it was made from. */}
+            {team.draftFromTurnId === line.turnId ? (
+              <DraftCard team={team} onChanged={onChanged ?? (() => undefined)} />
+            ) : null}
           </article>
         );
       })}
+      {/* A draft with no source turn — one asked for directly rather than
+          converted from a reply — goes at the end, which is where the
+          conversation currently is. */}
+      {team.draft !== undefined && team.draftFromTurnId === undefined ? (
+        <DraftCard team={team} onChanged={onChanged ?? (() => undefined)} />
+      ) : null}
       {/* The composer floats over this view, so the thread needs room under
           its last message — otherwise the newest lines, the ones you just
           caused, sit behind the box you typed into. Measured against the

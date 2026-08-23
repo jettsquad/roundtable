@@ -130,6 +130,14 @@ export interface TeamSummary {
    * were written a moment ago.
    */
   readonly draftedAt?: number | undefined;
+  /**
+   * The secretary reply this draft was converted from.
+   *
+   * The panel shows the draft directly under that message. A plan rendered at
+   * the top of the page, far from the sentence that produced it, is a plan
+   * read without the reasoning behind it.
+   */
+  readonly draftFromTurnId?: string | undefined;
   /** Lines of recorded discussion. */
   readonly recorded: number;
   /** What this team's seats have consumed, when any backend reported it. */

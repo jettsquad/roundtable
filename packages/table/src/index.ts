@@ -2,7 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { TeamsService } from "./service.ts";
 
 export const name = "squad-table";
-export const inject = ["agents", "subagents", "seatConnections", "sessions"];
+export const inject = ["agents", "subagents", "seatConnections"];
 
 export function apply(ctx: Context): void {
   ctx.plugin(TeamsService);

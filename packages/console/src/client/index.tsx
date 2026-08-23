@@ -25,6 +25,7 @@ import { TeamButton, TeamPanel } from "./panel.tsx";
 import { SquadComposer } from "./composer.tsx";
 import { api } from "./api.ts";
 import { setTeamFolders, teamFolders, watchTeamFolders } from "./team-sessions.ts";
+import { preferTeamView } from "./land-on-team.ts";
 import { TeamView } from "./team-view.tsx";
 
 /**
@@ -68,10 +69,41 @@ export function apply(ctx: Context): void {
   const poll = setInterval(() => {
     void api
       .snapshot()
-      .then((snapshot) => setTeamFolders(snapshot.teams.map((team) => team.projectFolder)))
+      .then((snapshot) => {
+        const folders = snapshot.teams.map((team) => team.projectFolder);
+        setTeamFolders(folders);
+        // Seed the landing tab for every session in a team's workspace,
+        // including ones nobody has opened yet. dsh's chat store rehydrates
+        // its persisted value when the session is first rendered, so writing
+        // it before that is the only moment that decides where 新建会话
+        // lands — see `land-on-team.ts`.
+        const teamFolders = new Set(folders);
+        for (const workspace of ctx.workspaces.list.getSnapshot().items) {
+          if (!teamFolders.has(workspace.path)) continue;
+          for (const sessionId of workspace.sessionIds) preferTeamView(sessionId);
+        }
+      })
       .catch(() => undefined);
   }, 2000);
   ctx.effect(() => () => clearInterval(poll));
+
+  /**
+   * Seed the landing tab the moment the workspace list learns of a session.
+   *
+   * The poll alone is two seconds behind, and 新建会话 creates a session and
+   * opens it in one breath — the store rehydrates on first render, so two
+   * seconds late is too late for the one session that matters. This fires on
+   * the same update that puts the new session in the sidebar.
+   */
+  ctx.effect(() =>
+    ctx.workspaces.list.subscribe(() => {
+      const folders = teamFolders();
+      for (const workspace of ctx.workspaces.list.getSnapshot().items) {
+        if (!folders.has(workspace.path)) continue;
+        for (const sessionId of workspace.sessionIds) preferTeamView(sessionId);
+      }
+    }),
+  );
 
   /** The workspace folder one session sits in, or undefined. */
   const folderOfSession = (sessionId: string): string | undefined =>

@@ -115,6 +115,8 @@ const teamRecord = z.object({
     .optional(),
   draft: AgendaSpecSchema.optional(),
   draftedAt: z.number().optional(),
+  /** The secretary turn this draft was converted from, when it came from one. */
+  draftFromTurnId: z.string().optional(),
   createdAt: z.number(),
 });
 

@@ -23,7 +23,7 @@ import { api, useSnapshot } from "./api.ts";
 import { applyMention, mentionCandidates, mentionDraftAt, parseMentions } from "../mention.ts";
 import { describeSeat } from "../seat-status.ts";
 import { useSitting } from "./use-sitting.ts";
-import { AGENDA_DRAFT_ANCHOR } from "./agenda.tsx";
+import { DRAFT_ANCHOR } from "./draft-card.tsx";
 import { clearQuotes, toggleQuote } from "./quotes.ts";
 import { useQuotes } from "./use-quotes.ts";
 import styles from "./panel.module.css";
@@ -62,6 +62,13 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
   const quoted = useQuotes(current?.teamId ?? "");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [importing, setImporting] = useState<string | undefined>(undefined);
+  // With the other hooks, above every early return. It sat next to the send
+  // handler — which is below the 「这个 folder 没有团队」 branch — so the
+  // component rendered a different number of hooks depending on whether the
+  // team had loaded yet, and React tore the whole composer out. That is why
+  // the box vanished entirely rather than merely missing a button.
+  const filePicker = useRef<HTMLInputElement>(null);
   const [elapsed, setElapsed] = useState(0);
   // A wrapper, not the input itself: dsh's `Input` does not forward a ref, and
   // reaching for the element through the row we own is honest about that —
@@ -158,6 +165,22 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
   // The one line worth reading when something is wrong: the detail of the
   // seat that is closest to being given up on.
   const worry = statuses.find((entry) => entry.status.phase === "stalling")?.status.detail;
+
+  const importFiles = async (files: FileList): Promise<void> => {
+    setError(undefined);
+    // One at a time, reporting per file: someone who picked four documents
+    // and got one refusal needs to know which one.
+    for (const file of Array.from(files)) {
+      setImporting(file.name);
+      try {
+        await api.addMaterial(current.teamId, file.name, await file.arrayBuffer());
+      } catch (failure) {
+        setError(String((failure as Error).message));
+      }
+    }
+    setImporting(undefined);
+    onSent();
+  };
 
   const send = async (): Promise<void> => {
     setError(undefined);
@@ -280,6 +303,32 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
               ? "问所有人"
               : `问 ${named.map((seat) => seat.displayName).join("、")}`}
         </Button>
+        {/* Next to the send button, because importing a document is part of
+            saying what you want the team to work on. It sat at the top of the
+            tab, which is 「放到最上面怎么用」. */}
+        <button
+          type="button"
+          className={styles.button}
+          title="导入 PDF、Word、Markdown 或纯文本作为背景资料"
+          disabled={importing !== undefined}
+          onClick={() => filePicker.current?.click()}
+        >
+          {importing === undefined ? "＋资料" : `读取 ${importing}…`}
+        </button>
+        <input
+          ref={filePicker}
+          type="file"
+          multiple
+          accept=".pdf,.docx,.md,.markdown,.txt,.text,.csv,.json,.yaml,.yml"
+          style={{ display: "none" }}
+          onChange={(event) => {
+            const files = event.target.files;
+            if (files !== null && files.length > 0) void importFiles(files);
+            // Cleared so picking the SAME file again still fires a change:
+            // re-importing a document you have just edited is normal.
+            event.target.value = "";
+          }}
+        />
         {!current.busy ? null : (
           <Button
             type="button"
@@ -297,34 +346,18 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
         )}
       </div>
 
-      {/* A draft waiting on the host, said where the host is looking.
-          Pressing 「转成议程」 in the discussion put the answer a thousand
-          pixels up the page, and a decision you cannot find is a decision
-          nobody makes. The phases themselves stay in the one place they are
-          drawn — this points at them. */}
+      {/* The draft itself is drawn in the discussion, under the reply it came
+          from. This only says one exists and takes you there — drawing it
+          twice is the mistake this project already made with the transcript. */}
       {current.draft === undefined ? null : (
         <div className={styles.draftBanner}>
           <span>秘书的议程草案等你确认 · {current.draft.phases.length} 个阶段</span>
           <button
             type="button"
             className={styles.quoteChip}
-            onClick={() => document.getElementById(AGENDA_DRAFT_ANCHOR)?.scrollIntoView({ block: "center" })}
+            onClick={() => document.getElementById(DRAFT_ANCHOR)?.scrollIntoView({ block: "center" })}
           >
-            看草案
-          </button>
-          <button
-            type="button"
-            className={styles.quoteChip}
-            onClick={() => void api.resolveAgenda({ teamId: current.teamId, verdict: "confirm" }).then(onSent)}
-          >
-            确认并执行
-          </button>
-          <button
-            type="button"
-            className={styles.drop}
-            onClick={() => void api.resolveAgenda({ teamId: current.teamId, verdict: "discard" }).then(onSent)}
-          >
-            丢弃
+            去看
           </button>
         </div>
       )}
