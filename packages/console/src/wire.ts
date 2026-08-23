@@ -110,6 +110,14 @@ export interface TeamSummary {
    * other surface, and the host would confirm from memory.
    */
   readonly draft?: AgendaSpec | undefined;
+  /**
+   * When the draft was written, Unix epoch milliseconds.
+   *
+   * Travels with it so a draft that survived a restart can SAY it is old,
+   * rather than being thrown away on the host's behalf or presented as if it
+   * were written a moment ago.
+   */
+  readonly draftedAt?: number | undefined;
   /** Lines of recorded discussion. */
   readonly recorded: number;
   /** What this team's seats have consumed, when any backend reported it. */
@@ -144,6 +152,10 @@ export interface TeamSummary {
     readonly accumulated: number;
     /** What that is compared against. */
     readonly limit: number;
+    /** The secretary is writing a checkpoint right now. */
+    readonly folding: boolean;
+    /** Over the limit: the next round end will fold. */
+    readonly crossed: boolean;
     /** The live checkpoint's text, when one stands. */
     readonly checkpoint?: { readonly id: string; readonly text: string; readonly createdAt: number } | undefined;
     /** How many checkpoints have been written, revoked ones included. */

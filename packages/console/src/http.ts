@@ -183,6 +183,14 @@ function contextOf(ctx: Context, teamId: string, coefficient: number | undefined
   return {
     accumulated: progress.accumulated,
     limit: progress.limit,
+    // Asked, not derived. Deriving it from `holdReason` looked right and was
+    // wrong: that field has a precedence in which below-threshold wins, so a
+    // MANUAL fold started under the limit reported `below-threshold` for its
+    // whole run and the screen said 「自动总结已开启」 while the secretary was
+    // in fact writing.
+    folding: ctx.teamContext.isFolding(teamId),
+    /** Over the limit: the next round end will fold. */
+    crossed: progress.crossed || progress.holdReason === "team-busy",
     checkpointCount: ctx.teamContext.checkpointHistory(teamId).length,
     ...(live === undefined
       ? {}
@@ -259,7 +267,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       recorded: team.transcript().filter((entry) => entry.kind === "user/message" && entry.text !== "").length,
       usage: team.usage,
       ...transcriptTail(team.transcript()),
-      ...(draftOf(teamId) === undefined ? {} : { draft: draftOf(teamId) }),
+      ...(team.draft === undefined ? {} : { draft: team.draft.agenda, draftedAt: team.draft.at }),
       context: contextOf(ctx, teamId, team.checkpointCoefficient),
       // Sent rather than hardcoded in the panel: a profile may override these,
       // and a screen that states a threshold the runtime does not use is worse
@@ -300,19 +308,12 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   };
 }
 
-/**
- * Drafts waiting on a host, by team.
- *
- * Held on the SERVER and not in a browser tab. The confirmation is the
- * decision this whole product exists to keep with a person, and a draft that
- * lived in one tab would vanish on a reload and be invisible to every other
- * surface — the host would end up confirming from memory.
- *
- * In memory rather than in storage, deliberately: a draft is a proposal for
- * the next few minutes, and one that outlived a restart would be confirmed
- * against a discussion that had moved on.
- */
-const drafts = new Map<string, AgendaSpec>();
+// Drafts now live on the TEAM, which persists them. They used to be a Map
+// here, on the argument that a draft outliving a restart would be confirmed
+// against a discussion that had moved on — but a discussion does not move
+// while the process is down, so that risk could not arise the way the comment
+// claimed. What did happen is the cost: a decision waiting on a person
+// disappeared with no trace, which from outside is 「生成的议程草案我也看不到」.
 
 /**
  * Ask the secretary to turn the host's sentence into phases.
@@ -347,7 +348,7 @@ export async function draftAgendaFor(ctx: Context, request: DraftAgendaRequest):
   if (problems.length > 0) {
     throw new Error(problems.map((problem) => `「${problem.phase}」：${problem.detail}`).join("\n"));
   }
-  drafts.set(request.teamId, draft);
+  team.setDraft(draft);
   return draft;
 }
 
@@ -424,7 +425,7 @@ export async function agendaFromReplyFor(
   if (problems.length > 0) {
     throw new Error(problems.map((problem) => `「${problem.phase}」：${problem.detail}`).join("\n"));
   }
-  drafts.set(request.teamId, draft);
+  team.setDraft(draft);
   return draft;
 }
 
@@ -437,9 +438,9 @@ export async function agendaFromReplyFor(
  */
 export function resolveAgenda(ctx: Context, request: AgendaVerdictRequest): void {
   const team = teamOf(ctx, request.teamId);
-  const held = request.agenda ?? drafts.get(request.teamId);
+  const held = request.agenda ?? team.draft?.agenda;
   if (held === undefined) throw new Error("没有待确认的议程。");
-  drafts.delete(request.teamId);
+  team.setDraft(undefined);
   if (request.verdict === "discard") return;
 
   // An edited draft is re-checked. The panel lets a host retype an
@@ -458,7 +459,8 @@ export function resolveAgenda(ctx: Context, request: AgendaVerdictRequest): void
 }
 
 /** The draft this team is holding, if any. */
-export const draftOf = (teamId: string): AgendaSpec | undefined => drafts.get(teamId);
+export const draftOf = (ctx: Context, teamId: string): { agenda: AgendaSpec; at: number } | undefined =>
+  ctx.teams.get(teamId)?.draft;
 
 /**
  * Create a team from the panel.

@@ -23,6 +23,7 @@ import { api, useSnapshot } from "./api.ts";
 import { applyMention, mentionCandidates, mentionDraftAt, parseMentions } from "../mention.ts";
 import { describeSeat } from "../seat-status.ts";
 import { useSitting } from "./use-sitting.ts";
+import { AGENDA_DRAFT_ANCHOR } from "./agenda.tsx";
 import { clearQuotes, toggleQuote } from "./quotes.ts";
 import { useQuotes } from "./use-quotes.ts";
 import styles from "./panel.module.css";
@@ -295,6 +296,38 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           </Button>
         )}
       </div>
+
+      {/* A draft waiting on the host, said where the host is looking.
+          Pressing 「转成议程」 in the discussion put the answer a thousand
+          pixels up the page, and a decision you cannot find is a decision
+          nobody makes. The phases themselves stay in the one place they are
+          drawn — this points at them. */}
+      {current.draft === undefined ? null : (
+        <div className={styles.draftBanner}>
+          <span>秘书的议程草案等你确认 · {current.draft.phases.length} 个阶段</span>
+          <button
+            type="button"
+            className={styles.quoteChip}
+            onClick={() => document.getElementById(AGENDA_DRAFT_ANCHOR)?.scrollIntoView({ block: "center" })}
+          >
+            看草案
+          </button>
+          <button
+            type="button"
+            className={styles.quoteChip}
+            onClick={() => void api.resolveAgenda({ teamId: current.teamId, verdict: "confirm" }).then(onSent)}
+          >
+            确认并执行
+          </button>
+          <button
+            type="button"
+            className={styles.drop}
+            onClick={() => void api.resolveAgenda({ teamId: current.teamId, verdict: "discard" }).then(onSent)}
+          >
+            丢弃
+          </button>
+        </div>
+      )}
 
       {quoted.length === 0 ? null : (
         <div className={styles.row}>

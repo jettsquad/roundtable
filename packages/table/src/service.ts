@@ -115,6 +115,17 @@ export interface Team {
   /** Where a running agenda has got to, or nothing when none is running. */
   readonly progress: AgendaProgress | undefined;
   /**
+   * An agenda the secretary drafted, waiting on this host.
+   *
+   * On the TEAM rather than in the surface that made it: the confirmation is
+   * the decision this product exists to keep with a person, and a draft that
+   * lived in one browser tab — or in one process's memory — is a decision
+   * that can disappear without anybody deciding it.
+   */
+  readonly draft: { readonly agenda: AgendaSpec; readonly at: number } | undefined;
+  /** Put a draft up for confirmation, or clear the one standing. */
+  setDraft(draft: AgendaSpec | undefined): void;
+  /**
    * Add a seat. Refused while a round is running — see `addSeat`.
    *
    * `at` puts it back at a given position instead of the end. Seat order is
@@ -377,6 +388,7 @@ export class TeamsService extends Service {
       authModes: new Map(),
       seats: base?.seats ?? [...input.seats],
       speaking: new Map(),
+      draft: saved.draft === undefined ? undefined : { agenda: saved.draft, at: saved.draftedAt ?? Date.now() },
       disposed: false,
     });
   }
@@ -404,6 +416,7 @@ export class TeamsService extends Service {
         : { checkpointCoefficient: record.input.checkpointCoefficient }),
       seats: record.seats as unknown as TeamPersisted["seats"],
       usage: record.usage,
+      ...(record.draft === undefined ? {} : { draft: record.draft.agenda, draftedAt: record.draft.at }),
       createdAt: existing?.createdAt ?? Date.now(),
     };
     this.writes = this.writes.then(async () => {
@@ -489,6 +502,7 @@ export class TeamsService extends Service {
       authModes: new Map(),
       seats: [...input.seats],
       speaking: new Map(),
+      draft: undefined,
       disposed: false,
     };
     this.teams.set(teamId, record);
@@ -549,7 +563,13 @@ export class TeamsService extends Service {
   async sittingFor(input: { readonly projectFolder: string; readonly sessionId: string }): Promise<Team | undefined> {
     const records = [...this.teams.values()];
     const existing = recordForSession(records, input.sessionId);
-    if (existing !== undefined) return this.viewOf(existing);
+    if (existing !== undefined) {
+      // Marked here too. The session may be one dsh reused after discarding
+      // its events, and an unmarked session disappears on reload whether or
+      // not we have a record for it.
+      this.markSession(input.sessionId, existing.input.displayName);
+      return this.viewOf(existing);
+    }
 
     // The base is found by FOLDER, the same comparison the surfaces make.
     const base = baseForFolder(
@@ -565,6 +585,7 @@ export class TeamsService extends Service {
     if (owner !== undefined && unclaimed(owner)) {
       owner.sessionId = input.sessionId;
       this.persist(owner);
+      this.markSession(input.sessionId, owner.input.displayName);
       return this.viewOf(owner);
     }
 
@@ -594,6 +615,7 @@ export class TeamsService extends Service {
       authModes: new Map(),
       seats: base.seats,
       speaking: new Map(),
+      draft: undefined,
       disposed: false,
     };
     this.teams.set(sittingId, record);
@@ -625,10 +647,33 @@ export class TeamsService extends Service {
     try {
       const session = this.ctx.sessions.get(sessionId as never);
       if (session === undefined) return;
+      // Decided from the SESSION's own state, not from "we just made a
+      // record". The first version marked only on creation, and dsh reuses an
+      // unused session when you click 新建会话 — so the second time round the
+      // sitting already existed, no mark was written, and the session went on
+      // vanishing exactly as before. Asking whether this session already has
+      // a message is the question that actually matters, and it makes the
+      // call idempotent from every path.
+      // dsh's own rule, read from its source rather than guessed: a session
+      // with no `turn/start` is BLANK — hidden from the list and reusable by
+      // the next 新建会话. A `user/message` does not count, which is why the
+      // first version of this mark did not stop the session from vanishing.
+      const used = session.events.some((event) => event.type === "turn/start");
+      if (used) return;
       // Plain, with no 【speaker】 wrapper. The sidebar titles a session after
       // its first message, so this line IS the name of the session from now
       // on — 「【系统】这个会话在团队…」 read like a log entry where a name
       // belongs.
+      // A turn, opened and closed around one message. The turn boundary is
+      // what makes the session real to dsh; the message is what makes it
+      // legible to a person, and the sidebar titles the session from it.
+      //
+      // Claiming a turn ran is a claim, and it is a true one from where the
+      // person stands: this session is where their team works. What it is
+      // NOT is a dsh model loop, so nothing here pretends an assistant
+      // answered — the turn opens, one user line is recorded, and it closes
+      // as completed.
+      session.append("turn/start", { turn: 0 } as never);
       session.append(
         "user/message",
         {
@@ -639,6 +684,7 @@ export class TeamsService extends Service {
         } as never,
         { surfaceOp: "append" } as never,
       );
+      session.append("turn/end", { turn: 0, reason: { kind: "completed" } } as never);
     } catch (error) {
       this.ctx.logger?.warn?.(`没能给会话留下标记：${error instanceof Error ? error.message : String(error)}`);
     }
@@ -720,6 +766,13 @@ export class TeamsService extends Service {
       },
       get progress() {
         return record.running === undefined ? undefined : record.running.progress;
+      },
+      get draft() {
+        return record.draft;
+      },
+      setDraft: (draft) => {
+        record.draft = draft === undefined ? undefined : { agenda: draft, at: Date.now() };
+        this.persist(record);
       },
       addSeat: (seat, options) => this.addSeat(record, seat, options),
       removeSeat: (seatId, options) => this.removeSeat(record, seatId, options),
@@ -1400,6 +1453,8 @@ interface TeamRecord {
   readonly seats: SeatSpec[];
   /** seatId → what it is answering right now. */
   readonly speaking: Map<string, string>;
+  /** An agenda waiting on the host, and when it was drafted. */
+  draft: { readonly agenda: AgendaSpec; readonly at: number } | undefined;
   disposed: boolean;
 }
 

@@ -18,6 +18,7 @@
  * the host node and put the roster back around it.
  */
 import { defineDomain, domainTable } from "@deepseek-ai/dsh-storage-domain";
+import { AgendaSpecSchema } from "@squad/shared";
 import { z } from "zod";
 
 const capsRecord = z.object({
@@ -81,6 +82,22 @@ const teamRecord = z.object({
       costUsd: z.number().optional(),
     })
     .optional(),
+  /**
+   * An agenda the secretary drafted, waiting on the host.
+   *
+   * Kept on disk, which reverses an earlier decision. The argument for memory
+   * only was that a draft outliving a restart would be confirmed against a
+   * discussion that had moved on — but a discussion does not move while the
+   * process is down, so the risk it named cannot actually arise that way.
+   * What did happen is the real cost: a decision waiting on a person vanished
+   * without trace, and 「生成的议程草案我也看不到」 is what that looks like
+   * from outside.
+   *
+   * `draftedAt` travels with it so a stale draft can SAY it is old rather
+   * than being silently discarded on the host's behalf.
+   */
+  draft: AgendaSpecSchema.optional(),
+  draftedAt: z.number().optional(),
   createdAt: z.number(),
 });
 

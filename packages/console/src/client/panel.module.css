@@ -664,3 +664,19 @@
   border-color: #b44;
   color: #f88;
 }
+
+/* A decision waiting on the host, at the bottom of the screen where the host
+   is already looking. Coloured, because it is the one thing here that is
+   blocking. */
+.draftBanner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 7px 11px;
+  border-radius: 9px;
+  border: 1px solid #4c8;
+  background: rgb(68 204 136 / 8%);
+  font-size: 12px;
+}

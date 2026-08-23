@@ -150,6 +150,20 @@ export class TeamContextService extends Service {
     });
   }
 
+  /**
+   * Whether the secretary is writing a checkpoint for this team right now.
+   *
+   * Asked directly rather than read off `progress().holdReason`. That field
+   * has a precedence — below-threshold wins — so a MANUAL fold started under
+   * the limit reported `below-threshold` while it ran, and a screen deriving
+   * "is it folding" from it said no throughout. The set is the fact; the
+   * decision is a summary of several facts, and summarising is where they get
+   * lost.
+   */
+  isFolding(teamId: string): boolean {
+    return this.folding.has(teamId);
+  }
+
   /** The limit `progress` compares against, for a team's coefficient. */
   limitFor(coefficient?: number): number {
     return thresholdTokensFor(coefficient);

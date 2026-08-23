@@ -27,7 +27,7 @@ export function ContextPanel({
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const { error, run } = useAction(onChanged);
-  const { accumulated, limit, checkpoint, checkpointCount } = team.context;
+  const { accumulated, limit, checkpoint, checkpointCount, folding, crossed } = team.context;
   const pct = limit === 0 ? 0 : Math.min(100, Math.round((accumulated / limit) * 100));
 
   return (
@@ -43,22 +43,30 @@ export function ContextPanel({
           {accumulated.toLocaleString()} / {limit.toLocaleString()} token（{pct}%）
           {checkpointCount === 0 ? " · 还没折叠过" : ` · 已折叠 ${checkpointCount} 次`}
         </span>
+        {/* Whether the automatic one is armed, and whether it is happening.
+            A percentage alone cannot tell 「还没到」 from 「正在做」, and that
+            gap is the whole of 「不知道自动的是否在运行」. */}
+        <span className={folding ? styles.streaming : styles.muted}>
+          {folding ? "秘书正在总结…" : crossed ? "已超阈值 · 本轮结束后自动总结" : "自动总结已开启"}
+        </span>
+        {/* Out here rather than behind the toggle. It was one click deep, and
+            a control nobody finds is a control that does not exist. */}
+        <Button
+          type="button"
+          disabled={team.busy || folding}
+          onClick={() => void run(() => api.fold({ teamId: team.teamId }))}
+        >
+          现在总结
+        </Button>
       </div>
+      {error === undefined ? null : <div className={styles.error}>{error}</div>}
 
       {!open ? null : (
         <div>
           <div className={styles.hint}>
-            超过阈值时，秘书会把此前的讨论压成一份要点，之后席位读到的就是那份要点而不是原文。 也可以现在就折叠。
-          </div>
-          <div className={styles.row}>
-            <Button
-              type="button"
-              disabled={team.busy}
-              onClick={() => void run(() => api.fold({ teamId: team.teamId }))}
-            >
-              现在折叠
-            </Button>
-            {team.busy ? <span className={styles.hint}>这一轮还在跑，等它结束。</span> : null}
+            超过阈值时，秘书会在这一轮结束后把此前的讨论压成一份要点，之后席位读到的就是那份要点而不是原文。
+            不必等到超过阈值，随时可以按「现在总结」。
+            {team.busy ? "（这一轮还在跑，等它结束才能总结。）" : ""}
           </div>
 
           {checkpoint === undefined ? (

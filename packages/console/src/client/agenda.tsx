@@ -16,8 +16,28 @@ import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, useAction, type TeamSummary } from "./api.ts";
 import styles from "./panel.module.css";
 
+/**
+ * Where the draft is drawn.
+ *
+ * The composer needs to point at it: a draft made by pressing 「转成议程」
+ * down in the discussion appeared over a thousand pixels above, out of view,
+ * and from the host's side simply did not happen. One anchor, one rendering
+ * — the alternative is drawing the draft twice, which is the mistake this
+ * project already made with the transcript.
+ */
+export const AGENDA_DRAFT_ANCHOR = "squad-agenda-draft";
+
 /** One phase, as a person reads it. */
-function Phase({ phase, index }: { readonly phase: AgendaSpec["phases"][number]; readonly index: number }) {
+function Phase({
+  phase,
+  index,
+  nameOf,
+}: {
+  readonly phase: AgendaSpec["phases"][number];
+  readonly index: number;
+  /** seatId → the name that seat goes by. */
+  readonly nameOf: (seatId: string) => string;
+}) {
   return (
     <div className={styles.card}>
       <div className={styles.row}>
@@ -33,7 +53,9 @@ function Phase({ phase, index }: { readonly phase: AgendaSpec["phases"][number];
       {phase.purpose === undefined ? null : <div className={styles.muted}>{phase.purpose}</div>}
       {phase.tasks.map((task, taskIndex) => (
         <div key={`${task.seatId}-${taskIndex}`} className={styles.said}>
-          <div className={styles.saidWho}>{task.seatId}</div>
+          {/* The person's name, not the seat id. 「seat-2」 is ours; it means
+              nothing to whoever has to decide whether this agenda is right. */}
+          <div className={styles.saidWho}>{nameOf(task.seatId)}</div>
           <div className={styles.saidText}>{task.instruction}</div>
           {/* The path the PROGRAM will write, shown because it is a promise
               the run keeps rather than an instruction an agent might follow. */}
@@ -56,6 +78,7 @@ export function Agenda({
   const { error, setError, run } = useAction(onChanged);
 
   const secretary = team.seats.find((seat) => seat.isSecretary);
+  const nameOf = (seatId: string): string => team.seats.find((seat) => seat.seatId === seatId)?.displayName ?? seatId;
 
   // Running: progress, and the only control that matters is stopping it.
   if (team.progress !== undefined) {
@@ -84,11 +107,22 @@ export function Agenda({
   // Waiting on the host. This is the decision the product exists to keep.
   if (team.draft !== undefined) {
     return (
-      <div className={styles.section}>
-        <div className={styles.subhead}>秘书的议程草案 · 等你确认</div>
+      <div className={styles.section} id={AGENDA_DRAFT_ANCHOR}>
+        <div className={styles.subhead}>
+          秘书的议程草案 · 等你确认
+          {team.draftedAt === undefined ? "" : ` · ${new Date(team.draftedAt).toLocaleString()} 拟`}
+        </div>
+        {/* Said when it is old. A draft is a proposal about what to do next,
+            and one written before a dozen more turns of discussion may be
+            answering a question the team has since moved past. Shown rather
+            than discarded on the host's behalf — whether it is still right is
+            exactly the judgement this confirmation exists to keep. */}
+        {team.draftedAt === undefined || Date.now() - team.draftedAt < 30 * 60_000 ? null : (
+          <div className={styles.hint}>这份草案是较早拟的，讨论可能已经往前走了——确认前扫一眼是不是还对得上。</div>
+        )}
         {team.draft.hostGoal === undefined ? null : <div className={styles.muted}>{team.draft.hostGoal}</div>}
         {team.draft.phases.map((phase, index) => (
-          <Phase key={`${phase.title}-${index}`} phase={phase} index={index} />
+          <Phase key={`${phase.title}-${index}`} phase={phase} index={index} nameOf={nameOf} />
         ))}
         <div className={styles.row}>
           <button
