@@ -207,6 +207,18 @@ export function Discussion({
                 {line.speaker}
               </span>
               <span className={styles.clock}>{clockOf(line.at)}</span>
+            </div>
+            <div
+              className={`${styles.messageBody} ${host ? styles.bodyMine : styles.bodyTheirs}`}
+              style={tint === undefined || host ? undefined : { borderLeftColor: tint }}
+            >
+              <MarkdownText text={line.text} />
+            </div>
+            {/* Under the message, not above it. A seat's answer runs to
+                hundreds of lines; buttons at the top mean scrolling back to
+                the beginning to act on what you just finished reading. Where
+                you finish is where the controls are. */}
+            <div className={styles.messageActions}>
               {/* Pointing at a line is how you say "this is what I mean"
                   without retyping it. The quote travels as an ID and is
                   resolved from the record when the round starts — see
@@ -228,12 +240,6 @@ export function Discussion({
                   let a member schedule the team while the confirmation said
                   the secretary had. */}
               {!secretaryNames.includes(line.speaker) ? null : <ToAgendaButton team={team} turnId={line.turnId} />}
-            </div>
-            <div
-              className={`${styles.messageBody} ${host ? styles.bodyMine : styles.bodyTheirs}`}
-              style={tint === undefined || host ? undefined : { borderLeftColor: tint }}
-            >
-              <MarkdownText text={line.text} />
             </div>
             {/* The plan, directly under the sentence it was made from. */}
             {team.draftFromTurnId === line.turnId ? (

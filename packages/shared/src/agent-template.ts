@@ -162,3 +162,68 @@ export function checkAgentTemplate(template: AgentTemplate): readonly AgentTempl
  * explanation nobody asked for.
  */
 export const WEB_TOOLS: readonly string[] = ["WebFetch", "WebSearch"];
+
+/**
+ * How this seat reaches the web, told to it up front.
+ *
+ * Each backend has exactly one route and they are all different, so a seat
+ * left to discover its own burns rounds finding out — and sometimes never
+ * does: a model that has been refused twice starts answering from memory and
+ * says so afterwards, or not at all.
+ *
+ * Every line below was measured, on this machine, with a token the model
+ * could not have guessed (a random string served over the wire, and a
+ * `httpbin.org/base64/…` URL whose answer only a real fetch knows):
+ *
+ *   claude-code, web on   WebFetch returned the token. `bash`+`curl` came
+ *                         back 「This command requires approval」. WebFetch
+ *                         also upgrades `http://` to `https://` by itself —
+ *                         a plain-HTTP address fails in the SSL handshake
+ *                         before any response exists.
+ *   claude-code, web off  Both refused for want of permission, every time.
+ *   dsh                   `bash` + `curl` returned the token. No WebFetch at
+ *                         all (dsh-base sets `fetch: false`), and its
+ *                         `web_search` resolves DEEPSEEK_API_KEY, so a seat
+ *                         on another provider's key gets 「Authentication
+ *                         Fails」.
+ *   codex                 Nothing works. `curl` cannot reach the sandbox's
+ *                         proxy port and the web tool refuses the URL. Its
+ *                         one apparent success was example.com, whose text
+ *                         it knew by heart — the token test settled it.
+ *
+ * Injected at TURN TIME rather than written into the agent's own standing
+ * instructions. Both would tell the seat the same thing today; only this one
+ * is still true after the backend is switched or 「允许联网」 is turned off,
+ * and a standing instruction that has quietly gone wrong is worse than none.
+ */
+export function webAccessNote(backend: AgentBackend, webAccess: boolean): readonly string[] {
+  if (backend === "dsh") {
+    return [
+      "## 你怎么上网",
+      "你**只有一条**联网通路：`bash` + `curl`，例如 `curl -sSL --max-time 15 <url>`。",
+      "你没有 WebFetch；`web_search` 虽然在工具表里，但它认的是 DEEPSEEK_API_KEY，" +
+        "本席位用的不是那家的 key，调用只会返回「Authentication Fails」——不要浪费轮次去试。",
+    ];
+  }
+  if (backend === "codex") {
+    return [
+      "## 你不能上网",
+      "这个后端的沙箱没有出网通道：`curl` 连不上，web 工具会拒绝打开 URL。",
+      "需要网上的资料时，直接说你拿不到、并说明需要什么，让主持人来取。" +
+        "**不要凭记忆把网页内容写出来当作抓取结果**——那比说拿不到更糟。",
+    ];
+  }
+  if (!webAccess) {
+    return [
+      "## 你不能上网",
+      "WebFetch 和 WebSearch 都会因为未授权被拒，`bash` + `curl` 同样会被权限拦下。",
+      "需要网上的资料时，直接说你拿不到、并说明需要什么。" + "（主持人可以在 Agent 库里给你勾上「允许联网」。）",
+    ];
+  }
+  return [
+    "## 你怎么上网",
+    "用 **WebFetch** 按 URL 抓页面，用 **WebSearch** 搜索——这两个已经预先批准，不会再问你要权限。",
+    "注意 WebFetch 只走 HTTPS：它会把 `http://` 自动升级成 `https://`，所以明文 HTTP 地址会在 SSL 握手就失败。",
+    "不要用 `bash` + `curl`：那条路没有被批准，会直接被拦下。",
+  ];
+}

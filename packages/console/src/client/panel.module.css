@@ -529,6 +529,19 @@
   opacity: 0.75;
 }
 
+/* The controls for one message, under it. Right-aligned on the host's own
+   lines so they sit under the bubble they belong to rather than across the
+   gutter from it. */
+.messageActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.messageMine .messageActions {
+  justify-content: flex-end;
+}
+
 .quoteButton:hover {
   opacity: 1;
 }

@@ -1,4 +1,4 @@
-import { materialSection, type Material, type PermissionMode, type SeatCaps } from "@squad/shared";
+import { materialSection, webAccessNote, type Material, type PermissionMode, type SeatCaps } from "@squad/shared";
 /**
  * seat.ts — a seat's configuration, and how it becomes a subagent request.
  *
@@ -119,6 +119,12 @@ export interface SeatTurnInput {
 export function composeSeatPrompt(input: SeatTurnInput): string {
   const { seat, instruction, context } = input;
   const lines = [`你是「${seat.displayName}」，在一个小团队里工作。角色：${seat.role}。`, "", seat.systemPrompt.trim()];
+
+  // How this seat reaches the web, before it tries to find out. Each backend
+  // has exactly one route and they are all different; a seat left to discover
+  // its own burns rounds, and a twice-refused model starts answering from
+  // memory instead.
+  lines.push("", ...webAccessNote(seat.backend, seat.webAccess === true));
 
   // Who else is here. Without it a seat is alone in a room it is told is a
   // team — and the line 1.x had ("不得替其他成员发言") only means something

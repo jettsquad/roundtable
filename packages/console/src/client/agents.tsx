@@ -442,6 +442,21 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
             />
             可以当秘书
           </label>
+          {/* What this backend can actually do about the web, said where the
+              choice is made. Every seat gets this in its prompt automatically
+              — injected at turn time rather than written into the standing
+              instructions, so switching the backend cannot leave a sentence
+              behind that is quietly no longer true. */}
+          <div className={styles.hint}>
+            {draft.backend === "dsh"
+              ? "联网：只能用 bash + curl（这条会自动写进它的提示词）。它没有 WebFetch，web_search 认的是 DeepSeek 的 key。"
+              : draft.backend === "codex"
+                ? "联网：不行。沙箱没有出网通道，提示词里会告诉它拿不到就直说，别凭记忆编。"
+                : draft.webAccess
+                  ? "联网：用 WebFetch / WebSearch，仅 HTTPS（这条会自动写进它的提示词）。bash + curl 仍会被权限拦下。"
+                  : "联网：不行。勾上下面这项才行。"}
+          </div>
+
           {/* Only for Claude Code, and that is a fact about the backends
               rather than a gap. Measured on all three: `acceptEdits` there
               auto-approves file edits and nothing else, so WebFetch and even

@@ -160,3 +160,63 @@ describe("同桌的人", () => {
     expect(prompt.trimEnd().endsWith("组织一下这次调查")).toBe(true);
   });
 });
+
+describe("上网方式写进提示词", () => {
+  const base = { seatId: "s1", displayName: "甲", role: "工程师", systemPrompt: "认真作答。" };
+
+  it("dsh 席位被告知只能用 bash + curl", () => {
+    // 实测：dsh 拿到了本机随机口令，走的就是 curl；WebFetch 在 dsh-base 里
+    // 被关掉了，web_search 认的是别家的 key。
+    const prompt = composeSeatPrompt({
+      seat: { ...base, backend: "dsh" as const },
+      instruction: "查一下",
+      context: [],
+    });
+    expect(prompt).toContain("curl");
+    expect(prompt).toContain("Authentication Fails");
+    expect(prompt).not.toContain("用 **WebFetch**");
+  });
+
+  it("claude-code 开了联网，被告知用 WebFetch 且只走 HTTPS", () => {
+    // 实测：WebFetch 会把 http:// 自动升级成 https://，明文地址在握手就失败。
+    const prompt = composeSeatPrompt({
+      seat: { ...base, backend: "claude-code" as const, webAccess: true },
+      instruction: "查一下",
+      context: [],
+    });
+    expect(prompt).toContain("WebFetch");
+    expect(prompt).toContain("HTTPS");
+    expect(prompt).toContain("不要用 `bash` + `curl`");
+  });
+
+  it("claude-code 没开联网，被明确告知拿不到", () => {
+    // 不说的话它会试两次再放弃，然后开始凭记忆作答。
+    const prompt = composeSeatPrompt({
+      seat: { ...base, backend: "claude-code" as const },
+      instruction: "查一下",
+      context: [],
+    });
+    expect(prompt).toContain("你不能上网");
+    expect(prompt).toContain("允许联网");
+  });
+
+  it("codex 被告知没有出网通道，且不许凭记忆编", () => {
+    // 实测：codex 唯一一次「成功」是把 example.com 的正文背了出来。
+    const prompt = composeSeatPrompt({
+      seat: { ...base, backend: "codex" as const },
+      instruction: "查一下",
+      context: [],
+    });
+    expect(prompt).toContain("没有出网通道");
+    expect(prompt).toContain("不要凭记忆");
+  });
+
+  it("这一节不会把本轮指令挤到中间", () => {
+    const prompt = composeSeatPrompt({
+      seat: { ...base, backend: "dsh" as const },
+      instruction: "去查 A 网站",
+      context: [],
+    });
+    expect(prompt.trimEnd().endsWith("去查 A 网站")).toBe(true);
+  });
+});
