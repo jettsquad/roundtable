@@ -5,11 +5,16 @@
  * the message it came from. A plan read apart from the reasoning behind it is
  * a plan nobody can judge, which is what 「放到最上面怎么看」 means.
  *
- * Phases are chosen ONE BY ONE. All-or-nothing was the wrong shape and for a
- * specific reason: a secretary that got three phases right and one wrong
- * forced the host to throw away the three, retype the instruction, and hope.
- * What confirmation is FOR is deciding which parts are right — a single
- * yes/no is a rubber stamp with extra steps.
+ * And it is EDITABLE, which is what 1.x did and what a single yes/no cannot
+ * do: a secretary that got three phases right and one wrong forced the host
+ * to throw all four away, retype the instruction and hope. What confirmation
+ * is FOR is fixing the part that is wrong — the title, who does a task, what
+ * the task actually says, whether the phase repeats. A rubber stamp with two
+ * buttons is not that.
+ *
+ * The edited agenda is what gets sent, and the server re-checks it against
+ * the real roster before running a word of it — an edit that names a seat
+ * that does not exist is refused the same way a hallucinated one is.
  */
 import { useState } from "react";
 import type { AgendaSpec } from "@squad/shared";
@@ -19,43 +24,128 @@ import styles from "./panel.module.css";
 /** Where the draft is drawn, so the composer can point at it. */
 export const DRAFT_ANCHOR = "squad-agenda-draft";
 
-/** One phase, as a person reads it before saying yes to it. */
+/** One phase, edited in place. */
 function Phase({
   phase,
   index,
-  nameOf,
-  chosen,
-  toggle,
+  seats,
+  onChange,
+  onRemove,
 }: {
   readonly phase: AgendaSpec["phases"][number];
   readonly index: number;
-  readonly nameOf: (seatId: string) => string;
-  readonly chosen: boolean;
-  readonly toggle: () => void;
+  readonly seats: TeamSummary["seats"];
+  readonly onChange: (next: AgendaSpec["phases"][number]) => void;
+  readonly onRemove: () => void;
 }): JSX.Element {
+  const tasks = phase.tasks;
+  const setTask = (at: number, next: Partial<AgendaSpec["phases"][number]["tasks"][number]>): void =>
+    onChange({ ...phase, tasks: tasks.map((task, index) => (index === at ? { ...task, ...next } : task)) });
+
   return (
-    <div className={`${styles.card} ${chosen ? "" : styles.phaseOff}`}>
-      <label className={styles.row}>
-        <input type="checkbox" checked={chosen} onChange={toggle} />
-        <span className={styles.teamName}>
-          {index + 1}. {phase.title}
-        </span>
-        <span className={styles.muted}>
-          {phase.contextMode === "cumulative" ? "累积上下文" : "独立上下文"}
-          {phase.exit === undefined ? "" : ` · ${phase.exit}`}
-          {phase.maxRounds === undefined ? "" : ` · 最多 ${phase.maxRounds} 轮`}
-        </span>
-      </label>
-      {phase.purpose === undefined ? null : <div className={styles.muted}>{phase.purpose}</div>}
-      {phase.tasks.map((task, taskIndex) => (
-        <div key={`${task.seatId}-${taskIndex}`} className={styles.said}>
-          {/* The person's name, not the seat id. 「seat-2」 is ours; it means
-              nothing to whoever has to decide whether this is right. */}
-          <div className={styles.saidWho}>{nameOf(task.seatId)}</div>
-          <div className={styles.saidText}>{task.instruction}</div>
+    <div className={styles.card}>
+      <div className={styles.row}>
+        <span className={styles.muted}>阶段 {index + 1}</span>
+        <input
+          className={styles.grow ?? ""}
+          value={phase.title}
+          aria-label={`阶段 ${index + 1} 标题`}
+          onChange={(event) => onChange({ ...phase, title: event.target.value })}
+        />
+        <button type="button" className={styles.drop} title="删掉这个阶段" onClick={onRemove}>
+          删除阶段
+        </button>
+      </div>
+      <div className={styles.row}>
+        <label className={styles.muted}>
+          讨论方式{" "}
+          <select
+            value={phase.contextMode}
+            onChange={(event) =>
+              onChange({ ...phase, contextMode: event.target.value as AgendaSpec["phases"][number]["contextMode"] })
+            }
+          >
+            <option value="cumulative">累计讨论</option>
+            <option value="independent">独立讨论</option>
+          </select>
+        </label>
+        <label className={styles.muted}>
+          结束条件{" "}
+          <select
+            value={phase.exit ?? "after-tasks"}
+            onChange={(event) => {
+              const exit = event.target.value as NonNullable<AgendaSpec["phases"][number]["exit"]>;
+              // `maxRounds` only means something for the bounded exit, and the
+              // roster check refuses the two apart — so they move together
+              // rather than leaving a combination the host cannot confirm.
+              onChange({
+                ...phase,
+                exit,
+                ...(exit === "after-bounded-rounds" ? { maxRounds: phase.maxRounds ?? 2 } : { maxRounds: undefined }),
+              });
+            }}
+          >
+            <option value="after-tasks">跑完任务就结束</option>
+            <option value="after-bounded-rounds">循环固定轮次</option>
+            <option value="wait-for-host">停下来等我</option>
+          </select>
+        </label>
+        {phase.exit !== "after-bounded-rounds" ? null : (
+          <label className={styles.muted}>
+            轮次{" "}
+            <input
+              type="number"
+              min={1}
+              max={20}
+              className={styles.numberField ?? ""}
+              value={phase.maxRounds ?? 2}
+              onChange={(event) => onChange({ ...phase, maxRounds: Math.max(1, Number(event.target.value) || 1) })}
+            />
+          </label>
+        )}
+      </div>
+      {tasks.map((task, at) => (
+        <div key={`${task.seatId}-${at}`} className={styles.said}>
+          <div className={styles.row}>
+            <select value={task.seatId} onChange={(event) => setTask(at, { seatId: event.target.value })}>
+              {seats.map((seat) => (
+                <option key={seat.seatId} value={seat.seatId}>
+                  {seat.displayName}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className={styles.drop}
+              title="删掉这条任务"
+              onClick={() => onChange({ ...phase, tasks: tasks.filter((_, index) => index !== at) })}
+            >
+              删除
+            </button>
+          </div>
+          <textarea
+            className={styles.taskText ?? ""}
+            value={task.instruction}
+            aria-label={`阶段 ${index + 1} 任务 ${at + 1} 指令`}
+            onChange={(event) => setTask(at, { instruction: event.target.value })}
+          />
           {task.artifactPath === undefined ? null : <div className={styles.hint}>写入文件：{task.artifactPath}</div>}
         </div>
       ))}
+      <div className={styles.row}>
+        <button
+          type="button"
+          className={styles.quoteChip}
+          onClick={() =>
+            onChange({
+              ...phase,
+              tasks: [...tasks, { seatId: seats[0]?.seatId ?? "", instruction: "" }],
+            })
+          }
+        >
+          ＋加一条任务
+        </button>
+      </div>
     </div>
   );
 }
@@ -67,16 +157,18 @@ export function DraftCard({
   readonly team: TeamSummary;
   readonly onChanged: () => void;
 }): JSX.Element | null {
-  const draft = team.draft;
-  // Indices rather than titles: two phases may share a title, and the choice
-  // has to survive that.
-  const [dropped, setDropped] = useState<readonly number[]>([]);
+  // Seeded from the draft and edited locally. The server keeps holding the
+  // ORIGINAL until the host confirms, so closing the tab mid-edit loses the
+  // edits and not the draft.
+  const [edited, setEdited] = useState<AgendaSpec | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
-  if (draft === undefined) return null;
+  const draft = edited ?? team.draft;
+  if (team.draft === undefined || draft === undefined) return null;
 
-  const nameOf = (seatId: string): string => team.seats.find((seat) => seat.seatId === seatId)?.displayName ?? seatId;
-  const kept = draft.phases.filter((_, index) => !dropped.includes(index));
+  const change = (next: AgendaSpec): void => setEdited(next);
+  const setPhase = (at: number, next: AgendaSpec["phases"][number]): void =>
+    change({ ...draft, phases: draft.phases.map((phase, index) => (index === at ? next : phase)) });
 
   const resolve = (verdict: "confirm" | "discard"): void => {
     setBusy(true);
@@ -85,54 +177,51 @@ export function DraftCard({
       .resolveAgenda({
         teamId: team.teamId,
         verdict,
-        // Only the chosen phases travel. The server re-checks whatever it is
-        // given against the real roster, so an edited agenda is validated the
-        // same way the original was.
-        ...(verdict === "confirm" && kept.length !== draft.phases.length ? { agenda: { ...draft, phases: kept } } : {}),
+        // The edited agenda travels only when it differs, so an untouched
+        // draft is confirmed exactly as the secretary wrote it.
+        ...(verdict === "confirm" && edited !== undefined ? { agenda: edited } : {}),
       })
       .then(onChanged)
       .catch((failure: Error) => setError(String(failure.message)))
       .finally(() => setBusy(false));
   };
 
+  const empty = draft.phases.length === 0 || draft.phases.some((phase) => phase.tasks.length === 0);
+
   return (
     <div className={styles.draftCard} id={DRAFT_ANCHOR}>
       <div className={styles.row}>
-        <span className={styles.subhead}>秘书的议程草案 · 等你确认</span>
+        <span className={styles.subhead}>秘书的议程草案 · 可以改，改完再确认</span>
         <span className={styles.muted}>
           {team.draftedAt === undefined ? "" : new Date(team.draftedAt).toLocaleString()}
         </span>
+        {edited === undefined ? null : (
+          <button type="button" className={styles.quoteChip} onClick={() => setEdited(undefined)}>
+            还原成秘书写的
+          </button>
+        )}
       </div>
       {draft.hostGoal === undefined ? null : <div className={styles.muted}>{draft.hostGoal}</div>}
       {draft.phases.map((phase, index) => (
         <Phase
-          key={`${phase.title}-${index}`}
+          key={index}
           phase={phase}
           index={index}
-          nameOf={nameOf}
-          chosen={!dropped.includes(index)}
-          toggle={() =>
-            setDropped((current) =>
-              current.includes(index) ? current.filter((one) => one !== index) : [...current, index],
-            )
-          }
+          seats={team.seats}
+          onChange={(next) => setPhase(index, next)}
+          onRemove={() => change({ ...draft, phases: draft.phases.filter((_, at) => at !== index) })}
         />
       ))}
       <div className={styles.row}>
-        <button
-          type="button"
-          className={styles.button}
-          disabled={busy || kept.length === 0}
-          onClick={() => resolve("confirm")}
-        >
-          {kept.length === draft.phases.length ? "执行这份议程" : `只执行选中的 ${kept.length} 个阶段`}
+        <button type="button" className={styles.button} disabled={busy || empty} onClick={() => resolve("confirm")}>
+          {edited === undefined ? "执行这份议程" : "按我改过的执行"}
         </button>
         <button type="button" className={styles.drop} disabled={busy} onClick={() => resolve("discard")}>
           丢弃
         </button>
-        {/* Said plainly: nothing has run yet. A draft that looked like it might
-            already be executing would make the button a formality. */}
-        <span className={styles.hint}>{kept.length === 0 ? "一个阶段都没选，那就等于丢弃。" : "确认之后才会跑。"}</span>
+        <span className={styles.hint}>
+          {empty ? "有阶段一条任务都没有，先补上或者删掉这个阶段。" : "确认之后才会跑。"}
+        </span>
       </div>
       {error === undefined ? null : <div className={styles.error}>{error}</div>}
     </div>

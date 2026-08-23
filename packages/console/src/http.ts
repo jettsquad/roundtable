@@ -53,6 +53,7 @@ import type {
 } from "./wire.ts";
 import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { extractDocument, MAX_FILE_BYTES } from "./extract.ts";
+import { planSeatSync, type TemplateFacts } from "./seat-sync.ts";
 import { parseNewTeam } from "./parse.ts";
 import { tmpdir } from "node:os";
 import { assertPublicHostCommand, checkAgendaAgainstRoster, type AgendaSpec } from "@squad/shared";
@@ -658,6 +659,54 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
     ...(request.caps === undefined ? {} : { caps: request.caps }),
   });
+
+  // And into every team already sitting this agent. Without this the library
+  // and the teams disagree from the moment of the first edit, with every
+  // screen showing the library's version and every round running the team's.
+  syncTeamsWithTemplate(ctx, {
+    templateId: request.templateId,
+    displayName: request.displayName,
+    role: request.role,
+    systemPrompt: request.systemPrompt,
+    backend: request.backend,
+    connectionId,
+    permissionMode: request.permissionMode,
+    caps: request.caps,
+    color: request.color,
+  });
+}
+
+/**
+ * Push an edited agent into the teams using it.
+ *
+ * Refusals are collected and reported rather than thrown: the template WAS
+ * saved, and failing the whole request over one busy team would leave the
+ * person believing the edit did not happen at all. A team mid-round keeps its
+ * roster — changing who is in a round while it runs is not an edit, it is a
+ * different meeting — and the next save carries it.
+ */
+function syncTeamsWithTemplate(ctx: Context, template: TemplateFacts): void {
+  const refused: string[] = [];
+  for (const teamId of ctx.teams.list()) {
+    const team = ctx.teams.get(teamId);
+    if (team === undefined) continue;
+    const plan = planSeatSync(team.seats, template);
+    if (plan.length === 0) continue;
+    try {
+      for (const change of plan) {
+        // Removed and re-added AT ITS OLD INDEX. Seat order is speaking order
+        // in a round, so a rebuild that re-appended would silently change who
+        // speaks first — an edit to a model name reordering the meeting.
+        team.removeSeat(change.seat.seatId, { confirmSecretary: true });
+        team.addSeat(change.seat, { at: change.at });
+      }
+    } catch (error) {
+      refused.push(`${team.displayName}：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (refused.length > 0) {
+    ctx.logger.warn(`这些团队暂时没能同步 Agent 改动（下次保存会再试）：${refused.join("；")}`);
+  }
 }
 
 /**

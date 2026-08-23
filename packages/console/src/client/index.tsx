@@ -26,6 +26,7 @@ import { SquadComposer } from "./composer.tsx";
 import { api } from "./api.ts";
 import { setTeamFolders, teamFolders, watchTeamFolders } from "./team-sessions.ts";
 import { preferTeamView } from "./land-on-team.ts";
+import { claimSession } from "./use-sitting.ts";
 import { TeamView } from "./team-view.tsx";
 
 /**
@@ -80,7 +81,13 @@ export function apply(ctx: Context): void {
         const teamFolders = new Set(folders);
         for (const workspace of ctx.workspaces.list.getSnapshot().items) {
           if (!teamFolders.has(workspace.path)) continue;
-          for (const sessionId of workspace.sessionIds) preferTeamView(sessionId);
+          for (const sessionId of workspace.sessionIds) {
+            preferTeamView(sessionId);
+            // Claimed here, not when something renders. See `claimSession`:
+            // an unclaimed session stays blank, which means dsh hides it and
+            // hands it out again on the next 新建会话.
+            claimSession(workspace.path, sessionId);
+          }
         }
       })
       .catch(() => undefined);
@@ -100,7 +107,10 @@ export function apply(ctx: Context): void {
       const folders = teamFolders();
       for (const workspace of ctx.workspaces.list.getSnapshot().items) {
         if (!folders.has(workspace.path)) continue;
-        for (const sessionId of workspace.sessionIds) preferTeamView(sessionId);
+        for (const sessionId of workspace.sessionIds) {
+          preferTeamView(sessionId);
+          claimSession(workspace.path, sessionId);
+        }
       }
     }),
   );

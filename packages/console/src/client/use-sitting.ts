@@ -68,3 +68,23 @@ export function useSitting(projectFolder: string, sessionId: string | undefined)
 export function forgetSitting(sessionId: string): void {
   known.delete(sessionId);
 }
+
+/**
+ * Claim a session for its team without waiting for anything to be rendered.
+ *
+ * Resolving a sitting is also what makes the session REAL to dsh: the server
+ * writes a turn boundary into it, and a session without one is blank —
+ * hidden from the sidebar and reused by the next 新建会话. That is the whole
+ * of 「新建的 session 还是会从列表里消失，再点新建又把刚才那个恢复出来」:
+ * it was never claimed, so it stayed a blank waiting to be handed out again.
+ *
+ * Claiming used to happen when the team view or the composer mounted, which
+ * is a race with the user — open a session and click away fast enough and it
+ * is still blank. This runs off the workspace list instead, so a session is
+ * claimed because it EXISTS in a team's workspace, not because someone looked
+ * at it.
+ */
+export function claimSession(projectFolder: string, sessionId: string): void {
+  if (known.has(sessionId) || asking.has(sessionId)) return;
+  void resolve(projectFolder, sessionId);
+}

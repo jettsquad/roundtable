@@ -696,3 +696,28 @@
 .phaseOff {
   opacity: 0.45;
 }
+
+/* Task instructions are paragraphs, not labels: a one-line input hides the
+   half of the sentence you most need to check before saying yes. */
+.taskText {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 58px;
+  margin-top: 5px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  background: var(--dsh-color-input, #131317);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
+.numberField {
+  width: 62px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  background: var(--dsh-color-input, #131317);
+  color: inherit;
+}
