@@ -110,6 +110,8 @@ const teamRecord = z.object({
         name: z.string(),
         text: z.string(),
         addedAt: z.number(),
+        /** Carried into every round without being attached. Off by default. */
+        pinned: z.boolean().optional(),
       }),
     )
     .optional(),

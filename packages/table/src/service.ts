@@ -26,6 +26,8 @@ import { dirname, join } from "node:path";
 import type { Domain } from "@deepseek-ai/dsh-storage-domain";
 import { SQUAD_TABLE_DOMAIN, type TeamPersisted } from "./domain.ts";
 import {
+  attachmentNote,
+  materialsForRound,
   checkMaterial,
   type Material,
   EMPTY_TOTALS,
@@ -141,6 +143,14 @@ export interface Team {
   /** Detach one. The seats stop seeing it from the next round. */
   removeMaterial(materialId: string): void;
   /**
+   * Make one document travel with every round, or stop it doing so.
+   *
+   * For the charter a team should always have in front of it. Off by default,
+   * because the common case is a document imported so one seat can read it
+   * once.
+   */
+  setMaterialPinned(materialId: string, pinned: boolean): void;
+  /**
    * Add a seat. Refused while a round is running — see `addSeat`.
    *
    * `at` puts it back at a given position instead of the end. Seat order is
@@ -171,11 +181,19 @@ export interface Team {
    * assembler throws if it ever finds turn events in this log.
    */
   readonly host: Agent;
-  /** Ask the named seats (or all of them) and return what they said. */
+  /**
+   * Ask the named seats (or all of them) and return what they said.
+   *
+   * `materialIds` are the documents attached to THIS round. Pinned ones come
+   * along regardless; nothing else does. Carrying every imported document on
+   * every round is what made 「传一份文件让某个 agent 总结一次」 cost that
+   * file on every later turn of every seat.
+   */
   ask(
     instruction: string,
     seatIds?: readonly string[],
     quotes?: readonly { readonly speaker: string; readonly text: string }[],
+    materialIds?: readonly string[],
   ): Promise<readonly SeatReply[]>;
   /**
    * Run an agenda the host has already confirmed.
@@ -905,6 +923,15 @@ export class TeamsService extends Service {
         record.materials.push(material);
         this.persistFamily(record);
       },
+      setMaterialPinned: (materialId, pinned) => {
+        const at = record.materials.findIndex((material) => material.materialId === materialId);
+        if (at < 0) throw new Error("没有这份资料。");
+        const current = record.materials[at] as Material;
+        // In place: sittings share the array, and replacing it would give the
+        // team two lists that drift apart.
+        record.materials.splice(at, 1, { ...current, pinned });
+        this.persistFamily(record);
+      },
       removeMaterial: (materialId) => {
         const at = record.materials.findIndex((material) => material.materialId === materialId);
         if (at < 0) throw new Error("没有这份资料。");
@@ -915,7 +942,7 @@ export class TeamsService extends Service {
       removeSeat: (seatId, options) => this.removeSeat(record, seatId, options),
       rename: (displayName) => this.rename(record, displayName),
       checkpointCoefficient: record.input.checkpointCoefficient,
-      ask: (instruction, seatIds, quotes) => this.ask(record, instruction, seatIds, quotes),
+      ask: (instruction, seatIds, quotes, materialIds) => this.ask(record, instruction, seatIds, quotes, materialIds),
       transcript: () => transcriptOf(record.handle.agent),
       recordSpoken: (speaker, text, turnId) => recordSpoken(record.handle.agent, speaker, text, turnId),
       runAgenda: (agenda) => this.runAgenda(record, agenda),
@@ -939,6 +966,7 @@ export class TeamsService extends Service {
     instruction: string,
     seatIds?: readonly string[],
     quotes?: readonly { readonly speaker: string; readonly text: string }[],
+    materialIds?: readonly string[],
   ): Promise<readonly SeatReply[]> {
     if (record.disposed) throw new Error("团队已销毁。");
     // One round at a time. Two rounds on one table interleave their
@@ -970,7 +998,12 @@ export class TeamsService extends Service {
       windows.set(seat.seatId, await this.contextFor(record.teamId, seat.seatId));
     }
 
-    recordSpoken(host, record.input.hostDisplayName, instruction);
+    // Decided once for the whole round, so every seat in it sees the same
+    // documents — a round where the first seat read the spec and the second
+    // did not would produce two answers nobody can compare.
+    const materials = materialsForRound(record.materials, materialIds);
+    const note = attachmentNote(materials);
+    recordSpoken(host, record.input.hostDisplayName, note === undefined ? instruction : `${instruction}\n${note}`);
 
     const replies: SeatReply[] = [];
     // A plain round is cancellable too. It was not: `stop` only reached a
@@ -984,7 +1017,7 @@ export class TeamsService extends Service {
       for (const seat of seats) {
         if (abort.signal.aborted) break;
         const window = windows.get(seat.seatId) ?? { lines: [] };
-        replies.push(await this.runSeat(record, host, seat, instruction, window, abort.signal, quotes));
+        replies.push(await this.runSeat(record, host, seat, instruction, window, abort.signal, quotes, materials));
       }
     } finally {
       record.roundsInFlight -= 1;
@@ -1322,6 +1355,7 @@ export class TeamsService extends Service {
     window: WindowAttempt,
     signal?: AbortSignal,
     quotes?: readonly { readonly speaker: string; readonly text: string }[],
+    materials: readonly Material[] = [],
   ): Promise<SeatReply> {
     const provider = this.providerFor(seat);
     try {
@@ -1355,9 +1389,11 @@ export class TeamsService extends Service {
         seat,
         instruction,
         context: lines,
-        // Read at turn time, so a document removed mid-round stops being sent
-        // from the next seat onward rather than at the next restart.
-        ...(record.materials.length === 0 ? {} : { materials: record.materials }),
+        // Only what this round attached, plus anything pinned. Carrying every
+        // imported document on every turn is what made importing one file so a
+        // seat could summarise it once cost that file on every later turn of
+        // every seat.
+        ...(materials.length === 0 ? {} : { materials }),
         ...(quotes === undefined || quotes.length === 0 ? {} : { quotes }),
       });
       const request: SubagentStartRequest = {

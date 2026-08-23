@@ -289,6 +289,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
         // meeting; the panel needs the name and the size, not the contents.
         chars: material.text.length,
         addedAt: material.addedAt,
+        pinned: material.pinned === true,
       })),
       sessionId: team.sessionId,
       ...(team.baseTeamId === undefined ? {} : { baseTeamId: team.baseTeamId }),
@@ -1177,6 +1178,13 @@ export function registerSquadApi(ctx: Context): () => void {
           res.end(JSON.stringify({ ok: true, chars: extracted.text.length }));
           return;
         }
+        if (suffix === "/materials" && req.method === "PATCH") {
+          const body = await readJson<{ teamId: string; materialId: string; pinned: boolean }>(req);
+          teamOf(ctx, body.teamId).setMaterialPinned(body.materialId, body.pinned);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
         if (suffix === "/materials" && req.method === "DELETE") {
           const body = await readJson<{ teamId: string; materialId: string }>(req);
           teamOf(ctx, body.teamId).removeMaterial(body.materialId);
@@ -1223,6 +1231,7 @@ export function registerSquadApi(ctx: Context): () => void {
             instruction: string;
             seatIds?: readonly string[];
             quoteIds?: readonly string[];
+            materialIds?: readonly string[];
           }>(req);
           const team = teamOf(ctx, body.teamId);
           if (body.instruction.trim() === "") throw new Error("指令是空的。");
@@ -1231,7 +1240,7 @@ export function registerSquadApi(ctx: Context): () => void {
           // whatever the browser last saw rather than what the team actually
           // said — a difference nobody could spot afterwards.
           const quotes = quotesFrom(team.transcript(), body.quoteIds ?? []);
-          const replies = await team.ask(body.instruction.trim(), body.seatIds, quotes);
+          const replies = await team.ask(body.instruction.trim(), body.seatIds, quotes, body.materialIds);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ replies: replies.map((reply) => ({ ...reply })) }));
           return;

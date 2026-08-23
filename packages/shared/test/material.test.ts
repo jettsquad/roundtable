@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  attachmentNote,
+  materialsForRound,
   checkMaterial,
   materialChars,
   materialSection,
@@ -86,5 +88,51 @@ describe("占用统计", () => {
 
   it("没有资料就是零", () => {
     expect(materialChars([])).toBe(0);
+  });
+});
+
+describe("这一轮带哪些资料", () => {
+  const a = { ...doc("a.md", "甲"), materialId: "m-a" };
+  const b = { ...doc("b.md", "乙"), materialId: "m-b" };
+
+  it("默认一份都不带", () => {
+    // 常见情况是「传一份文件让某个 agent 总结一次」。之后每一轮每个席位
+    // 都替它付钱，是这条规则要挡掉的开销。
+    expect(materialsForRound([a, b])).toEqual([]);
+  });
+
+  it("只带这一轮附上的", () => {
+    expect(materialsForRound([a, b], ["m-b"]).map((m) => m.name)).toEqual(["b.md"]);
+  });
+
+  it("常驻的不用附也带", () => {
+    const pinned = { ...a, pinned: true };
+    expect(materialsForRound([pinned, b]).map((m) => m.name)).toEqual(["a.md"]);
+  });
+
+  it("常驻的不会因为又附了一次而重复", () => {
+    const pinned = { ...a, pinned: true };
+    expect(materialsForRound([pinned, b], ["m-a"]).map((m) => m.name)).toEqual(["a.md"]);
+  });
+
+  it("顺序按导入顺序，不按点选顺序", () => {
+    // 同一段提示词两次读起来要一样，否则缓存和比对都没意义。
+    expect(materialsForRound([a, b], ["m-b", "m-a"]).map((m) => m.name)).toEqual(["a.md", "b.md"]);
+  });
+
+  it("认不出的 id 直接忽略", () => {
+    expect(materialsForRound([a], ["没这份"])).toEqual([]);
+  });
+});
+
+describe("记录里怎么写附件", () => {
+  it("没带资料就不写这一句", () => {
+    expect(attachmentNote([])).toBeUndefined();
+  });
+
+  it("带了就写清楚是哪几份", () => {
+    // 一个依据文档作答的回复，如果记录里没说当时面前放的是哪一份，
+    // 事后就没法核对。
+    expect(attachmentNote([doc("规格.md", "x"), doc("纪要.docx", "y")])).toContain("规格.md、纪要.docx");
   });
 });

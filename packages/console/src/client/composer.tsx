@@ -69,6 +69,10 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
   // team had loaded yet, and React tore the whole composer out. That is why
   // the box vanished entirely rather than merely missing a button.
   const filePicker = useRef<HTMLInputElement>(null);
+  // Which documents ride along with THIS message. Empty by default: importing
+  // a file so one seat can summarise it must not cost that file on every
+  // later turn of every seat.
+  const [attached, setAttached] = useState<readonly string[]>([]);
   const [elapsed, setElapsed] = useState(0);
   // A wrapper, not the input itself: dsh's `Input` does not forward a ref, and
   // reaching for the element through the row we own is honest about that —
@@ -194,6 +198,7 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
       await api.say({
         teamId: current.teamId,
         ...(quoted.length === 0 ? {} : { quoteIds: quoted }),
+        ...(attached.length === 0 ? {} : { materialIds: attached }),
         // The roll-call is stripped: a seat that also found 「@架构」 inside
         // its own task would be reading an address as an instruction.
         instruction: sent,
@@ -203,6 +208,10 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
       // just asked, and leaving it selected would silently attach it to the
       // next one too.
       clearQuotes(current.teamId);
+      // Cleared for the same reason quotes are: an attachment is about the
+      // question you just asked, and leaving it on would silently bill it to
+      // the next one too.
+      setAttached([]);
       // The answers land in the discussion, which is the ONE place a
       // conversation is shown. Repeating them here is what put the same
       // sentences on the screen twice.
@@ -365,6 +374,43 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           </Button>
         )}
       </div>
+
+      {/* The documents this message carries, chosen before it is sent.
+          1.x inferred this from the wording — 「参考资料」 turned materials
+          on — and that misses both ways: 「按这份规格评审一下」 sends
+          nothing while looking like it should, and 「写一份 document 出来」
+          resends everything. What travels is visible here instead. */}
+      {current.materials.length === 0 ? null : (
+        <div className={styles.row}>
+          <span className={styles.hint}>本轮带上：</span>
+          {current.materials.map((material) => {
+            const on = material.pinned || attached.includes(material.materialId);
+            return (
+              <button
+                key={material.materialId}
+                type="button"
+                className={`${styles.quoteChip} ${on ? styles.quoted : ""}`}
+                title={
+                  material.pinned
+                    ? "常驻资料，每轮都带（在团队页可以取消常驻）"
+                    : `${material.chars.toLocaleString()} 字 · 只带这一轮`
+                }
+                disabled={material.pinned}
+                onClick={() =>
+                  setAttached((current) =>
+                    current.includes(material.materialId)
+                      ? current.filter((one) => one !== material.materialId)
+                      : [...current, material.materialId],
+                  )
+                }
+              >
+                {material.pinned ? "📌 " : on ? "✓ " : ""}
+                {material.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* The draft itself is drawn in the discussion, under the reply it came
           from. This only says one exists and takes you there — drawing it

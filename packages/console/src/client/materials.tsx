@@ -35,7 +35,7 @@ export function Materials({
         <span className={styles.muted}>
           {team.materials.length === 0 ? "还没有" : `${team.materials.length} 份 · 合计 ${sizeOf(total)}`}
         </span>
-        <span className={styles.hint}>用输入框旁边的「＋资料」导入</span>
+        <span className={styles.hint}>用输入框旁边的「＋资料」导入；默认不进上下文，发消息时勾选才带上</span>
       </div>
 
       {team.materials.map((material) => (
@@ -44,6 +44,24 @@ export function Materials({
           <span className={styles.muted}>
             {sizeOf(material.chars)} · {new Date(material.addedAt).toLocaleString()}
           </span>
+          {/* Pinning is the exception, not the default: it means every round
+              of every seat pays for this document. Named as what it costs. */}
+          <button
+            type="button"
+            className={material.pinned ? styles.quoteChip : styles.drop}
+            title={material.pinned ? "每轮都带着它" : "设为常驻：每轮都带着它"}
+            onClick={() =>
+              void run(() =>
+                api.pinMaterial({
+                  teamId: team.teamId,
+                  materialId: material.materialId,
+                  pinned: !material.pinned,
+                }),
+              )
+            }
+          >
+            {material.pinned ? "📌 常驻中" : "设为常驻"}
+          </button>
           <button
             type="button"
             className={styles.drop}

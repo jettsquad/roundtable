@@ -100,6 +100,8 @@ export interface TeamSummary {
     readonly name: string;
     readonly chars: number;
     readonly addedAt: number;
+    /** Carried into every round without being attached. */
+    readonly pinned: boolean;
   }[];
   readonly sessionId: string;
   /** The team this is a sitting of, absent when this IS the team. */

@@ -84,6 +84,8 @@ export const api = {
   },
   removeMaterial: (body: { teamId: string; materialId: string }): Promise<{ ok: true }> =>
     call("/materials", "DELETE", body),
+  pinMaterial: (body: { teamId: string; materialId: string; pinned: boolean }): Promise<{ ok: true }> =>
+    call("/materials", "PATCH", body),
   /** Ask the secretary to do one job. The answer is a draft, not a turn. */
   assist: (body: { teamId: string; instruction: string }): Promise<{ text: string }> =>
     call("/secretary/assist", "POST", body),
@@ -98,6 +100,7 @@ export const api = {
     instruction: string;
     seatIds?: readonly string[];
     quoteIds?: readonly string[];
+    materialIds?: readonly string[];
   }): Promise<{ replies: readonly SeatReply[] }> => call("/say", "POST", body),
   stop: (body: { teamId: string; reason?: string }): Promise<unknown> => call("/stop", "POST", body),
   draftAgenda: (body: { teamId: string; command: string }): Promise<unknown> => call("/agenda/draft", "POST", body),
