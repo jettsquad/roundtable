@@ -36,7 +36,7 @@ import { TeamView } from "./team-view.tsx";
  * `cannot get property "workspaces" without inject`, which the tab surfaced
  * as an empty pane.
  */
-export const inject = ["slots", "workspaces"];
+export const inject = ["slots", "workspaces", "sessions"];
 
 export function apply(ctx: Context): void {
   // `inject` waits for the slot to be declared before registering.
@@ -102,6 +102,25 @@ export function apply(ctx: Context): void {
    * seconds late is too late for the one session that matters. This fires on
    * the same update that puts the new session in the sidebar.
    */
+  /**
+   * The same seeding, driven by the SESSIONS list as well.
+   *
+   * Two subscriptions rather than one because they update on different
+   * frames, and the race that matters is narrow: dsh's chat store reads its
+   * persisted view when the session is first rendered, so a preference
+   * written after that first render only takes effect the next time the
+   * session is opened. Whichever list hears about the session first wins.
+   */
+  ctx.effect(() =>
+    ctx.sessions.list.subscribe(() => {
+      const folders = teamFolders();
+      for (const workspace of ctx.workspaces.list.getSnapshot().items) {
+        if (!folders.has(workspace.path)) continue;
+        for (const sessionId of workspace.sessionIds) preferTeamView(sessionId);
+      }
+    }),
+  );
+
   ctx.effect(() =>
     ctx.workspaces.list.subscribe(() => {
       const folders = teamFolders();

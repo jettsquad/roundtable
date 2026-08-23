@@ -721,3 +721,14 @@
   background: var(--dsh-color-input, #131317);
   color: inherit;
 }
+
+/* Present in the layout but invisible: a `display: none` file input cannot be
+   opened programmatically in some webviews, and a label needs its input to
+   exist to open it at all. */
+.hiddenFile {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}

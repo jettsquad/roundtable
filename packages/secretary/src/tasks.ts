@@ -107,6 +107,21 @@ async function settled(run: TextTaskRunner, label: string, prompt: string): Prom
  */
 export async function draftAgendaWith(run: TextTaskRunner, input: AgendaDraftInput): Promise<AgendaSpec> {
   assertPublicHostCommand(input.command);
+  return runDraft(run, input);
+}
+
+/**
+ * Build, run and parse, with no guard.
+ *
+ * The guard is about the HOST's own sentence — an `@` there points at
+ * material only the host can see, and the secretary is private-blind. It is
+ * not about text that came out of the record, and applying it there was a
+ * real bug: converting a secretary reply embedded that reply in the prompt,
+ * the reply naturally contained 「@水户洋平」, and every conversion was
+ * refused with 「主持人指令里的 @ 引用不会发给秘书」 — a message about a
+ * sentence the host never wrote.
+ */
+async function runDraft(run: TextTaskRunner, input: AgendaDraftInput): Promise<AgendaSpec> {
   const text = await settled(run, "秘书 · 议程草案", buildAgendaPrompt(input));
   return parseAgendaReply(text, input.seats);
 }
@@ -156,5 +171,9 @@ export async function agendaFromReplyWith(
     "=== 主持人的原始要求 ===",
     input.command,
   ].join("\n");
-  return draftAgendaWith(run, { ...input, command });
+  // The host's ORIGINAL sentence is checked; the reply is not. It is already
+  // public — it is in the record, every seat read it — and it is the secretary's
+  // own words being handed back to it.
+  assertPublicHostCommand(input.command);
+  return runDraft(run, { ...input, command });
 }

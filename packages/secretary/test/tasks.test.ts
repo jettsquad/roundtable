@@ -8,7 +8,7 @@
  * stored, and the refusal names what was missing.
  */
 import { describe, expect, it } from "vitest";
-import { writeCheckpointWith, writeTerminationWith, type TextTaskRunner } from "../src/tasks.ts";
+import { agendaFromReplyWith, writeCheckpointWith, writeTerminationWith, type TextTaskRunner } from "../src/tasks.ts";
 import { CHECKPOINT_HEADING_LIST } from "../src/checkpoint.ts";
 import { TERMINATION_SUMMARY_HEADINGS } from "../src/termination.ts";
 
@@ -77,5 +77,38 @@ describe("writeTerminationWith", () => {
     await expect(writeTerminationWith(answering(wholeTermination, "error"), terminationInput)).rejects.toThrow(
       /未完成/,
     );
+  });
+});
+
+describe("把秘书的回复转成议程", () => {
+  const seats = [{ seatId: "seat-1", displayName: "水户洋平" }];
+  const spec = JSON.stringify({
+    phases: [{ title: "干活", contextMode: "cumulative", tasks: [{ seatId: "seat-1", instruction: "写" }] }],
+  });
+
+  it("回复里带 @ 也能转", async () => {
+    // 秘书的回复里当然会出现「@水户洋平」——那是它在讨论里点名。
+    // 公开性检查针对的是主持人自己写的句子，拿它去卡记录里的原文，
+    // 会让每一次转换都被一条主持人根本没写过的句子挡下来。
+    const draft = await agendaFromReplyWith(async () => ({ text: spec, stopReason: "completed" }), {
+      command: "把上面这段安排转成结构化议程。",
+      topic: "队",
+      seats,
+      reply: "📣 @水户洋平 —— 主人口谕：请撰写一份自我介绍。",
+    });
+    expect(draft.phases).toHaveLength(1);
+  });
+
+  it("主持人自己的指令里带 @ 仍然被拒", async () => {
+    // 那一条才是这个检查存在的理由：@ 指向只有主持人看得到的材料，
+    // 而秘书是看不到私有材料的。
+    await expect(
+      agendaFromReplyWith(async () => ({ text: spec, stopReason: "completed" }), {
+        command: "照着 @我的私有笔记 排",
+        topic: "队",
+        seats,
+        reply: "随便",
+      }),
+    ).rejects.toThrow(/@/);
   });
 });

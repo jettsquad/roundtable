@@ -353,6 +353,39 @@ export class TeamsService extends Service {
       await domain.close();
     });
 
+    // Mark a team's sessions AT CREATION, which is the only moment that
+    // reaches the client's mirror.
+    //
+    // `session/created` fires during publication, before the summary that the
+    // sidebar mirrors is built — so the session is already non-blank when the
+    // client first hears of it. Marking any later is invisible: the row shows
+    // until you click away, disappears, comes back on reload, and is reused
+    // by the next 新建会话 as if it had never existed.
+    //
+    // Wrapped, because a throw here VETOES the session. Nothing about a
+    // sidebar label is worth refusing to create somebody's session over.
+    this.ctx.on(
+      "session/created" as never,
+      ((session: LiveSession) => {
+        try {
+          // Our own host nodes are sessions too, and they are not places a
+          // person works. They are named by us, which is how they are told
+          // apart from a session dsh opened for the user.
+          if (session.id.startsWith("team-") || session.id.startsWith("sit-")) return;
+          const cwd = session.header.cwd;
+          if (cwd === undefined) return;
+          const base = baseForFolder(
+            [...this.teams.values()].map((record) => ({ ...record, projectFolder: record.input.projectFolder })),
+            cwd,
+          );
+          if (base === undefined) return;
+          this.markLiveSession(session, base.input.displayName);
+        } catch (error) {
+          this.ctx.logger.warn(`标记会话失败：${error instanceof Error ? error.message : String(error)}`);
+        }
+      }) as never,
+    );
+
     // Restoring happens AFTER init returns, not inside it.
     //
     // `Service.init` is on the boot path, and boot asserts that every entry
@@ -707,25 +740,30 @@ export class TeamsService extends Service {
    * the dog.
    */
   private markSession(sessionId: string, teamName: string): void {
+    // `ctx.reflect.get` rather than an `inject` entry, for the same reason
+    // the workspace registry uses it: injecting a service this plugin can
+    // work without means WAITING for it forever in a composition that does
+    // not provide it at this scope. Listing `sessions` in `inject` did
+    // exactly that — the table never started, and everything that injects
+    // `teams` sat pending behind it with no error naming the cause.
+    const sessions = this.ctx.reflect.get("sessions") as { get(id: string): LiveSession | undefined } | undefined;
+    const session = sessions?.get(sessionId);
+    if (session !== undefined) this.markLiveSession(session, teamName);
+  }
+
+  /**
+   * Write the marker into a session that is already in hand.
+   *
+   * Separate from `markSession` because the ONE moment that matters is
+   * `session/created`, where the session object exists and the store does not
+   * hold it yet. Marking later worked on disk and did not work on screen: the
+   * client mirrors a session's `blank` bit from the summary it received when
+   * the session appeared, and an append made afterwards never updated that
+   * mirror — so the row vanished the moment you clicked another session, came
+   * back on reload, and got handed out again by the next 新建会话.
+   */
+  private markLiveSession(session: LiveSession, teamName: string): void {
     try {
-      // `ctx.reflect.get` rather than an `inject` entry, for the same reason
-      // the workspace registry uses it: injecting a service this plugin can
-      // work without means WAITING for it forever in a composition that does
-      // not provide it at this scope. Listing `sessions` in `inject` did
-      // exactly that — the table never started, and everything that injects
-      // `teams` sat pending behind it with no error naming the cause.
-      const sessions = this.ctx.reflect.get("sessions") as
-        | {
-            get(id: string):
-              | {
-                  events: readonly { type: string }[];
-                  append(type: string, data: unknown, options?: unknown): void;
-                }
-              | undefined;
-          }
-        | undefined;
-      const session = sessions?.get(sessionId);
-      if (session === undefined) return;
       // Decided from the SESSION's own state, not from "we just made a
       // record". The first version marked only on creation, and dsh reuses an
       // unused session when you click 新建会话 — so the second time round the
@@ -1566,6 +1604,14 @@ interface TeamRecord {
    */
   materials: Material[];
   disposed: boolean;
+}
+
+/** The little of a dsh session this plugin touches. */
+interface LiveSession {
+  readonly header: { readonly cwd?: string };
+  readonly id: string;
+  readonly events: readonly { readonly type: string }[];
+  append(type: string, data: unknown, options?: unknown): void;
 }
 
 /** The agenda currently executing, and the handle that stops it. */

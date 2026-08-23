@@ -306,29 +306,49 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
         {/* Next to the send button, because importing a document is part of
             saying what you want the team to work on. It sat at the top of the
             tab, which is 「放到最上面怎么用」. */}
+        {/* A real <label>, not a button that calls `.click()` on a hidden
+            input. Programmatic clicks on a `display: none` input are refused
+            outright by some embedded webviews, and the failure is silent —
+            the picker simply never opens, which is 「只有按钮，但是添加不了
+            文档」. A label opens it through the browser's own path, with no
+            script involved. */}
+        <label className={styles.button} title="导入 PDF、Word、Markdown 或纯文本作为背景资料">
+          {importing === undefined
+            ? `＋资料${current.materials.length === 0 ? "" : `（${current.materials.length}）`}`
+            : `读取 ${importing}…`}
+          <input
+            ref={filePicker}
+            type="file"
+            multiple
+            accept=".pdf,.docx,.md,.markdown,.txt,.text,.csv,.json,.yaml,.yml"
+            className={styles.hiddenFile ?? ""}
+            onChange={(event) => {
+              const files = event.target.files;
+              if (files !== null && files.length > 0) void importFiles(files);
+              // Cleared so picking the SAME file again still fires a change:
+              // re-importing a document you have just edited is normal.
+              event.target.value = "";
+            }}
+          />
+        </label>
+        {/* Summarising is a thing you decide while reading the conversation,
+            so it belongs where the conversation is. It lived at the top of
+            the tab, which is why it kept reading as 「没有实现」. */}
         <button
           type="button"
           className={styles.button}
-          title="导入 PDF、Word、Markdown 或纯文本作为背景资料"
-          disabled={importing !== undefined}
-          onClick={() => filePicker.current?.click()}
-        >
-          {importing === undefined ? "＋资料" : `读取 ${importing}…`}
-        </button>
-        <input
-          ref={filePicker}
-          type="file"
-          multiple
-          accept=".pdf,.docx,.md,.markdown,.txt,.text,.csv,.json,.yaml,.yml"
-          style={{ display: "none" }}
-          onChange={(event) => {
-            const files = event.target.files;
-            if (files !== null && files.length > 0) void importFiles(files);
-            // Cleared so picking the SAME file again still fires a change:
-            // re-importing a document you have just edited is normal.
-            event.target.value = "";
+          title={`已累计 ${current.context.accumulated.toLocaleString()} / ${current.context.limit.toLocaleString()} token`}
+          disabled={current.busy || current.context.folding}
+          onClick={() => {
+            setError(undefined);
+            void api
+              .fold({ teamId: current.teamId })
+              .then(onSent)
+              .catch((failure: Error) => setError(String(failure.message)));
           }}
-        />
+        >
+          {current.context.folding ? "秘书正在总结…" : "总结"}
+        </button>
         {!current.busy ? null : (
           <Button
             type="button"
