@@ -1390,6 +1390,10 @@ export class TeamsService extends Service {
         seat,
         instruction,
         context: lines,
+        // The live roster, read at turn time: a member added mid-discussion
+        // should be someone the next round can hand work to.
+        roster: record.seats,
+        hostDisplayName: record.input.hostDisplayName,
         // Only what this round attached, plus anything pinned. Carrying every
         // imported document on every turn is what made importing one file so a
         // seat could summarise it once cost that file on every later turn of

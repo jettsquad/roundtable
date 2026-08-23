@@ -66,6 +66,17 @@ export interface SeatSpec {
 /** What a seat is asked in one round, before it becomes prompt text. */
 export interface SeatTurnInput {
   /**
+   * Everyone at the table, this seat included.
+   *
+   * The prompt never carried this, and the cost was precise: a secretary
+   * asked 「组织一下这次任务，做好协调」 cannot hand work to people it cannot
+   * name, so it did the work itself. Coordination is not a personality trait
+   * you can ask a model for — it is knowing who is there.
+   */
+  readonly roster?: readonly SeatSpec[] | undefined;
+  /** What the host is called in the record, so a seat can address them. */
+  readonly hostDisplayName?: string | undefined;
+  /**
    * Background material the host imported, shown to every seat.
    *
    * Carried per turn rather than baked into the system prompt: material can
@@ -108,6 +119,47 @@ export interface SeatTurnInput {
 export function composeSeatPrompt(input: SeatTurnInput): string {
   const { seat, instruction, context } = input;
   const lines = [`你是「${seat.displayName}」，在一个小团队里工作。角色：${seat.role}。`, "", seat.systemPrompt.trim()];
+
+  // Who else is here. Without it a seat is alone in a room it is told is a
+  // team — and the line 1.x had ("不得替其他成员发言") only means something
+  // once the others have names.
+  const roster = input.roster ?? [];
+  if (roster.length > 1) {
+    lines.push(
+      "",
+      "## 同桌的人",
+      `主持人：${input.hostDisplayName ?? "主持人"}`,
+      ...roster.map(
+        (member) =>
+          `- ${member.displayName}（${member.role}）` +
+          (member.isSecretary === true ? " · 秘书" : "") +
+          (member.seatId === seat.seatId ? " ← 你自己" : ""),
+      ),
+      "",
+      // 1.x's line, restored. It went missing in 2.0 and the failure it names
+      // is exactly what came back: one seat answering for the others, in
+      // their voice, on tasks that were not its own.
+      "你只代表自己发言：不要替别人回答、不要模仿别人的口吻，也不要替别人认领任务。" +
+        "别人有没有做、做得怎么样，等他们自己说。",
+    );
+  }
+
+  // What organising MEANS here, said to the one seat whose job it is.
+  //
+  // Told 「组织一下、做好协调」, a secretary with no mechanism does the only
+  // thing it can: the work. The mechanism exists — write the plan in prose,
+  // the host turns that reply into an agenda with one click — and a seat
+  // cannot use a mechanism nobody told it about.
+  if (seat.isSecretary === true && roster.length > 1) {
+    lines.push(
+      "",
+      "## 你是这支团队的秘书",
+      "主持人要你「组织 / 安排 / 协调」的时候，你要交出的是一份**安排**，不是替别人把活干完：",
+      "写清楚分几个阶段、每个阶段谁做什么、先后顺序是什么，用同桌这些人的名字。",
+      "主持人可以把你这条回复一键转成议程再执行，所以写清楚就够了，不必自己动手。",
+      "只有主持人点名要你亲自做某件事时，你才自己做。",
+    );
+  }
   // Material first, discussion second, instruction last. It is the background
   // the discussion happened AGAINST — a seat that meets the argument before
   // the document is reading a debate about something it has not seen.

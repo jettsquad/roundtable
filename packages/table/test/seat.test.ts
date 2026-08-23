@@ -99,3 +99,64 @@ describe("主持人引用的几段", () => {
     expect(composeSeatPrompt({ seat, instruction: "说说", context: [], quotes: [] })).not.toContain("特别指出");
   });
 });
+
+describe("同桌的人", () => {
+  const secretary = {
+    seatId: "s2",
+    displayName: "赤木晴子",
+    role: "秘书",
+    systemPrompt: "服从命令。",
+    backend: "dsh" as const,
+    isSecretary: true,
+  };
+  const architect = {
+    seatId: "s1",
+    displayName: "水户洋平",
+    role: "架构师",
+    systemPrompt: "认真作答。",
+    backend: "claude-code" as const,
+  };
+  const roster = [architect, secretary];
+
+  it("一个人的时候不列名单", () => {
+    // 「同桌的人」只有自己，是一句废话，还占上下文。
+    const prompt = composeSeatPrompt({ seat: architect, instruction: "开始", context: [], roster: [architect] });
+    expect(prompt).not.toContain("同桌的人");
+  });
+
+  it("列出每个人的名字和角色，并标出自己", () => {
+    // 秘书没法把活派给叫不出名字的人——这就是它只好自己动手的原因。
+    const prompt = composeSeatPrompt({ seat: secretary, instruction: "组织一下", context: [], roster });
+    expect(prompt).toContain("水户洋平（架构师）");
+    expect(prompt).toContain("赤木晴子（秘书）");
+    expect(prompt).toMatch(/赤木晴子（秘书）[^\n]*你自己/);
+  });
+
+  it("明确禁止替别人发言", () => {
+    // 1.x 有这一条，2.0 漏了，漏掉之后出现的正是它拦的那件事：
+    // 一个席位用别人的口吻替别人把任务答了。
+    const prompt = composeSeatPrompt({ seat: secretary, instruction: "组织一下", context: [], roster });
+    expect(prompt).toContain("不要替别人回答");
+  });
+
+  it("只有秘书拿到「怎么组织」那一节", () => {
+    expect(composeSeatPrompt({ seat: architect, instruction: "干活", context: [], roster })).not.toContain(
+      "你是这支团队的秘书",
+    );
+    expect(composeSeatPrompt({ seat: secretary, instruction: "组织一下", context: [], roster })).toContain(
+      "你是这支团队的秘书",
+    );
+  });
+
+  it("告诉秘书产出是安排，不是替别人干活", () => {
+    const prompt = composeSeatPrompt({ seat: secretary, instruction: "组织一下", context: [], roster });
+    expect(prompt).toContain("不是替别人把活干完");
+    expect(prompt).toContain("转成议程");
+  });
+
+  it("本轮指令仍然排在最后", () => {
+    // 名单和秘书须知都不能把指令挤到中间去。
+    const prompt = composeSeatPrompt({ seat: secretary, instruction: "组织一下这次调查", context: [], roster });
+    expect(prompt.trimEnd().endsWith("组织一下这次调查")).toBe(true);
+  });
+});
