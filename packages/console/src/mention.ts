@@ -9,6 +9,19 @@
  *
  * Decided against the ACTUAL roster, never by shape. `@` is an ordinary
  * character in prose, and 「联系我 @公司邮箱」 is not a roll-call.
+ *
+ * Mentions count ANYWHERE in the sentence, which is 1.x's rule
+ * (`text.includes("@" + displayName)`) and had been narrowed here to the
+ * leading run only. The narrowing was defended as disambiguation — 「问一下
+ * @架构 和运维」 might mention a seat as a topic — but the cost was silent and
+ * far worse than the case it guarded: 「请 @水户洋平 复核」 looks addressed to
+ * one person and was quietly broadcast to everyone, with nothing on screen
+ * saying so. A rule people cannot see is a rule that is wrong.
+ *
+ * What stays narrow is the STRIPPING. Only a leading roll-call is removed
+ * from the instruction, because that is the part that is pure addressing; an
+ * `@name` inside a sentence is part of the sentence and cutting it out would
+ * hand the seat a mangled question.
  */
 
 export interface Mentions {
@@ -21,12 +34,34 @@ export interface Mentions {
 }
 
 /**
+ * Every `@name` in the text that is a boundary-terminated seat name.
+ *
+ * Longest first at each `@`, so 「@架构组」 is not read as 「@架构」 plus a
+ * stray 组 — the same rule the leading pass uses, applied to the whole string.
+ */
+function mentionsAnywhere(raw: string, seatNames: readonly string[]): readonly string[] {
+  const found: string[] = [];
+  for (let index = raw.indexOf("@"); index >= 0; index = raw.indexOf("@", index + 1)) {
+    const tail = raw.slice(index + 1);
+    const match = seatNames
+      .filter((name) => {
+        if (!tail.startsWith(name)) return false;
+        const after = tail.charAt(name.length);
+        return after === "" || /[\s,，、:：。！？!?;；]/.test(after);
+      })
+      .sort((a, b) => b.length - a.length)[0];
+    if (match !== undefined && !found.includes(match)) found.push(match);
+  }
+  return found;
+}
+
+/**
  * Read `@name` tokens off an instruction.
  *
- * Only leading mentions count. An `@` in the middle of a sentence is part of
- * the sentence: 「问一下 @架构 和运维」 addresses one seat and mentions another
- * as a topic, and a parser that hunted the whole string could not tell those
- * apart.
+ * Two passes with different jobs. The leading one decides what to REMOVE — a
+ * roll-call in front of the question is addressing, not content. The whole-text
+ * one decides who is ASKED, because that is what a person means by writing a
+ * name, wherever they wrote it.
  */
 export function parseMentions(raw: string, seatNames: readonly string[]): Mentions {
   const named: string[] = [];
@@ -67,6 +102,15 @@ export function parseMentions(raw: string, seatNames: readonly string[]): Mentio
     rest = rest.slice(token[0].length).trimStart();
     eatSeparators();
   }
+  // Names further into the sentence are asked too, and appended rather than
+  // merged in place so the roll-call's order — the order the person wrote the
+  // list in — still leads.
+  for (const name of mentionsAnywhere(rest, seatNames)) {
+    if (!named.includes(name)) named.push(name);
+  }
+  // An unknown `@` only counts when it was in the roll-call. Mid-sentence,
+  // 「联系我 @公司邮箱」 is prose, and refusing to send it would make the box
+  // reject ordinary writing.
   return { instruction: rest, named, unknown };
 }
 
@@ -81,22 +125,22 @@ export interface MentionDraft {
 /**
  * The `@` being typed at the caret, if any — what a name list should offer for.
  *
- * Bounded by the same rule `parseMentions` enforces: only the leading
- * roll-call counts, so the list appears exactly where a pick would actually
- * do something. Offering names for an `@` in the middle of a sentence would
- * be a menu whose choices are then read as prose.
+ * The roster is not consulted here, and the parameter that once carried it is
+ * gone: every `@name` in the sentence is now a mention, so there is nowhere a
+ * pick would fail to mean something. Which NAMES to offer is
+ * `mentionCandidates`, and that is where the roster belongs.
  */
-export function mentionDraftAt(raw: string, caret: number, seatNames: readonly string[]): MentionDraft | undefined {
+export function mentionDraftAt(raw: string, caret: number): MentionDraft | undefined {
   const head = raw.slice(0, caret);
   const at = head.lastIndexOf("@");
   if (at < 0) return undefined;
   const typed = head.slice(at + 1);
   // A space ends a mention: past it the person is writing the instruction.
-  if (/[\s]/.test(typed)) return undefined;
-  // Everything before this `@` must itself be a completed roll-call, or the
-  // `@` is inside the sentence rather than in front of it.
-  const before = raw.slice(0, at);
-  if (before.trim() !== "" && parseMentions(before, seatNames).instruction.trim() !== "") return undefined;
+  if (/\s/.test(typed)) return undefined;
+  // No check on what comes BEFORE the `@`. There used to be one, refusing to
+  // offer names mid-sentence — which was correct while only a leading
+  // roll-call was honoured and is wrong now that any `@name` is asked. The
+  // list appears wherever a pick would do something, which is everywhere.
   return { at, typed };
 }
 

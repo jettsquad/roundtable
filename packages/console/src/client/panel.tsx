@@ -133,10 +133,15 @@ export function TeamPanel(): JSX.Element | null {
 
   if (!open) return null;
 
+  // Teams, not sittings. A sitting is one piece of work in a team's folder —
+  // listing them here would turn 「团队」 into a list of every session anyone
+  // ever opened, and the count next to it into a number of windows.
+  const teams = snapshot.state === "ready" ? snapshot.data.teams.filter((team) => team.baseTeamId === undefined) : [];
+
   const counts =
     snapshot.state === "ready"
       ? {
-          teams: snapshot.data.teams.length,
+          teams: teams.length,
           agents: snapshot.data.agents.length,
           connections: snapshot.data.connections.length,
           criteria: snapshot.data.criteria.live.length + snapshot.data.criteria.proposals.length,
@@ -183,12 +188,10 @@ export function TeamPanel(): JSX.Element | null {
         {snapshot.state === "error" ? <div className={styles.error}>{snapshot.detail}</div> : null}
         {snapshot.state !== "ready" ? null : page === "teams" ? (
           <div>
-            {snapshot.data.teams.length === 0 ? (
+            {teams.length === 0 ? (
               <div className={styles.hint}>还没有团队。用下面的表单建一支，或者在会话里敲 /squad-new。</div>
             ) : (
-              snapshot.data.teams.map((team) => (
-                <TeamCard key={team.teamId} team={team} data={snapshot.data} onChanged={again} />
-              ))
+              teams.map((team) => <TeamCard key={team.teamId} team={team} data={snapshot.data} onChanged={again} />)
             )}
             <CreateForm agents={snapshot.data.agents} picker={snapshot.data.picker} onCreated={again} />
           </div>

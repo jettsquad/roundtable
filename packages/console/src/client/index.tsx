@@ -102,10 +102,16 @@ export function apply(ctx: Context): void {
           const sessionId = owner.session?.sessionId;
           if (sessionId === undefined) return null;
           const folder = folderOfSession(sessionId);
-          return folder !== undefined && teamFolders().has(folder) ? { folder } : null;
+          // The SESSION travels with the folder. A team's workspace holds
+          // many sessions and each is its own sitting; without this the box
+          // would elect correctly and then write into whichever record the
+          // folder happened to point at.
+          return folder !== undefined && teamFolders().has(folder) ? { folder, sessionId } : null;
         },
       },
-      ({ matched }: { matched: { folder: string } }) => <SquadComposer folder={matched.folder} />,
+      ({ matched }: { matched: { folder: string; sessionId: string } }) => (
+        <SquadComposer folder={matched.folder} sessionId={matched.sessionId} />
+      ),
     );
   ctx.slots.inject("conversation.composer", () => {
     let dispose = registerComposer();
@@ -133,6 +139,9 @@ export function apply(ctx: Context): void {
         inject: (sessionId: string) => ({
           folderOf: (): string | undefined =>
             ctx.workspaces.list.getSnapshot().items.find((workspace) => workspace.sessionIds.includes(sessionId))?.path,
+          // Which session, not only which folder: the tab shows one sitting's
+          // discussion, and a folder alone cannot say which.
+          sessionId,
         }),
       },
       TeamView,

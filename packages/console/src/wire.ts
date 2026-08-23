@@ -80,6 +80,18 @@ export interface TeamSummary {
    * a person guessing at a number that lives in a constant.
    */
   readonly silence: { readonly idleMs: number; readonly firstOutputMs: number };
+  /**
+   * The dsh session this record answers in.
+   *
+   * A team's folder is a workspace, and a workspace holds many sessions. The
+   * panel lists TEAMS (`baseTeamId === undefined`); a session's own view and
+   * composer pick the record whose `sessionId` is theirs, which is what makes
+   * a new session a new piece of work rather than a second window onto the
+   * old one.
+   */
+  readonly sessionId: string;
+  /** The team this is a sitting of, absent when this IS the team. */
+  readonly baseTeamId?: string | undefined;
   /** Where a running agenda has got to, when one is running. */
   readonly progress?:
     | {

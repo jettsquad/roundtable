@@ -22,6 +22,7 @@ import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, useSnapshot } from "./api.ts";
 import { applyMention, mentionCandidates, mentionDraftAt, parseMentions } from "../mention.ts";
 import { describeSeat } from "../seat-status.ts";
+import { useSitting } from "./use-sitting.ts";
 import { clearQuotes, toggleQuote } from "./quotes.ts";
 import { useQuotes } from "./use-quotes.ts";
 import styles from "./panel.module.css";
@@ -35,13 +36,25 @@ interface SquadComposerProps {
    * rather than being frozen at election time.
    */
   readonly folder: string;
+  /**
+   * The dsh session this box belongs to.
+   *
+   * Selecting by folder alone is what sent a new session's messages into the
+   * old session: every session in a workspace matched the same record. The
+   * folder says WHICH TEAM; this says which of its sittings.
+   */
+  readonly sessionId: string;
 }
 
-export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
+export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.Element {
   const [nonce, setNonce] = useState(0);
   const snapshot = useSnapshot(nonce);
   const onSent = (): void => setNonce((value) => value + 1);
-  const current = snapshot.state === "ready" ? snapshot.data.teams.find((t) => t.projectFolder === folder) : undefined;
+  const sittingId = useSitting(folder, sessionId);
+  const current =
+    snapshot.state === "ready" && sittingId !== undefined
+      ? snapshot.data.teams.find((team) => team.teamId === sittingId)
+      : undefined;
   const [instruction, setInstruction] = useState("");
   // Keyed by team, not by folder: the store is per team and this component is
   // mounted per session.
@@ -82,7 +95,7 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
     return (
       <div className={styles.composerBox}>
         <span className={styles.muted}>
-          {snapshot.state === "loading" ? "读取团队中……" : `${folder} 的团队已经不在了。`}
+          {snapshot.state === "loading" || sittingId === undefined ? "读取团队中……" : `${folder} 的团队已经不在了。`}
         </span>
       </div>
     );
@@ -101,7 +114,7 @@ export function SquadComposer({ folder }: SquadComposerProps): JSX.Element {
   // The `@` being typed right now, and the names worth offering for it. Both
   // decided against the real roster — a list built from shape alone would
   // offer names for 「联系我 @公司邮箱」.
-  const draft = running ? undefined : mentionDraftAt(instruction, caret, seatNames);
+  const draft = running ? undefined : mentionDraftAt(instruction, caret);
   const candidates = draft === undefined ? [] : mentionCandidates(draft, seatNames);
   const pick = (name: string): void => {
     if (draft === undefined) return;

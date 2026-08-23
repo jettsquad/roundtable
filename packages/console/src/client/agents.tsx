@@ -37,7 +37,29 @@ const BACKENDS: readonly { readonly id: AgentBackend; readonly label: string }[]
   { id: "dsh", label: "DeepSeek Harness" },
 ];
 
-const COLORS = ["#2e7d6b", "#3b6ea5", "#8a5cb8", "#b8783c", "#a8455a", "#4a7c3f"];
+/**
+ * The colours a seat can wear.
+ *
+ * Ten, because six ran out — a team of seven had two members sharing a
+ * colour, which is worse than no colour at all: the pill is what tells you
+ * who spoke, and two identical pills say the wrong thing rather than nothing.
+ *
+ * Chosen to stay apart at pill size on a dark ground: no two neighbours in
+ * hue, and the two blues and two greens are separated by lightness as well as
+ * hue so they do not read the same in a thumbnail.
+ */
+const COLORS = [
+  "#2e7d6b", // teal
+  "#3b6ea5", // steel blue
+  "#8a5cb8", // violet
+  "#b8783c", // amber
+  "#a8455a", // crimson
+  "#4a7c3f", // moss
+  "#2f8fa8", // cyan
+  "#9c6b2f", // bronze
+  "#6a5acd", // indigo
+  "#b05a8f", // magenta
+];
 
 interface Draft {
   templateId: string;

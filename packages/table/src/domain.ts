@@ -42,6 +42,24 @@ const seatRecord = z.object({
 
 const teamRecord = z.object({
   teamId: z.string(),
+  /**
+   * The dsh session this record answers in.
+   *
+   * A team's folder is a workspace, and a workspace holds MANY sessions.
+   * Without this field every session in the folder wrote into one record —
+   * so opening a new session showed the old discussion, and anything typed
+   * there landed in the old session. Absent on rows written before sittings
+   * existed, where the record's own id was its session.
+   */
+  sessionId: z.string().optional(),
+  /**
+   * The team this is a sitting of, when it is one.
+   *
+   * A sitting has its own discussion, its own context and its own usage, and
+   * shares the ROSTER with its base — the same people, starting again with no
+   * memory of the other session. Absent on a base team.
+   */
+  baseTeamId: z.string().optional(),
   displayName: z.string(),
   projectFolder: z.string(),
   hostDisplayName: z.string(),

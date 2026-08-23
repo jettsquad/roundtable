@@ -39,6 +39,7 @@ import {
 } from "@squad/shared";
 import { activityFor, activityKey, type SeatActivity } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
+import { baseForFolder, recordForSession, restoreOrder, unclaimed } from "./sitting.ts";
 import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "./roster.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
 
@@ -99,6 +100,10 @@ export interface Team {
   readonly seats: readonly SeatSpec[];
   /** The host node's session id — the team's durable record. */
   readonly hostSessionId: string;
+  /** The dsh session this view belongs to. */
+  readonly sessionId: string;
+  /** The team this is a sitting of, or nothing when this IS the team. */
+  readonly baseTeamId: string | undefined;
   /** A round is running right now; folding waits for this to clear. */
   readonly busy: boolean;
   /** Everything this team's seats have consumed so far. */
@@ -289,7 +294,7 @@ export interface TeamAssembler {
 }
 
 export class TeamsService extends Service {
-  static readonly inject = ["agents", "subagents", "seatConnections", "storageDomain"];
+  static readonly inject = ["agents", "subagents", "seatConnections", "storageDomain", "sessions"];
 
   private readonly teams = new Map<string, TeamRecord>();
   private assembler: TeamAssembler | undefined;
@@ -322,12 +327,17 @@ export class TeamsService extends Service {
       await domain.close();
     });
 
-    for (const [, saved] of domain.table("teams").entries()) {
+    // Bases first, then sittings. A sitting shares its base's roster BY
+    // REFERENCE, so restoring one before its base has nothing to point at —
+    // and the map's iteration order is insertion order on disk, which says
+    // nothing about which is which.
+    const saved = [...domain.table("teams").entries()].map(([, row]) => row);
+    for (const row of restoreOrder(saved)) {
       try {
-        await this.restore(saved);
+        await this.restore(row);
       } catch (error) {
         this.ctx.logger.warn(
-          `团队「${saved.displayName}」没能恢复：${error instanceof Error ? error.message : String(error)}`,
+          `团队「${row.displayName}」没能恢复：${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -336,7 +346,14 @@ export class TeamsService extends Service {
   /** Rebuild one saved team, log and all. */
   private async restore(saved: TeamPersisted): Promise<void> {
     const handle = await this.ctx.agents.resume({ resumeSessionId: saved.teamId as never });
-    const input: CreateTeamInput = {
+    // A sitting takes its base's LIVE objects. Rebuilding them from its own
+    // saved copy would give one team two rosters that drift apart the moment
+    // a member is added in the other session.
+    const base = saved.baseTeamId === undefined ? undefined : this.teams.get(saved.baseTeamId);
+    if (saved.baseTeamId !== undefined && base === undefined) {
+      throw new Error(`这场会话的团队 ${saved.baseTeamId} 不在了。`);
+    }
+    const input: CreateTeamInput = base?.input ?? {
       displayName: saved.displayName,
       projectFolder: saved.projectFolder,
       hostDisplayName: saved.hostDisplayName,
@@ -345,6 +362,8 @@ export class TeamsService extends Service {
     };
     this.teams.set(saved.teamId, {
       teamId: saved.teamId,
+      sessionId: saved.sessionId ?? saved.teamId,
+      baseTeamId: saved.baseTeamId,
       input,
       handle,
       roundsInFlight: 0,
@@ -356,7 +375,7 @@ export class TeamsService extends Service {
       usage: saved.usage ?? EMPTY_TOTALS,
       perSeat: new Map(),
       authModes: new Map(),
-      seats: [...input.seats],
+      seats: base?.seats ?? [...input.seats],
       speaking: new Map(),
       disposed: false,
     });
@@ -375,6 +394,8 @@ export class TeamsService extends Service {
     const existing = table.get(record.teamId);
     const row: TeamPersisted = {
       teamId: record.teamId,
+      ...(record.sessionId === record.teamId ? {} : { sessionId: record.sessionId }),
+      ...(record.baseTeamId === undefined ? {} : { baseTeamId: record.baseTeamId }),
       displayName: record.input.displayName,
       projectFolder: record.input.projectFolder,
       hostDisplayName: record.input.hostDisplayName,
@@ -455,6 +476,8 @@ export class TeamsService extends Service {
 
     const record: TeamRecord = {
       teamId,
+      sessionId: teamId,
+      baseTeamId: undefined,
       input: { ...input, projectFolder },
       handle,
       roundsInFlight: 0,
@@ -508,6 +531,147 @@ export class TeamsService extends Service {
     return record === undefined || record.disposed ? undefined : this.viewOf(record);
   }
 
+  /**
+   * The team record that serves one dsh session — creating it if this is the
+   * first time that session has been used.
+   *
+   * A team's folder is a workspace and a workspace holds many sessions. Until
+   * this existed, every session in the folder pointed at the SAME record: a
+   * new session opened onto the old discussion, and whatever you typed in it
+   * appeared over in the old one. That is not a second view of one meeting,
+   * it is two doors into the same room, and the sidebar promised otherwise.
+   *
+   * What a sitting shares with its team is the ROSTER, the folder and the
+   * name. What it does not share is the discussion, the context, the
+   * checkpoints and the usage — so the seats arrive with no memory of the
+   * other session, which is exactly what 「重新听我的命令开始新的工作」 means.
+   */
+  async sittingFor(input: { readonly projectFolder: string; readonly sessionId: string }): Promise<Team | undefined> {
+    const records = [...this.teams.values()];
+    const existing = recordForSession(records, input.sessionId);
+    if (existing !== undefined) return this.viewOf(existing);
+
+    // The base is found by FOLDER, the same comparison the surfaces make.
+    const base = baseForFolder(
+      records.map((record) => ({ ...record, projectFolder: record.input.projectFolder })),
+      input.projectFolder,
+    );
+    if (base === undefined) return undefined;
+    // The first session in the workspace adopts the team itself. See
+    // `unclaimed`: a team is created before anyone sits down at it, and
+    // starting a second empty sitting next to its own discussion would hide
+    // that discussion from the only place people look for it.
+    const owner = this.teams.get(base.teamId);
+    if (owner !== undefined && unclaimed(owner)) {
+      owner.sessionId = input.sessionId;
+      this.persist(owner);
+      return this.viewOf(owner);
+    }
+
+    const sittingId = `sit-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    // Its own host node, with its own session log. That log IS the fresh
+    // discussion — nothing carries over, because nothing is shared to carry.
+    const handle = await this.ctx.agents.create({
+      sessionId: sittingId as never,
+      meta: { cwd: base.input.projectFolder },
+    });
+    const record: TeamRecord = {
+      teamId: sittingId,
+      sessionId: input.sessionId,
+      baseTeamId: base.teamId,
+      // The base's own objects, on purpose. See `TeamRecord.baseTeamId`.
+      input: base.input,
+      handle,
+      roundsInFlight: 0,
+      running: undefined,
+      roundAbort: undefined,
+      artifacts: [],
+      // Usage starts at zero and stays this sitting's own: a new piece of
+      // work has its own cost, and rolling it into the team's total would
+      // make every per-session number unanswerable.
+      usage: EMPTY_TOTALS,
+      perSeat: new Map(),
+      authModes: new Map(),
+      seats: base.seats,
+      speaking: new Map(),
+      disposed: false,
+    };
+    this.teams.set(sittingId, record);
+    this.persist(record);
+    this.markSession(input.sessionId, base.input.displayName);
+    return this.viewOf(record);
+  }
+
+  /**
+   * Put one line into the dsh session, so it survives being closed.
+   *
+   * A session with no events is not shown in the sidebar. Ours never got any:
+   * the team's discussion lives in the sitting's own host log, on purpose, so
+   * the chat model does not read a meeting it was not in. The result was a
+   * session that worked perfectly until you reloaded, and then was simply not
+   * there — with its sitting still on disk and no longer reachable from
+   * anywhere. That is the report 「并且删除新 session」.
+   *
+   * So: exactly one line, and one that earns its place by saying where the
+   * discussion is. It does become part of what dsh's own chat agent would
+   * read in this session, which is the honest cost of the session being real
+   * — and one sentence of explanation is a defensible thing for it to find.
+   *
+   * Best-effort: a session that is not live right now cannot be marked, and
+   * refusing to open a sitting over a sidebar label would be the tail wagging
+   * the dog.
+   */
+  private markSession(sessionId: string, teamName: string): void {
+    try {
+      const session = this.ctx.sessions.get(sessionId as never);
+      if (session === undefined) return;
+      // Plain, with no 【speaker】 wrapper. The sidebar titles a session after
+      // its first message, so this line IS the name of the session from now
+      // on — 「【系统】这个会话在团队…」 read like a log entry where a name
+      // belongs.
+      session.append(
+        "user/message",
+        {
+          id: `squad-mark-${Date.now().toString(36)}`,
+          role: "user",
+          source: { kind: "user" },
+          content: [{ type: "text", text: `团队「${teamName}」的新一场工作。讨论在「团队」标签页。` }],
+        } as never,
+        { surfaceOp: "append" } as never,
+      );
+    } catch (error) {
+      this.ctx.logger?.warn?.(`没能给会话留下标记：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** Every sitting of one team, base excluded. */
+  private sittingsOf(teamId: string): readonly TeamRecord[] {
+    return [...this.teams.values()].filter((record) => record.baseTeamId === teamId);
+  }
+
+  /** The base of whatever record this is — itself, when it is one. */
+  private baseOf(record: TeamRecord): TeamRecord {
+    return record.baseTeamId === undefined ? record : (this.teams.get(record.baseTeamId) ?? record);
+  }
+
+  /**
+   * A team and every sitting of it.
+   *
+   * Anything shared — the name, the folder, the roster — has to be written
+   * down for all of them. They hold the same objects in memory, so a change
+   * is instantly visible everywhere; only the DISK would disagree, and it is
+   * the disk that decides what exists after a restart.
+   */
+  private family(record: TeamRecord): readonly TeamRecord[] {
+    const base = this.baseOf(record);
+    return [base, ...this.sittingsOf(base.teamId)];
+  }
+
+  /** Write the team and all its sittings down. */
+  private persistFamily(record: TeamRecord): void {
+    for (const member of this.family(record)) this.persist(member);
+  }
+
   list(): readonly string[] {
     return [...this.teams.values()].filter((r) => !r.disposed).map((r) => r.teamId);
   }
@@ -520,6 +684,8 @@ export class TeamsService extends Service {
       hostDisplayName: record.input.hostDisplayName,
       seats: record.seats,
       hostSessionId: String(record.handle.agent.session.id),
+      sessionId: record.sessionId,
+      baseTeamId: record.baseTeamId,
       host: record.handle.agent,
       // Read through the record, not captured: a view handed out before a
       // round started must not keep reporting the team as idle.
@@ -878,7 +1044,10 @@ export class TeamsService extends Service {
     const problems = checkRoster([...record.seats, seat]);
     if (problems.length > 0) throw new Error(problems.map((problem) => problem.detail).join("\n"));
     record.seats.splice(0, record.seats.length, ...placeSeat(record.seats, seat, options?.at));
-    this.persist(record);
+    // The whole family: the array is shared, so every sitting already sees
+    // the new member — but each one owns a row on disk, and a row that still
+    // lists the old roster is what a restart would believe.
+    this.persistFamily(record);
   }
 
   /**
@@ -900,7 +1069,7 @@ export class TeamsService extends Service {
       record.seats.findIndex((seat) => seat.seatId === seatId),
       1,
     );
-    this.persist(record);
+    this.persistFamily(record);
   }
 
   /**
@@ -1071,8 +1240,13 @@ export class TeamsService extends Service {
   private rename(record: TeamRecord, displayName: string): void {
     const name = displayName.trim();
     if (name === "") throw new Error("团队要有一个名字。");
-    record.input = { ...record.input, displayName: name };
-    this.persist(record);
+    // Assigned to every member, not just this one. `input` is shared by
+    // REFERENCE, and replacing the object on one record would leave the
+    // others pointing at the old name — a team renamed in one session and
+    // still called the old thing in the next.
+    const next = { ...this.baseOf(record).input, displayName: name };
+    for (const member of this.family(record)) member.input = next;
+    this.persistFamily(record);
     const registry = this.ctx.reflect.get("workspaceRegistry") as
       { list(): readonly { path: string; setTitle(title: string): Promise<void> }[] } | undefined;
     const workspace = registry?.list().find((entry) => entry.path === record.input.projectFolder);
@@ -1083,12 +1257,26 @@ export class TeamsService extends Service {
     });
   }
 
+  /**
+   * Take a team away, and its sittings with it.
+   *
+   * A sitting cannot outlive its base: it holds the base's roster object and
+   * its own `input`, so a surviving orphan would be a team whose members can
+   * no longer be edited and whose name can no longer be changed — visible in
+   * the workspace, and unfixable. Disbanding the base is the person saying
+   * they are done with this team, not with one of its windows.
+   *
+   * Disbanding a SITTING takes only that sitting: that is closing one piece
+   * of work, and the team is what it always was.
+   */
   private async dispose(record: TeamRecord): Promise<void> {
     if (record.disposed) return;
     record.disposed = true;
     await record.handle.dispose();
     this.teams.delete(record.teamId);
     this.forget(record.teamId);
+    if (record.baseTeamId !== undefined) return;
+    for (const sitting of this.sittingsOf(record.teamId)) await this.dispose(sitting);
   }
 }
 
@@ -1147,6 +1335,31 @@ interface WindowAttempt {
 
 interface TeamRecord {
   readonly teamId: string;
+  /**
+   * The dsh session this record serves.
+   *
+   * For a base team this is its own id — the host node's session IS the
+   * team's record. For a sitting it is the session the person opened in the
+   * workspace, which is what makes 「新建会话」 mean a new piece of work
+   * rather than a second window onto the old one.
+   *
+   * Mutable for exactly one transition: a team created before anyone sat down
+   * at it borrows its own id, and the first session to arrive claims it. See
+   * `unclaimed`. Assigned IN PLACE rather than by rebuilding the record —
+   * views handed out earlier close over the object, and a replacement would
+   * leave them reading a stale `roundsInFlight`.
+   */
+  sessionId: string;
+  /**
+   * The team this is a sitting of, or nothing when this IS the team.
+   *
+   * A sitting shares `input` and `seats` BY REFERENCE with its base — the
+   * same objects, not copies — so renaming the team or adding a member
+   * reaches every sitting at once. Copying them would have made a roster edit
+   * apply to whichever session happened to be open, which is the same class
+   * of bug as a setting that saves and is never applied.
+   */
+  readonly baseTeamId: string | undefined;
   /** Mutable: a team can be renamed, and the record is what gets persisted. */
   input: CreateTeamInput;
   readonly handle: AgentHandle;

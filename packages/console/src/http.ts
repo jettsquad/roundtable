@@ -265,6 +265,8 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       // and a screen that states a threshold the runtime does not use is worse
       // than one that states none.
       silence: { idleMs: SEAT_SILENCE_LIMITS.idleMs, firstOutputMs: SEAT_SILENCE_LIMITS.firstOutputMs },
+      sessionId: team.sessionId,
+      ...(team.baseTeamId === undefined ? {} : { baseTeamId: team.baseTeamId }),
     });
   }
   const [active, pending, connections, health] = await Promise.all([
@@ -1012,6 +1014,17 @@ export function registerSquadApi(ctx: Context): () => void {
           resolveAgenda(ctx, await readJson<AgendaVerdictRequest>(req));
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/sitting" && req.method === "POST") {
+          // Asked by a session the first time it is opened, and answered with
+          // the record it should use from then on. Creating it here rather
+          // than on the client because the decision is 「这个 session 属于哪
+          // 一场工作」 — a fact about the team, not about a browser tab.
+          const body = await readJson<{ projectFolder: string; sessionId: string }>(req);
+          const sitting = await ctx.teams.sittingFor(body);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(sitting === undefined ? {} : { teamId: sitting.teamId }));
           return;
         }
         if (suffix === "/say" && req.method === "POST") {

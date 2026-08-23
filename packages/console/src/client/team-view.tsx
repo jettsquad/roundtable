@@ -23,6 +23,7 @@ import { Agenda } from "./agenda.tsx";
 import { ContextPanel } from "./context-panel.tsx";
 import { Discussion } from "./discussion.tsx";
 import { describeSeat, describeTeam, type SeatStatus } from "../seat-status.ts";
+import { useSitting } from "./use-sitting.ts";
 import styles from "./panel.module.css";
 
 /** One seat's live state, read the same way everywhere it is shown. */
@@ -131,7 +132,10 @@ function Roster({ team, data }: { readonly team: TeamSummary; readonly data: Squ
  */
 function teamForCwd(data: SquadSnapshot, cwd: string | undefined): TeamSummary | undefined {
   if (cwd === undefined || cwd === "") return undefined;
-  return data.teams.find((team) => team.projectFolder === cwd);
+  // The BASE team of this folder — the one that owns the roster. Used for the
+  // 「还没有团队」 message and nothing else; what this tab shows is the
+  // sitting, found by session id.
+  return data.teams.find((team) => team.projectFolder === cwd && team.baseTeamId === undefined);
 }
 
 /**
@@ -197,16 +201,28 @@ function TeamHeader({ team, onChanged }: { readonly team: TeamSummary; readonly 
   );
 }
 
-export function TeamView({ folderOf }: { readonly folderOf: () => string | undefined }): JSX.Element {
+export function TeamView({
+  folderOf,
+  sessionId,
+}: {
+  readonly folderOf: () => string | undefined;
+  readonly sessionId: string;
+}): JSX.Element {
   const cwd = folderOf();
   const [nonce, setNonce] = useState(0);
   const snapshot = useSnapshot(nonce);
   const again = (): void => setNonce((value) => value + 1);
+  // One sitting per session. Showing the folder's team here is what made a
+  // new session open onto the old discussion.
+  const sittingId = useSitting(cwd ?? "", cwd === undefined || cwd === "" ? undefined : sessionId);
 
   if (snapshot.state === "loading") return <div className={styles.viewPad}>读取中……</div>;
   if (snapshot.state === "error") return <div className={styles.viewPad}>{snapshot.detail}</div>;
 
-  const team = teamForCwd(snapshot.data, cwd);
+  const team =
+    sittingId === undefined
+      ? teamForCwd(snapshot.data, cwd)
+      : snapshot.data.teams.find((candidate) => candidate.teamId === sittingId);
   if (team === undefined) {
     return (
       <div className={styles.viewPad}>

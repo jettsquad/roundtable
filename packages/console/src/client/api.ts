@@ -67,6 +67,9 @@ export const api = {
   renameTeam: (body: { teamId: string; displayName: string }): Promise<unknown> => call("/teams/rename", "POST", body),
   fold: (body: { teamId: string }): Promise<unknown> => call("/checkpoint", "POST", body),
   revokeCheckpoint: (body: { teamId: string; revokeId: string }): Promise<unknown> => call("/checkpoint", "POST", body),
+  /** The record this session should use, created on first sight. */
+  sitting: (body: { projectFolder: string; sessionId: string }): Promise<{ teamId?: string }> =>
+    call("/sitting", "POST", body),
   say: (body: {
     teamId: string;
     instruction: string;
