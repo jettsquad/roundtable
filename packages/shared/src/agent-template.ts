@@ -65,6 +65,28 @@ export interface AgentTemplate {
   /** A tint, so a roster of six is readable at a glance. */
   readonly color: string;
   /**
+   * Let this agent reach the web without stopping to ask.
+   *
+   * Claude Code only, and that is a fact about the backends rather than a
+   * gap. Measured on all three:
+   *
+   *   claude-code  `acceptEdits` auto-approves FILE EDITS and nothing else,
+   *                so WebFetch and even `curl` come back
+   *                「requires approval」 — and a seat runs `claude -p` with
+   *                nobody there to approve, so the answer is always no.
+   *   dsh          no permission gate at all; `bash` + `curl` reaches the
+   *                web today. Its own `web_search` is mounted but resolves
+   *                DEEPSEEK_API_KEY, so a seat on another provider's key
+   *                gets 「Authentication Fails」; `fetch` is disabled in
+   *                dsh-base on purpose (SSRF).
+   *   codex        `workspace` already has a working web tool.
+   *
+   * So this flag changes the one backend that can be changed, by naming the
+   * web tools as pre-approved. It is NOT `bypassPermissions`: everything
+   * else still asks, and the delegation fence still holds.
+   */
+  readonly webAccess?: boolean | undefined;
+  /**
    * Soft delete.
    *
    * A template a team was built from is not removed outright: the team holds
@@ -131,3 +153,12 @@ export function checkAgentTemplate(template: AgentTemplate): readonly AgentTempl
   }
   return problems;
 }
+
+/**
+ * The tools that reaching the web needs, pre-approved together.
+ *
+ * Both, because they are one capability to a person: search finds the page,
+ * fetch reads it, and a seat that can only do half gives up halfway with an
+ * explanation nobody asked for.
+ */
+export const WEB_TOOLS: readonly string[] = ["WebFetch", "WebSearch"];

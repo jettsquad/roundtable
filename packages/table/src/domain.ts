@@ -39,6 +39,7 @@ const seatRecord = z.object({
   permissionMode: z.string().optional(),
   templateId: z.string().optional(),
   color: z.string().optional(),
+  webAccess: z.boolean().optional(),
 });
 
 const teamRecord = z.object({

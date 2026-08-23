@@ -268,6 +268,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           // 「改了配色，团队里没变」.
           orphaned: seat.templateId !== undefined && !liveTemplates.has(seat.templateId),
           ...(seat.color === undefined ? {} : { color: seat.color }),
+          ...(seat.webAccess === undefined ? {} : { webAccess: seat.webAccess }),
           ...(blockedReason(ctx, seat) === undefined ? {} : { blocked: blockedReason(ctx, seat) }),
         };
       }),
@@ -549,6 +550,7 @@ export async function createTeamWithMembers(
       ...(template.connectionId === undefined ? {} : { connectionId: template.connectionId }),
       ...(template.permissionMode === undefined ? {} : { permissionMode: template.permissionMode }),
       ...(template.caps === undefined ? {} : { caps: template.caps }),
+      ...(template.webAccess === undefined ? {} : { webAccess: template.webAccess }),
     };
   });
 
@@ -620,6 +622,7 @@ export function addSeatFrom(ctx: Context, request: SeatRequest): void {
       ...(template.connectionId === undefined ? {} : { connectionId: template.connectionId }),
       ...(template.permissionMode === undefined ? {} : { permissionMode: template.permissionMode }),
       ...(template.caps === undefined ? {} : { caps: template.caps }),
+      ...(template.webAccess === undefined ? {} : { webAccess: template.webAccess }),
     });
     return;
   }
@@ -674,6 +677,7 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
     ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
     ...(request.caps === undefined ? {} : { caps: request.caps }),
+    ...(request.webAccess === undefined ? {} : { webAccess: request.webAccess }),
   });
 
   // And into every team already sitting this agent. Without this the library
@@ -689,6 +693,7 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     permissionMode: request.permissionMode,
     caps: request.caps,
     color: request.color,
+    webAccess: request.webAccess,
   });
 }
 
@@ -703,6 +708,7 @@ function templateFactsOf(template: {
   permissionMode?: TemplateFacts["permissionMode"];
   caps?: TemplateFacts["caps"];
   color?: string | undefined;
+  webAccess?: boolean | undefined;
 }): TemplateFacts {
   return {
     templateId: template.templateId,
@@ -714,6 +720,7 @@ function templateFactsOf(template: {
     permissionMode: template.permissionMode,
     caps: template.caps,
     color: template.color,
+    webAccess: template.webAccess,
   };
 }
 

@@ -70,6 +70,7 @@ interface Draft {
   permissionMode: PermissionMode;
   reasoningEffort: ReasoningEffort | "";
   secretaryCandidate: boolean;
+  webAccess: boolean;
   color: string;
   /** "" means the host's own login. */
   connectionId: string;
@@ -95,6 +96,7 @@ const blank = (): Draft => ({
   permissionMode: defaultPermissionMode("claude-code"),
   reasoningEffort: "",
   secretaryCandidate: false,
+  webAccess: false,
   color: COLORS[0] ?? "#2e7d6b",
   connectionId: "",
   authMode: "subscription",
@@ -120,6 +122,7 @@ function draftOf(template: AgentTemplate): Draft {
     permissionMode: template.permissionMode ?? defaultPermissionMode(template.backend),
     reasoningEffort: template.reasoningEffort ?? "",
     secretaryCandidate: template.secretaryCandidate,
+    webAccess: template.webAccess === true,
     color: template.color,
     connectionId: template.connectionId ?? "",
     maxTurns: template.caps?.maxTurns === undefined ? "" : String(template.caps.maxTurns),
@@ -180,6 +183,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
         systemPrompt: draft.systemPrompt.trim(),
         backend: draft.backend,
         secretaryCandidate: draft.secretaryCandidate,
+        webAccess: draft.webAccess,
         color: draft.color,
         ...(connectionId === "" ? {} : { connectionId }),
         ...(draft.backend === "dsh" ? {} : { permissionMode: draft.permissionMode }),
@@ -438,6 +442,22 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
             />
             可以当秘书
           </label>
+          {/* Only for Claude Code, and that is a fact about the backends
+              rather than a gap. Measured on all three: `acceptEdits` there
+              auto-approves file edits and nothing else, so WebFetch and even
+              `curl` come back 「requires approval」 — with nobody to approve,
+              in a headless run. dsh reaches the web through bash already, and
+              codex's workspace mode has its own web tool. */}
+          {draft.backend !== "claude-code" ? null : (
+            <label className={styles.check}>
+              <input
+                type="checkbox"
+                checked={draft.webAccess}
+                onChange={(event) => set({ webAccess: event.target.checked })}
+              />
+              允许联网（预先批准 WebFetch / WebSearch）
+            </label>
+          )}
           {COLORS.map((color) => (
             <button
               key={color}

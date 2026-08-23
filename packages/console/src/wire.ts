@@ -66,6 +66,8 @@ export interface TeamSummary {
      * team was built. Reported so the roster can say so and offer to relink.
      */
     readonly orphaned?: boolean | undefined;
+    /** Pre-approved for the web tools. Claude Code only. */
+    readonly webAccess?: boolean | undefined;
     /**
      * How a running seat's run is going, while it is going.
      *

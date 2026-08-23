@@ -28,6 +28,8 @@ const agentTemplateRecord = z.object({
   caps: capsRecord.optional(),
   secretaryCandidate: z.boolean(),
   color: z.string(),
+  /** Pre-approve the web tools for this agent. Claude Code only. */
+  webAccess: z.boolean().optional(),
   /** Soft delete: a disabled template is hidden, not gone. */
   enabled: z.boolean(),
   createdAt: z.number(),

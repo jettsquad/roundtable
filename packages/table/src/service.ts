@@ -26,6 +26,7 @@ import { dirname, join } from "node:path";
 import type { Domain } from "@deepseek-ai/dsh-storage-domain";
 import { SQUAD_TABLE_DOMAIN, type TeamPersisted } from "./domain.ts";
 import {
+  WEB_TOOLS,
   attachmentNote,
   materialsForRound,
   checkMaterial,
@@ -1400,6 +1401,13 @@ export class TeamsService extends Service {
         label: seat.displayName,
         prompt: [{ type: "text", text: prompt }],
         parent: host,
+        // Pre-approve the web tools when this seat is allowed the web, and
+        // ONLY for the backend that declares the capability. The seam refuses
+        // a request carrying something the provider does not support rather
+        // than accepting it and quietly dropping it — which is right, and
+        // which means sending this to codex or dsh would fail the round
+        // instead of being ignored.
+        ...(seat.webAccess === true && seat.backend === "claude-code" ? { toolFilter: { allow: [...WEB_TOOLS] } } : {}),
         // The agenda's signal when there is one, so stopping actually reaches
         // the running process instead of leaving it to finish into a
         // discussion nobody is having any more.

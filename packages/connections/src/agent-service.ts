@@ -42,6 +42,7 @@ function templateOf(record: AgentTemplateRecord): AgentTemplate {
     caps: record.caps,
     secretaryCandidate: record.secretaryCandidate,
     color: record.color,
+    webAccess: record.webAccess,
     enabled: record.enabled,
   };
 }

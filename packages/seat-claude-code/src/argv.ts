@@ -58,9 +58,11 @@ export const DELEGATION_TOOLS: readonly string[] = ["Task", "Agent"];
 /**
  * Build the argv for one seat turn.
  *
- * `allow` and `deny` both travel when both are given: the CLI applies allow as
- * a whitelist and deny on top, so a floor denial still holds inside an
- * allow-list a caller wrote without thinking about delegation.
+ * `allow` and `deny` both travel when both are given. `--allowed-tools` is
+ * PRE-APPROVAL, not an exclusive whitelist — measured, not assumed: a run with
+ * `--allowed-tools WebFetch` still used `Read` normally. So naming a tool here
+ * says "do not stop to ask about this one", and everything else keeps whatever
+ * the permission mode gives it. A floor denial still holds on top.
  */
 export function buildArgv(input: ArgvInput): readonly string[] {
   const argv = [

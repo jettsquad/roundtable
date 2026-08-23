@@ -54,6 +54,13 @@ export interface SeatSpec {
   readonly templateId?: string | undefined;
   /** A tint, carried from the template so a roster is readable at a glance. */
   readonly color?: string | undefined;
+  /**
+   * Let this seat reach the web without stopping to ask.
+   *
+   * Honoured by the Claude Code backend only — it is the one that has a
+   * permission gate to open. See `AgentTemplate.webAccess`.
+   */
+  readonly webAccess?: boolean | undefined;
 }
 
 /** What a seat is asked in one round, before it becomes prompt text. */
