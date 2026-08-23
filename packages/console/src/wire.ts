@@ -89,6 +89,18 @@ export interface TeamSummary {
    * a new session a new piece of work rather than a second window onto the
    * old one.
    */
+  /**
+   * Background material every seat reads, without its text.
+   *
+   * The panel polls every two seconds; sending the documents themselves would
+   * make reading the roster cost more than holding the meeting.
+   */
+  readonly materials: readonly {
+    readonly materialId: string;
+    readonly name: string;
+    readonly chars: number;
+    readonly addedAt: number;
+  }[];
   readonly sessionId: string;
   /** The team this is a sitting of, absent when this IS the team. */
   readonly baseTeamId?: string | undefined;

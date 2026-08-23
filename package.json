@@ -28,5 +28,9 @@
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.1",
     "vitest": "^2.1.9"
+  },
+  "dependencies": {
+    "mammoth": "^1.12.1",
+    "pdf-parse": "^2.4.5"
   }
 }

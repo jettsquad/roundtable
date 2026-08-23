@@ -67,6 +67,23 @@ export const api = {
   renameTeam: (body: { teamId: string; displayName: string }): Promise<unknown> => call("/teams/rename", "POST", body),
   fold: (body: { teamId: string }): Promise<unknown> => call("/checkpoint", "POST", body),
   revokeCheckpoint: (body: { teamId: string; revokeId: string }): Promise<unknown> => call("/checkpoint", "POST", body),
+  /**
+   * Upload one document's bytes.
+   *
+   * The name and team ride in the query and the body is the file, untouched.
+   * Base64 in a JSON envelope would cost a third more transfer and a full
+   * re-encode at both ends for nothing.
+   */
+  addMaterial: async (teamId: string, name: string, bytes: ArrayBuffer): Promise<void> => {
+    const url = `${PREFIX}/materials?teamId=${encodeURIComponent(teamId)}&name=${encodeURIComponent(name)}`;
+    const response = await fetch(url, { method: "POST", body: bytes });
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({ error: response.statusText }))) as { error?: string };
+      throw new Error(detail.error ?? "导入失败。");
+    }
+  },
+  removeMaterial: (body: { teamId: string; materialId: string }): Promise<{ ok: true }> =>
+    call("/materials", "DELETE", body),
   /** Ask the secretary to do one job. The answer is a draft, not a turn. */
   assist: (body: { teamId: string; instruction: string }): Promise<{ text: string }> =>
     call("/secretary/assist", "POST", body),

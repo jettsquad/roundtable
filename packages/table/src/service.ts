@@ -26,6 +26,8 @@ import { dirname, join } from "node:path";
 import type { Domain } from "@deepseek-ai/dsh-storage-domain";
 import { SQUAD_TABLE_DOMAIN, type TeamPersisted } from "./domain.ts";
 import {
+  checkMaterial,
+  type Material,
   EMPTY_TOTALS,
   capExceeded,
   providerForSeat,
@@ -125,6 +127,12 @@ export interface Team {
   readonly draft: { readonly agenda: AgendaSpec; readonly at: number } | undefined;
   /** Put a draft up for confirmation, or clear the one standing. */
   setDraft(draft: AgendaSpec | undefined): void;
+  /** Background material every seat reads, oldest first. */
+  readonly materials: readonly Material[];
+  /** Attach one document. Refused for the reasons `checkMaterial` names. */
+  addMaterial(material: Material): void;
+  /** Detach one. The seats stop seeing it from the next round. */
+  removeMaterial(materialId: string): void;
   /**
    * Add a seat. Refused while a round is running — see `addSeat`.
    *
@@ -389,6 +397,9 @@ export class TeamsService extends Service {
       seats: base?.seats ?? [...input.seats],
       speaking: new Map(),
       draft: saved.draft === undefined ? undefined : { agenda: saved.draft, at: saved.draftedAt ?? Date.now() },
+      // The base's own array when this is a sitting: material is the team's,
+      // and copying it would let one session's import be invisible in another.
+      materials: base?.materials ?? [...(saved.materials ?? [])],
       disposed: false,
     });
   }
@@ -417,6 +428,7 @@ export class TeamsService extends Service {
       seats: record.seats as unknown as TeamPersisted["seats"],
       usage: record.usage,
       ...(record.draft === undefined ? {} : { draft: record.draft.agenda, draftedAt: record.draft.at }),
+      ...(record.materials.length === 0 ? {} : { materials: record.materials }),
       createdAt: existing?.createdAt ?? Date.now(),
     };
     this.writes = this.writes.then(async () => {
@@ -503,6 +515,7 @@ export class TeamsService extends Service {
       seats: [...input.seats],
       speaking: new Map(),
       draft: undefined,
+      materials: [],
       disposed: false,
     };
     this.teams.set(teamId, record);
@@ -616,6 +629,7 @@ export class TeamsService extends Service {
       seats: base.seats,
       speaking: new Map(),
       draft: undefined,
+      materials: base.materials,
       disposed: false,
     };
     this.teams.set(sittingId, record);
@@ -773,6 +787,23 @@ export class TeamsService extends Service {
       setDraft: (draft) => {
         record.draft = draft === undefined ? undefined : { agenda: draft, at: Date.now() };
         this.persist(record);
+      },
+      get materials() {
+        return record.materials;
+      },
+      addMaterial: (material) => {
+        const problem = checkMaterial(material, record.materials);
+        if (problem !== undefined) throw new Error(problem.detail);
+        // In place: sittings hold the same array, and replacing it would give
+        // the team two lists that drift apart.
+        record.materials.push(material);
+        this.persistFamily(record);
+      },
+      removeMaterial: (materialId) => {
+        const at = record.materials.findIndex((material) => material.materialId === materialId);
+        if (at < 0) throw new Error("没有这份资料。");
+        record.materials.splice(at, 1);
+        this.persistFamily(record);
       },
       addSeat: (seat, options) => this.addSeat(record, seat, options),
       removeSeat: (seatId, options) => this.removeSeat(record, seatId, options),
@@ -1218,6 +1249,9 @@ export class TeamsService extends Service {
         seat,
         instruction,
         context: lines,
+        // Read at turn time, so a document removed mid-round stops being sent
+        // from the next seat onward rather than at the next restart.
+        ...(record.materials.length === 0 ? {} : { materials: record.materials }),
         ...(quotes === undefined || quotes.length === 0 ? {} : { quotes }),
       });
       const request: SubagentStartRequest = {
@@ -1455,6 +1489,14 @@ interface TeamRecord {
   readonly speaking: Map<string, string>;
   /** An agenda waiting on the host, and when it was drafted. */
   draft: { readonly agenda: AgendaSpec; readonly at: number } | undefined;
+  /**
+   * Background material every seat reads.
+   *
+   * On the record and not on the sitting: a document is something the TEAM
+   * knows, and a spec imported in one session that the same people could not
+   * see in the next would be a team with two different memories.
+   */
+  materials: Material[];
   disposed: boolean;
 }
 

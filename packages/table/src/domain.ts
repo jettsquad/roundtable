@@ -96,6 +96,23 @@ const teamRecord = z.object({
    * `draftedAt` travels with it so a stale draft can SAY it is old rather
    * than being silently discarded on the host's behalf.
    */
+  /**
+   * Background material the host imported, extracted to plain text.
+   *
+   * Stored with the team because it is part of what the team knows — a folder
+   * of files beside the record would drift from it, and a restart would leave
+   * seats reading a document the panel no longer lists.
+   */
+  materials: z
+    .array(
+      z.object({
+        materialId: z.string(),
+        name: z.string(),
+        text: z.string(),
+        addedAt: z.number(),
+      }),
+    )
+    .optional(),
   draft: AgendaSpecSchema.optional(),
   draftedAt: z.number().optional(),
   createdAt: z.number(),

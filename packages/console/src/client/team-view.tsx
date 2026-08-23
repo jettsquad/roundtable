@@ -21,6 +21,7 @@ import { api } from "./api.ts";
 import { useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
 import { Agenda } from "./agenda.tsx";
 import { ContextPanel } from "./context-panel.tsx";
+import { Materials } from "./materials.tsx";
 import { Discussion } from "./discussion.tsx";
 import { describeSeat, describeTeam, type SeatStatus } from "../seat-status.ts";
 import { useSitting } from "./use-sitting.ts";
@@ -246,6 +247,7 @@ export function TeamView({
       {/* The agenda lives here as well as in the panel: this is where the
           work happens, and a plan you must leave the room to confirm is a
           plan you confirm without looking at the discussion it came from. */}
+      <Materials team={team} onChanged={again} />
       <ContextPanel team={team} onChanged={again} />
       <Agenda team={team} onChanged={again} />
       <Discussion team={team} autoScroll />

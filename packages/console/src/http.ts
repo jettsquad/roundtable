@@ -52,6 +52,7 @@ import type {
   TeamSummary,
 } from "./wire.ts";
 import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
+import { extractDocument, MAX_FILE_BYTES } from "./extract.ts";
 import { parseNewTeam } from "./parse.ts";
 import { tmpdir } from "node:os";
 import { assertPublicHostCommand, checkAgendaAgainstRoster, type AgendaSpec } from "@squad/shared";
@@ -273,6 +274,15 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       // and a screen that states a threshold the runtime does not use is worse
       // than one that states none.
       silence: { idleMs: SEAT_SILENCE_LIMITS.idleMs, firstOutputMs: SEAT_SILENCE_LIMITS.firstOutputMs },
+      materials: team.materials.map((material) => ({
+        materialId: material.materialId,
+        name: material.name,
+        // The TEXT does not travel. A 120k-character document in every
+        // two-second poll would make reading the roster cost more than the
+        // meeting; the panel needs the name and the size, not the contents.
+        chars: material.text.length,
+        addedAt: material.addedAt,
+      })),
       sessionId: team.sessionId,
       ...(team.baseTeamId === undefined ? {} : { baseTeamId: team.baseTeamId }),
     });
@@ -1089,6 +1099,36 @@ export function registerSquadApi(ctx: Context): () => void {
           res.end(JSON.stringify(draft));
           return;
         }
+        if (suffix === "/materials" && req.method === "POST") {
+          // The file's name and the team travel in the QUERY; the body is the
+          // bytes, untouched. Base64 inside a JSON envelope would have cost a
+          // third more transfer and a full re-encode on both ends for nothing.
+          const query = new URL(req.url ?? "", "http://x").searchParams;
+          const teamId = query.get("teamId") ?? "";
+          const name = query.get("name") ?? "";
+          if (name === "") throw new Error("没有文件名。");
+          const team = teamOf(ctx, teamId);
+          const bytes = await readBody(req, MAX_FILE_BYTES);
+          const extracted = await extractDocument(name, new Uint8Array(bytes));
+          // Refused here, before anything is stored, by the same rule the
+          // panel shows: a document nobody can afford must not be half-added.
+          team.addMaterial({
+            materialId: `mat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+            name: extracted.name,
+            text: extracted.text,
+            addedAt: Date.now(),
+          });
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true, chars: extracted.text.length }));
+          return;
+        }
+        if (suffix === "/materials" && req.method === "DELETE") {
+          const body = await readJson<{ teamId: string; materialId: string }>(req);
+          teamOf(ctx, body.teamId).removeMaterial(body.materialId);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
         if (suffix === "/secretary/assist" && req.method === "POST") {
           const answer = await assistFor(ctx, await readJson<{ teamId: string; instruction: string }>(req));
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
@@ -1202,6 +1242,26 @@ export function registerSquadApi(ctx: Context): () => void {
  * Bounded, because this route is reachable by anything on localhost and an
  * unbounded read is a way to take the host down with a single POST.
  */
+/**
+ * Read a whole request body, for an upload.
+ *
+ * Separate from `readJson` and with its own, much larger cap: that one guards
+ * ordinary control messages, where 64 KB is already generous and a bigger
+ * limit would only widen what a bug can send. A document is a different kind
+ * of request and needs a different number, said in one place rather than by
+ * loosening the small one.
+ */
+async function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > limit) throw new Error(`文件过大（上限 ${Math.round(limit / 1024 / 1024)}MB）。`);
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 async function readJson<T>(req: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
   let size = 0;

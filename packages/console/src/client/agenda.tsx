@@ -66,6 +66,15 @@ function Phase({
   );
 }
 
+/**
+ * The agenda, and the secretary underneath it.
+ *
+ * A wrapper because the body has three shapes — running, awaiting
+ * confirmation, empty — and each of them returns early. The desk was appended
+ * to the LAST of the three, so it silently disappeared the moment a draft was
+ * pending: exactly when you most want to ask the secretary whether the plan
+ * it just wrote is any good.
+ */
 export function Agenda({
   team,
   onChanged,
@@ -73,6 +82,15 @@ export function Agenda({
   readonly team: TeamSummary;
   readonly onChanged: () => void;
 }): JSX.Element {
+  return (
+    <>
+      <AgendaBody team={team} onChanged={onChanged} />
+      <SecretaryDesk team={team} />
+    </>
+  );
+}
+
+function AgendaBody({ team, onChanged }: { readonly team: TeamSummary; readonly onChanged: () => void }): JSX.Element {
   const [command, setCommand] = useState("");
   const [drafting, setDrafting] = useState(false);
   const { error, setError, run } = useAction(onChanged);
@@ -190,8 +208,6 @@ export function Agenda({
         </div>
       )}
       {error === undefined ? null : <div className={styles.error}>{error}</div>}
-
-      <SecretaryDesk team={team} />
     </div>
   );
 }

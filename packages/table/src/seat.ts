@@ -1,4 +1,4 @@
-import type { PermissionMode, SeatCaps } from "@squad/shared";
+import { materialSection, type Material, type PermissionMode, type SeatCaps } from "@squad/shared";
 /**
  * seat.ts — a seat's configuration, and how it becomes a subagent request.
  *
@@ -58,6 +58,14 @@ export interface SeatSpec {
 
 /** What a seat is asked in one round, before it becomes prompt text. */
 export interface SeatTurnInput {
+  /**
+   * Background material the host imported, shown to every seat.
+   *
+   * Carried per turn rather than baked into the system prompt: material can
+   * be added and removed while a team works, and a prompt built once would
+   * keep handing out a document the host has since deleted.
+   */
+  readonly materials?: readonly Material[] | undefined;
   readonly seat: SeatSpec;
   /** The host's instruction for this round. */
   readonly instruction: string;
@@ -93,6 +101,12 @@ export interface SeatTurnInput {
 export function composeSeatPrompt(input: SeatTurnInput): string {
   const { seat, instruction, context } = input;
   const lines = [`你是「${seat.displayName}」，在一个小团队里工作。角色：${seat.role}。`, "", seat.systemPrompt.trim()];
+  // Material first, discussion second, instruction last. It is the background
+  // the discussion happened AGAINST — a seat that meets the argument before
+  // the document is reading a debate about something it has not seen.
+  if (input.materials !== undefined && input.materials.length > 0) {
+    lines.push("", ...materialSection(input.materials));
+  }
   if (context.length > 0) {
     lines.push(
       "",
