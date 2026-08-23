@@ -59,6 +59,14 @@ export interface TeamSummary {
     readonly systemPrompt: string;
     readonly backend: string;
     /**
+     * The agent this seat was built from is no longer in the library.
+     *
+     * Such a seat is orphaned: every later edit in the library skips it, in
+     * silence, and its model and colour stay whatever they were the day the
+     * team was built. Reported so the roster can say so and offer to relink.
+     */
+    readonly orphaned?: boolean | undefined;
+    /**
      * How a running seat's run is going, while it is going.
      *
      * `running` alone is a fact about a promise, not about the seat: it is

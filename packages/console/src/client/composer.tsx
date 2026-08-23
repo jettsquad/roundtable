@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from "react";
 // internal to ui-conversation and wired to dsh's own send path — so the box
 // below takes the bar's PLACE through the composer chain and is built from
 // the same pieces the rest of the app is.
-import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, useSnapshot } from "./api.ts";
 import { applyMention, mentionCandidates, mentionDraftAt, parseMentions } from "../mention.ts";
 import { describeSeat } from "../seat-status.ts";
@@ -69,6 +69,7 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
   // team had loaded yet, and React tore the whole composer out. That is why
   // the box vanished entirely rather than merely missing a button.
   const filePicker = useRef<HTMLInputElement>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
   // Which documents ride along with THIS message. Empty by default: importing
   // a file so one seat can summarise it must not cost that file on every
   // later turn of every seat.
@@ -80,7 +81,31 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
   // `<input>` and losing the app's own field styling on the one box people
   // type into most.
   const row = useRef<HTMLDivElement>(null);
-  const boxOf = (): HTMLInputElement | null => row.current?.querySelector("input") ?? null;
+  // The textarea, not the file input that also lives in this row. Selecting
+  // by tag alone used to be unambiguous and is not any more — and the wrong
+  // element would take the caret restore silently.
+  const boxOf = (): HTMLTextAreaElement | null => box.current;
+
+  /**
+   * Fit the box to its text, up to the ceiling in the stylesheet.
+   *
+   * Measured rather than counted: a line that WRAPPED and a newline that was
+   * typed both make the box taller, and counting "\n" would only notice the
+   * second. `height: auto` first, so shrinking works too — without it the box
+   * only ever grows, and deleting three paragraphs leaves three paragraphs of
+   * empty space.
+   */
+  const grow = (node: HTMLTextAreaElement): void => {
+    node.style.height = "auto";
+    node.style.height = `${Math.min(node.scrollHeight, 200)}px`;
+  };
+
+  // Once after mount, and again whenever the text is replaced from outside —
+  // a send clears it, a refusal puts it back.
+  useEffect(() => {
+    const node = box.current;
+    if (node !== null) grow(node);
+  }, [instruction]);
   // Where the caret is, tracked because the `@` list is decided by what sits
   // to the LEFT of it — reading the whole value would offer names for an `@`
   // the person has already moved past.
@@ -233,18 +258,37 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
       </div>
 
       <div className={styles.row} ref={row}>
-        <Input
-          className={styles.grow ?? ""}
+        {/* A textarea, not a one-line input. An instruction to a team is often
+            several sentences, and a box that scrolls sideways hides the middle
+            of what you are about to send. It grows with the text up to a
+            ceiling and then scrolls, so the composer never eats the
+            discussion. */}
+        <textarea
+          className={`${styles.grow ?? ""} ${styles.composerInput ?? ""}`}
           value={instruction}
-          placeholder={`跟「${current.displayName}」说点什么，@ 点名单独问某人…`}
+          rows={1}
+          placeholder={`跟「${current.displayName}」说点什么，@ 点名单独问某人…（⌘↵ 发送，↵ 换行）`}
           disabled={running}
+          ref={box}
           onChange={(event) => {
             setInstruction(event.target.value);
             setCaret(event.target.selectionStart ?? event.target.value.length);
             setHighlight(0);
+            // Resized on every change, not in a ref callback: a ref callback
+            // runs at mount and never again, so the box would have stayed one
+            // line high no matter how much was typed into it.
+            grow(event.target);
           }}
-          onSelect={(event) => setCaret((event.target as HTMLInputElement).selectionStart ?? 0)}
+          onSelect={(event) => setCaret((event.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onKeyDown={(event) => {
+            // ⌘↵ / Ctrl+↵ sends, always — including while the name list is
+            // open, because at that point you have finished the sentence and
+            // the list is just in the way.
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              if (!running && instruction.trim() !== "") void send();
+              return;
+            }
             // While the list is open it owns the arrow keys and Enter. Letting
             // Enter fall through would send the message the moment someone
             // tried to choose a name, which is the one keystroke they meant
@@ -269,7 +313,8 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
                 return;
               }
             }
-            if (event.key === "Enter" && !running && instruction.trim() !== "") void send();
+            // Plain ↵ is a newline now, so nothing more to do: the textarea's
+            // own default inserts it.
           }}
         />
         {candidates.length === 0 ? null : (

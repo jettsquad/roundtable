@@ -771,3 +771,34 @@
 .scrollButton:hover {
   opacity: 1;
 }
+
+/* The message box. Multi-line, growing with what you type. */
+.composerInput {
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  background: var(--dsh-color-input, #131317);
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+  /* Wrapping is the point; a resize grip would fight the auto-height. */
+  resize: none;
+  overflow-y: auto;
+  max-height: 200px;
+}
+
+.composerInput:focus {
+  outline: none;
+  border-color: #4c8;
+}
+
+/* The relink picker, inside the warning badge it belongs to. */
+.relink {
+  margin-left: 6px;
+  font-size: 11px;
+  background: var(--dsh-color-input, #131317);
+  color: inherit;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  border-radius: 5px;
+}

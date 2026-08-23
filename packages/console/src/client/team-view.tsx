@@ -18,7 +18,7 @@ import type { UsageTotals } from "@squad/shared";
 import { useState } from "react";
 import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api } from "./api.ts";
-import { useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
+import { useAction, useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
 import { Agenda } from "./agenda.tsx";
 import { ContextPanel } from "./context-panel.tsx";
 import { Materials } from "./materials.tsx";
@@ -82,7 +82,16 @@ function statusLine(team: TeamSummary): string {
   return "空闲：没有成员在执行，等待你的指令。";
 }
 
-function Roster({ team, data }: { readonly team: TeamSummary; readonly data: SquadSnapshot }): JSX.Element {
+function Roster({
+  team,
+  data,
+  onChanged,
+}: {
+  readonly team: TeamSummary;
+  readonly data: SquadSnapshot;
+  readonly onChanged: () => void;
+}): JSX.Element {
+  const { error, run } = useAction(onChanged);
   return (
     <div className={styles.rosterStrip}>
       {team.seats.map((seat) => (
@@ -118,8 +127,32 @@ function Roster({ team, data }: { readonly team: TeamSummary; readonly data: Squ
           ) : (
             <span className={styles.badgeIdle}>待命</span>
           )}
+          {/* An orphaned seat looks exactly like a healthy one until you edit
+              the agent and nothing happens. Named, with the fix next to it. */}
+          {seat.orphaned !== true ? null : (
+            <span className={styles.badgeBad} title="这个成员是从一个已经不在 Agent 库里的 Agent 建的，改库不会影响它">
+              ⚠️ 已脱离 Agent 库
+              <select
+                className={styles.relink ?? ""}
+                value=""
+                onChange={(event) => {
+                  const templateId = event.target.value;
+                  if (templateId === "") return;
+                  void run(() => api.relinkSeat({ teamId: team.teamId, seatId: seat.seatId, templateId }));
+                }}
+              >
+                <option value="">重新关联到…</option>
+                {data.agents.map((agent) => (
+                  <option key={agent.templateId} value={agent.templateId}>
+                    {agent.displayName}
+                  </option>
+                ))}
+              </select>
+            </span>
+          )}
         </span>
       ))}
+      {error === undefined ? null : <div className={styles.error}>{error}</div>}
     </div>
   );
 }
@@ -243,7 +276,7 @@ export function TeamView({
         {team.seats.some((seat) => seat.isSecretary) ? "" : " · ⚠️ 没有秘书，排不了议程"}
       </div>
 
-      <Roster team={team} data={snapshot.data} />
+      <Roster team={team} data={snapshot.data} onChanged={again} />
       {/* The agenda lives here as well as in the panel: this is where the
           work happens, and a plan you must leave the room to confirm is a
           plan you confirm without looking at the discussion it came from. */}

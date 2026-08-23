@@ -53,7 +53,7 @@ import type {
 } from "./wire.ts";
 import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { extractDocument, MAX_FILE_BYTES } from "./extract.ts";
-import { planSeatSync, type TemplateFacts } from "./seat-sync.ts";
+import { planSeatSync, syncSeat, type TemplateFacts } from "./seat-sync.ts";
 import { parseNewTeam } from "./parse.ts";
 import { tmpdir } from "node:os";
 import { assertPublicHostCommand, checkAgendaAgainstRoster, type AgendaSpec } from "@squad/shared";
@@ -226,6 +226,9 @@ function quotesFrom(
 
 /** Build the snapshot the panel renders. Pure read; nothing here starts anything. */
 export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
+  // The agents the library still offers. A seat bound to anything else is
+  // frozen — see `orphaned` below.
+  const liveTemplates = new Set(ctx.agentTemplates.list().map((template) => template.templateId));
   const teams: TeamSummary[] = [];
   for (const teamId of ctx.teams.list()) {
     const team = ctx.teams.get(teamId);
@@ -252,6 +255,18 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           ...(seat.caps === undefined ? {} : { caps: seat.caps }),
           ...(seat.permissionMode === undefined ? {} : { permissionMode: seat.permissionMode }),
           ...(seat.templateId === undefined ? {} : { templateId: seat.templateId }),
+          // Whether the LIVE library still offers the agent this seat was
+          // built from. Checked against `list()` and not `get()`: `get` returns
+          // soft-deleted templates on purpose, so a name still renders, and
+          // asking it here answered "still there" for a seat bound to an agent
+          // the person deleted months ago.
+          //
+          // Such a seat is frozen. Edits reach a seat only when its template
+          // is SAVED, and a deleted template has no form to save — so its
+          // colour and its model stay whatever they were the day the team was
+          // built, while the library shows the replacement agent's. That is
+          // 「改了配色，团队里没变」.
+          orphaned: seat.templateId !== undefined && !liveTemplates.has(seat.templateId),
           ...(seat.color === undefined ? {} : { color: seat.color }),
           ...(blockedReason(ctx, seat) === undefined ? {} : { blocked: blockedReason(ctx, seat) }),
         };
@@ -675,6 +690,31 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     caps: request.caps,
     color: request.color,
   });
+}
+
+/** The template fields a seat mirrors, read off a library entry. */
+function templateFactsOf(template: {
+  templateId: string;
+  displayName: string;
+  role: string;
+  systemPrompt: string;
+  backend: TemplateFacts["backend"];
+  connectionId?: string | undefined;
+  permissionMode?: TemplateFacts["permissionMode"];
+  caps?: TemplateFacts["caps"];
+  color?: string | undefined;
+}): TemplateFacts {
+  return {
+    templateId: template.templateId,
+    displayName: template.displayName,
+    role: template.role,
+    systemPrompt: template.systemPrompt,
+    backend: template.backend,
+    connectionId: template.connectionId,
+    permissionMode: template.permissionMode,
+    caps: template.caps,
+    color: template.color,
+  };
 }
 
 /**
@@ -1248,6 +1288,28 @@ export function registerSquadApi(ctx: Context): () => void {
         if (suffix === "/stop" && req.method === "POST") {
           const body = await readJson<{ teamId: string; reason?: string }>(req);
           teamOf(ctx, body.teamId).stop(body.reason ?? "主持人在面板上叫停。");
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/seats/relink" && req.method === "POST") {
+          // Re-point a seat at an agent in the library, and take its settings.
+          // Matching on NAME was the other option and is worse: two agents may
+          // share a display name, and a wrong guess here silently changes
+          // which model a seat runs on.
+          const body = await readJson<{ teamId: string; seatId: string; templateId: string }>(req);
+          const team = teamOf(ctx, body.teamId);
+          const template = ctx.agentTemplates.get(body.templateId);
+          if (template === undefined) throw new Error(`Agent 库里没有这个模板：${body.templateId}。`);
+          const at = team.seats.findIndex((seat) => seat.seatId === body.seatId);
+          if (at < 0) throw new Error("这支团队里没有这个成员。");
+          const seat = team.seats[at];
+          if (seat === undefined) throw new Error("这支团队里没有这个成员。");
+          const next = syncSeat({ ...seat, templateId: template.templateId }, templateFactsOf(template));
+          // Removed and re-added AT ITS OLD INDEX: seat order is speaking
+          // order, and a relink must not reorder the meeting.
+          team.removeSeat(seat.seatId, { confirmSecretary: true });
+          team.addSeat(next, { at });
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true }));
           return;

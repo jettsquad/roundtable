@@ -84,6 +84,9 @@ export const api = {
   },
   removeMaterial: (body: { teamId: string; materialId: string }): Promise<{ ok: true }> =>
     call("/materials", "DELETE", body),
+  /** Point a seat at an agent in the library and take its settings. */
+  relinkSeat: (body: { teamId: string; seatId: string; templateId: string }): Promise<{ ok: true }> =>
+    call("/seats/relink", "POST", body),
   pinMaterial: (body: { teamId: string; materialId: string; pinned: boolean }): Promise<{ ok: true }> =>
     call("/materials", "PATCH", body),
   /** Ask the secretary to do one job. The answer is a draft, not a turn. */
