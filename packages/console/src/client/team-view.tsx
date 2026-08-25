@@ -22,6 +22,7 @@ import { useAction, useSnapshot, type SquadSnapshot, type TeamSummary } from "./
 import { Agenda } from "./agenda.tsx";
 import { ContextPanel } from "./context-panel.tsx";
 import { Materials } from "./materials.tsx";
+import { AuditLog } from "./audit.tsx";
 import { Discussion } from "./discussion.tsx";
 import { describeSeat, describeTeam, type SeatStatus } from "../seat-status.ts";
 import { useSitting } from "./use-sitting.ts";
@@ -282,6 +283,7 @@ export function TeamView({
           plan you confirm without looking at the discussion it came from. */}
       <Materials team={team} onChanged={again} />
       <ContextPanel team={team} onChanged={again} />
+      <AuditLog team={team} />
       <Agenda team={team} onChanged={again} />
       <Discussion team={team} autoScroll onChanged={again} />
       {/* No input box here. There is exactly one on the screen and it is the

@@ -53,12 +53,15 @@ import type {
 } from "./wire.ts";
 import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { agendaEditIsLegal } from "./agenda-verdict.ts";
+import { driftBetween } from "./roster-drift.ts";
 import { extractDocument, MAX_FILE_BYTES } from "./extract.ts";
 import { planSeatSync, syncSeat, type TemplateFacts } from "./seat-sync.ts";
 import { parseNewTeam } from "./parse.ts";
 import { tmpdir } from "node:os";
 import { assertPublicHostCommand, checkAgendaAgainstRoster, type AgendaSpec } from "@squad/shared";
 import {
+  draftIdentityMatches,
+  shortHash,
   connectionMismatch,
   providerForSeat,
   type AgentCheckReport,
@@ -288,7 +291,29 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       ...transcriptTail(team.transcript()),
       ...(team.confirmed === undefined
         ? {}
-        : { unfinished: { phases: team.confirmed.agenda.phases.map((p) => p.title), done: team.confirmed.done } }),
+        : {
+            unfinished: {
+              phases: team.confirmed.agenda.phases.map((p) => p.title),
+              done: team.confirmed.done,
+              hash: shortHash(team.confirmed.hash),
+              // Named when the roster has moved since confirmation. Execution
+              // uses the CURRENT roster on purpose; this is what stops that
+              // being invisible.
+              rosterDrift: driftBetween(
+                team.confirmed.roster,
+                team.seats.map((seat) => ({ seatId: seat.seatId, displayName: seat.displayName })),
+              ),
+            },
+          }),
+      audit: team.audit.slice(-40).map((entry) => ({
+        at: entry.at,
+        kind: entry.kind,
+        detail: entry.detail,
+        ...(entry.agendaHash === undefined ? {} : { agendaHash: shortHash(entry.agendaHash) }),
+      })),
+      ...(team.draftIdentity === undefined
+        ? {}
+        : { draftAgendaId: team.draftIdentity.agendaId, draftRevision: team.draftIdentity.revision }),
       ...(team.draft === undefined
         ? {}
         : {
@@ -486,6 +511,18 @@ export function resolveAgenda(ctx: Context, request: AgendaVerdictRequest): void
   const standing = team.draft?.agenda;
   const legal = agendaEditIsLegal(standing, request.agenda);
   if (!legal.ok) throw new Error(legal.detail ?? "这份议程不能确认。");
+  // And it must be the draft this caller was LOOKING at. Two panels open, or
+  // one left on a screen while the secretary re-drafted, and the last writer
+  // silently wins: the person reads one plan and runs another. 1.x refused
+  // exactly this with teamAgendaId + revision.
+  const identity = team.draftIdentity;
+  if (identity !== undefined) {
+    const named = draftIdentityMatches(identity, {
+      agendaId: request.agendaId,
+      revision: request.revision,
+    });
+    if (!named.ok) throw new Error(named.detail ?? "这份草案已经不是当前那一份了。");
+  }
   const held = request.agenda ?? (standing as AgendaSpec);
   team.setDraft(undefined);
   if (request.verdict === "discard") return;

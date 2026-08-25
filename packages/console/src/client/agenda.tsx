@@ -44,7 +44,16 @@ export function Agenda({
         <div className={styles.muted}>
           已完成 {done.length} / {phases.length} 个阶段
           {next === undefined ? "" : ` · 下一个是「${next}」`}
+          {` · 确认指纹 ${team.unfinished.hash}`}
         </div>
+        {/* Execution reads the CURRENT roster, on purpose — a member added
+            mid-agenda should be usable. This is what stops that being
+            invisible: the plan was approved for a different table. */}
+        {team.unfinished.rosterDrift.length === 0 ? null : (
+          <div className={styles.error}>
+            名册和你确认时不一样了：{team.unfinished.rosterDrift.join("、")}。续跑会按现在的名册来。
+          </div>
+        )}
         <div className={styles.row}>
           <button
             type="button"

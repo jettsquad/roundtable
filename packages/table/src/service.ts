@@ -45,6 +45,8 @@ import {
 import { activityFor, activityKey, type SeatActivity } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
 import { baseForFolder, recordForSession, restoreOrder, unclaimed } from "./sitting.ts";
+import { appendAudit, type AuditEntry, type AuditKind } from "./audit.ts";
+import { agendaHash } from "./hash.ts";
 import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "./roster.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
 
@@ -138,7 +140,20 @@ export interface Team {
    * part of.
    */
   readonly confirmed:
-    { readonly agenda: AgendaSpec; readonly at: number; readonly done: readonly string[] } | undefined;
+    | {
+        readonly agenda: AgendaSpec;
+        readonly at: number;
+        readonly done: readonly string[];
+        /** sha256 of the canonical agenda, so what ran stays checkable. */
+        readonly hash: string;
+        /** Who was at the table when it was confirmed. */
+        readonly roster: readonly { readonly seatId: string; readonly displayName: string; readonly role: string }[];
+      }
+    | undefined;
+  /** This team's decisions, oldest first. Not the transcript — see `audit.ts`. */
+  readonly audit: readonly AuditEntry[];
+  /** The draft's identity, so a confirmation can name the one it saw. */
+  readonly draftIdentity: { readonly agendaId: string; readonly revision: number } | undefined;
   /**
    * Carry on an unfinished agenda, from the phase after the last finished one.
    *
@@ -510,6 +525,10 @@ export class TeamsService extends Service {
               agenda: saved.draft,
               at: saved.draftedAt ?? Date.now(),
               ...(saved.draftFromTurnId === undefined ? {} : { fromTurnId: saved.draftFromTurnId }),
+              // Rows written before identity existed get one now, so a
+              // restored draft can still be named by a confirmation.
+              agendaId: saved.draftAgendaId ?? `ag-${saved.teamId}`,
+              revision: saved.draftRevision ?? 1,
             },
       // The base's own array when this is a sitting: material is the team's,
       // and copying it would let one session's import be invisible in another.
@@ -517,7 +536,17 @@ export class TeamsService extends Service {
       confirmed:
         saved.confirmed === undefined
           ? undefined
-          : { agenda: saved.confirmed, at: saved.confirmedAt ?? Date.now(), done: [...(saved.confirmedDone ?? [])] },
+          : {
+              agenda: saved.confirmed,
+              at: saved.confirmedAt ?? Date.now(),
+              done: [...(saved.confirmedDone ?? [])],
+              // Recomputed rather than trusted when the row predates hashing:
+              // a stored hash that no longer matches its agenda would be a
+              // lie, and an absent one is merely a gap.
+              hash: saved.confirmedHash ?? agendaHash(saved.confirmed),
+              roster: saved.confirmedRoster ?? [],
+            },
+      audit: (saved.audit ?? []) as readonly AuditEntry[],
       disposed: false,
     });
   }
@@ -559,7 +588,13 @@ export class TeamsService extends Service {
             confirmed: record.confirmed.agenda,
             confirmedAt: record.confirmed.at,
             confirmedDone: record.confirmed.done,
+            confirmedHash: record.confirmed.hash,
+            confirmedRoster: record.confirmed.roster as { seatId: string; displayName: string; role: string }[],
           }),
+      ...(record.draft === undefined
+        ? {}
+        : { draftAgendaId: record.draft.agendaId, draftRevision: record.draft.revision }),
+      ...(record.audit.length === 0 ? {} : { audit: record.audit as TeamPersisted["audit"] }),
       createdAt: existing?.createdAt ?? Date.now(),
     };
     this.writes = this.writes.then(async () => {
@@ -647,6 +682,7 @@ export class TeamsService extends Service {
       speaking: new Map(),
       draft: undefined,
       confirmed: undefined,
+      audit: [],
       materials: [],
       disposed: false,
     };
@@ -762,6 +798,7 @@ export class TeamsService extends Service {
       speaking: new Map(),
       draft: undefined,
       confirmed: undefined,
+      audit: [],
       materials: base.materials,
       disposed: false,
     };
@@ -858,6 +895,25 @@ export class TeamsService extends Service {
     }
   }
 
+  /**
+   * Write one line into this team's audit.
+   *
+   * Not into the transcript: the transcript is what the team SAID and what
+   * the seats read, and filling it with bookkeeping would spend a model's
+   * window on our own record-keeping. The two answer different questions.
+   *
+   * Does not persist by itself — every caller is already writing the record
+   * for the change this line describes, and two writes would race.
+   */
+  private note(record: TeamRecord, kind: AuditKind, detail: string, hash?: string): void {
+    record.audit = appendAudit(record.audit, {
+      at: Date.now(),
+      kind,
+      detail,
+      ...(hash === undefined ? {} : { agendaHash: hash }),
+    });
+  }
+
   /** Every sitting of one team, base excluded. */
   private sittingsOf(teamId: string): readonly TeamRecord[] {
     return [...this.teams.values()].filter((record) => record.baseTeamId === teamId);
@@ -941,16 +997,40 @@ export class TeamsService extends Service {
       get confirmed() {
         return record.confirmed;
       },
+      get audit() {
+        return record.audit;
+      },
+      get draftIdentity() {
+        return record.draft === undefined
+          ? undefined
+          : { agendaId: record.draft.agendaId, revision: record.draft.revision };
+      },
       resumeAgenda: () => {
         const held = record.confirmed;
         if (held === undefined) throw new Error("没有未跑完的议程。");
         return this.runAgenda(record, held.agenda, held.done.length);
       },
       setDraft: (draft, fromTurnId) => {
-        record.draft =
-          draft === undefined
-            ? undefined
-            : { agenda: draft, at: Date.now(), ...(fromTurnId === undefined ? {} : { fromTurnId }) };
+        if (draft === undefined) {
+          record.draft = undefined;
+        } else {
+          // The id is the TEAM's plan identity and survives re-drafts; the
+          // revision counts them. A confirmation names both, so a stale tab
+          // cannot run a plan that has since been replaced.
+          record.draft = {
+            agenda: draft,
+            at: Date.now(),
+            ...(fromTurnId === undefined ? {} : { fromTurnId }),
+            agendaId: record.draft?.agendaId ?? `ag-${record.teamId}`,
+            revision: (record.draft?.revision ?? 0) + 1,
+          };
+          this.note(
+            record,
+            "agenda-drafted",
+            `秘书拟了第 ${record.draft.revision} 版草案，${draft.phases.length} 个阶段。`,
+            agendaHash(draft),
+          );
+        }
         this.persist(record);
       },
       get materials() {
@@ -1106,11 +1186,29 @@ export class TeamsService extends Service {
     // Written down BEFORE the first phase runs. A crash between confirmation
     // and the first turn used to leave nothing at all — no plan, no record
     // that one was confirmed.
+    const hash = agendaHash(agenda);
     record.confirmed = {
       agenda,
       at: record.confirmed?.at ?? Date.now(),
       done: [...agenda.phases.slice(0, startFrom).map((phase) => phase.title)],
+      hash,
+      // Who was at the table at confirmation. Execution reads the CURRENT
+      // roster on purpose — a member added mid-agenda should be usable — so
+      // this is what lets a later reader see that the two differed.
+      roster: record.seats.map((seat) => ({
+        seatId: seat.seatId,
+        displayName: seat.displayName,
+        role: seat.role,
+      })),
     };
+    this.note(
+      record,
+      startFrom > 0 ? "agenda-resumed" : "agenda-confirmed",
+      startFrom > 0
+        ? `从第 ${startFrom + 1} 阶段续跑，共 ${agenda.phases.length} 个阶段。`
+        : `主持人确认了议程，共 ${agenda.phases.length} 个阶段，名册 ${record.seats.length} 人。`,
+      hash,
+    );
     this.persist(record);
     const host = record.handle.agent;
     if (startFrom > 0) {
@@ -1228,8 +1326,8 @@ export class TeamsService extends Service {
         running.completedPhases.push(phase.title);
         // Recorded as it goes, so an interruption knows where it stopped.
         record.confirmed = {
+          ...(record.confirmed ?? { agenda, at: Date.now(), hash, roster: [] }),
           agenda,
-          at: record.confirmed?.at ?? Date.now(),
           done: [...agenda.phases.slice(0, phaseIndex + 1).map((one) => one.title)],
         };
         this.persist(record);
@@ -1248,6 +1346,16 @@ export class TeamsService extends Service {
         !running.abort.signal.aborted &&
         pausedAfter === undefined &&
         running.completedPhases.length >= agenda.phases.length - startFrom;
+      this.note(
+        record,
+        finished ? "agenda-finished" : running.abort.signal.aborted ? "agenda-stopped" : "agenda-paused",
+        finished
+          ? `议程跑完，共 ${running.completedPhases.length} 个阶段。`
+          : running.abort.signal.aborted
+            ? `议程被叫停，已完成 ${running.completedPhases.length} 个阶段。`
+            : `议程停在「${pausedAfter ?? ""}」之后，等主持人。`,
+        hash,
+      );
       if (finished) record.confirmed = undefined;
       this.persist(record);
     }
@@ -1723,7 +1831,15 @@ interface TeamRecord {
   /** seatId → what it is answering right now. */
   readonly speaking: Map<string, string>;
   /** An agenda waiting on the host, and when it was drafted. */
-  draft: { readonly agenda: AgendaSpec; readonly at: number; readonly fromTurnId?: string } | undefined;
+  draft:
+    | {
+        readonly agenda: AgendaSpec;
+        readonly at: number;
+        readonly fromTurnId?: string;
+        readonly agendaId: string;
+        readonly revision: number;
+      }
+    | undefined;
   /**
    * The agenda the host CONFIRMED, and the phases that finished.
    *
@@ -1732,7 +1848,17 @@ interface TeamRecord {
    * plan entirely: the record kept the instructions it had issued and nothing
    * said what they were part of or where it had got to.
    */
-  confirmed: { readonly agenda: AgendaSpec; readonly at: number; done: string[] } | undefined;
+  confirmed:
+    | {
+        readonly agenda: AgendaSpec;
+        readonly at: number;
+        done: string[];
+        readonly hash: string;
+        readonly roster: readonly { readonly seatId: string; readonly displayName: string; readonly role: string }[];
+      }
+    | undefined;
+  /** This team's audit log, oldest first and bounded. */
+  audit: readonly AuditEntry[];
   /**
    * Background material every seat reads.
    *

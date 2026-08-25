@@ -134,6 +134,38 @@ const teamRecord = z.object({
   confirmedAt: z.number().optional(),
   /** Phase titles that finished, in order. Where a resume starts from. */
   confirmedDone: z.array(z.string()).optional(),
+  /**
+   * sha256 of the canonical confirmed agenda.
+   *
+   * So 「跑的是不是我确认的那份」 stays answerable after everyone has
+   * forgotten. Not a security boundary — the host may edit freely — an audit
+   * fact.
+   */
+  confirmedHash: z.string().optional(),
+  /**
+   * Who was at the table when it was confirmed.
+   *
+   * 1.x carried `scope.participantSnapshot` for this. Execution reads the
+   * CURRENT roster, which is right — a member added mid-agenda should be
+   * usable — but then 「你确认时的那队人」 and 「实际跑的那队人」 can differ
+   * with nothing saying so. This is the thing that says so.
+   */
+  confirmedRoster: z.array(z.object({ seatId: z.string(), displayName: z.string(), role: z.string() })).optional(),
+  /** Stable across edits and re-drafts; what a confirmation names. */
+  draftAgendaId: z.string().optional(),
+  /** Bumped whenever a new draft replaces the standing one. */
+  draftRevision: z.number().optional(),
+  /** The team's audit log, oldest first, bounded. */
+  audit: z
+    .array(
+      z.object({
+        at: z.number(),
+        kind: z.string(),
+        detail: z.string(),
+        agendaHash: z.string().optional(),
+      }),
+    )
+    .optional(),
   draft: AgendaSpecSchema.optional(),
   draftedAt: z.number().optional(),
   /** The secretary turn this draft was converted from, when it came from one. */

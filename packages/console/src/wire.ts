@@ -158,7 +158,32 @@ export interface TeamSummary {
    * exactly the moment nobody is watching, and work that restarts unasked is
    * work nobody decided to do.
    */
-  readonly unfinished?: { readonly phases: readonly string[]; readonly done: readonly string[] } | undefined;
+  readonly unfinished?:
+    | {
+        readonly phases: readonly string[];
+        readonly done: readonly string[];
+        /** First 12 hex of the confirmation fingerprint. */
+        readonly hash: string;
+        /** Who joined or left since it was confirmed. Empty when nobody did. */
+        readonly rosterDrift: readonly string[];
+      }
+    | undefined;
+  /** The standing draft's identity, echoed back when confirming it. */
+  readonly draftAgendaId?: string | undefined;
+  readonly draftRevision?: number | undefined;
+  /**
+   * What was decided about this team, newest last.
+   *
+   * Not the transcript: that is what the team SAID. This is what was decided
+   * and to what — the question 「谁确认的、什么时候、跑的是哪一份」 that a
+   * scrolling log cannot answer.
+   */
+  readonly audit: readonly {
+    readonly at: number;
+    readonly kind: string;
+    readonly detail: string;
+    readonly agendaHash?: string | undefined;
+  }[];
   /** Lines of recorded discussion. */
   readonly recorded: number;
   /** What this team's seats have consumed, when any backend reported it. */
@@ -418,6 +443,15 @@ export interface AgendaVerdictRequest {
   readonly verdict: "confirm" | "discard";
   /** An edited draft replaces the held one; absent confirms it as written. */
   readonly agenda?: AgendaSpec;
+  /**
+   * Which draft the caller was looking at.
+   *
+   * Echoed back so a stale panel cannot confirm a plan that has since been
+   * replaced. Optional: the slash command does not know about revisions, and
+   * refusing it would break a surface to guard a race it cannot cause.
+   */
+  readonly agendaId?: string;
+  readonly revision?: number;
 }
 
 /** Renaming a team. */

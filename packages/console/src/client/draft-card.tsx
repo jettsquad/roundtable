@@ -177,6 +177,11 @@ export function DraftCard({
       .resolveAgenda({
         teamId: team.teamId,
         verdict,
+        // What this panel was showing. If the secretary re-drafted while it
+        // sat here, the confirmation is refused rather than quietly running
+        // a plan nobody read.
+        ...(team.draftAgendaId === undefined ? {} : { agendaId: team.draftAgendaId }),
+        ...(team.draftRevision === undefined ? {} : { revision: team.draftRevision }),
         // The edited agenda travels only when it differs, so an untouched
         // draft is confirmed exactly as the secretary wrote it.
         ...(verdict === "confirm" && edited !== undefined ? { agenda: edited } : {}),
