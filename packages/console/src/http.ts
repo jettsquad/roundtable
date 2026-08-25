@@ -52,6 +52,7 @@ import type {
   TeamSummary,
 } from "./wire.ts";
 import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
+import { agendaEditIsLegal } from "./agenda-verdict.ts";
 import { extractDocument, MAX_FILE_BYTES } from "./extract.ts";
 import { planSeatSync, syncSeat, type TemplateFacts } from "./seat-sync.ts";
 import { parseNewTeam } from "./parse.ts";
@@ -285,6 +286,9 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
       recorded: team.transcript().filter((entry) => entry.kind === "user/message" && entry.text !== "").length,
       usage: team.usage,
       ...transcriptTail(team.transcript()),
+      ...(team.confirmed === undefined
+        ? {}
+        : { unfinished: { phases: team.confirmed.agenda.phases.map((p) => p.title), done: team.confirmed.done } }),
       ...(team.draft === undefined
         ? {}
         : {
@@ -472,8 +476,17 @@ export async function agendaFromReplyFor(
  */
 export function resolveAgenda(ctx: Context, request: AgendaVerdictRequest): void {
   const team = teamOf(ctx, request.teamId);
-  const held = request.agenda ?? team.draft?.agenda;
-  if (held === undefined) throw new Error("没有待确认的议程。");
+  // A draft must be STANDING. `request.agenda` edits it; it cannot conjure
+  // one — which is what the old `request.agenda ?? team.draft` allowed: a
+  // client could post an agenda nobody had proposed and the team would run
+  // it. 1.x drew this line hard (the renderer may send a taskId and nothing
+  // else, the IR is built in the main process), and the reason survives the
+  // difference in architecture: 「秘书提议、主持人确认」 is only a real rule
+  // if there is always a proposal to confirm.
+  const standing = team.draft?.agenda;
+  const legal = agendaEditIsLegal(standing, request.agenda);
+  if (!legal.ok) throw new Error(legal.detail ?? "这份议程不能确认。");
+  const held = request.agenda ?? (standing as AgendaSpec);
   team.setDraft(undefined);
   if (request.verdict === "discard") return;
 
@@ -1249,6 +1262,16 @@ export function registerSquadApi(ctx: Context): () => void {
           const draft = await agendaFromReplyFor(ctx, await readJson<{ teamId: string; turnId: string }>(req));
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify(draft));
+          return;
+        }
+        if (suffix === "/agenda/resume" && req.method === "POST") {
+          const body = await readJson<{ teamId: string }>(req);
+          const team = teamOf(ctx, body.teamId);
+          // Not awaited: an agenda is minutes of work and the click that
+          // restarted it must not hang on it.
+          void team.resumeAgenda().catch((error: Error) => ctx.logger.warn(`议程续跑失败：${error.message}`));
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
           return;
         }
         if (suffix === "/agenda" && req.method === "POST") {

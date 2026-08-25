@@ -150,6 +150,15 @@ export interface TeamSummary {
    * read without the reasoning behind it.
    */
   readonly draftFromTurnId?: string | undefined;
+  /**
+   * A confirmed agenda that has not finished — stopped, paused, or cut short
+   * by a restart.
+   *
+   * Shown so it can be carried on. It never resumes by itself: a restart is
+   * exactly the moment nobody is watching, and work that restarts unasked is
+   * work nobody decided to do.
+   */
+  readonly unfinished?: { readonly phases: readonly string[]; readonly done: readonly string[] } | undefined;
   /** Lines of recorded discussion. */
   readonly recorded: number;
   /** What this team's seats have consumed, when any backend reported it. */

@@ -116,6 +116,24 @@ const teamRecord = z.object({
       }),
     )
     .optional(),
+  /**
+   * The agenda the host confirmed, and how far it got.
+   *
+   * 1.x wrote the whole IR into `events.log` as `teamAgendaConfirmed` and
+   * replayed it on start, so a crash mid-agenda left the plan intact and the
+   * team idle. 2.0 held it only in memory: a restart lost the plan, lost
+   * which phase it was in, and left a record full of instructions with
+   * nothing saying what they had been part of.
+   *
+   * Cleared when the agenda finishes. While it stands, a restart can offer to
+   * carry on from `completedPhases.length` — never automatically, which is
+   * 1.x's rule and the right one: work that resumes without being asked is
+   * work nobody decided to do.
+   */
+  confirmed: AgendaSpecSchema.optional(),
+  confirmedAt: z.number().optional(),
+  /** Phase titles that finished, in order. Where a resume starts from. */
+  confirmedDone: z.array(z.string()).optional(),
   draft: AgendaSpecSchema.optional(),
   draftedAt: z.number().optional(),
   /** The secretary turn this draft was converted from, when it came from one. */

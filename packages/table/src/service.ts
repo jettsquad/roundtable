@@ -129,6 +129,25 @@ export interface Team {
    */
   readonly draft: { readonly agenda: AgendaSpec; readonly at: number; readonly fromTurnId?: string } | undefined;
   /**
+   * The agenda the host confirmed and how far it got, when one is unfinished.
+   *
+   * Present after a stop, a `wait-for-host` pause, or a restart; absent once
+   * the agenda ran to the end. 1.x kept this in `events.log` and replayed it;
+   * 2.0 held it only in memory, so a restart mid-agenda lost the plan and
+   * left a record full of instructions with nothing saying what they were
+   * part of.
+   */
+  readonly confirmed:
+    { readonly agenda: AgendaSpec; readonly at: number; readonly done: readonly string[] } | undefined;
+  /**
+   * Carry on an unfinished agenda, from the phase after the last finished one.
+   *
+   * Never automatic — 1.x's rule and the right one: work that resumes without
+   * being asked is work nobody decided to do, and a restart is exactly when
+   * nobody is watching.
+   */
+  resumeAgenda(): Promise<AgendaOutcome>;
+  /**
    * Put a draft up for confirmation, or clear the one standing.
    *
    * `fromTurnId` is the secretary reply it was converted from. Carried so the
@@ -495,6 +514,10 @@ export class TeamsService extends Service {
       // The base's own array when this is a sitting: material is the team's,
       // and copying it would let one session's import be invisible in another.
       materials: base?.materials ?? [...(saved.materials ?? [])],
+      confirmed:
+        saved.confirmed === undefined
+          ? undefined
+          : { agenda: saved.confirmed, at: saved.confirmedAt ?? Date.now(), done: [...(saved.confirmedDone ?? [])] },
       disposed: false,
     });
   }
@@ -530,6 +553,13 @@ export class TeamsService extends Service {
             ...(record.draft.fromTurnId === undefined ? {} : { draftFromTurnId: record.draft.fromTurnId }),
           }),
       ...(record.materials.length === 0 ? {} : { materials: record.materials }),
+      ...(record.confirmed === undefined
+        ? {}
+        : {
+            confirmed: record.confirmed.agenda,
+            confirmedAt: record.confirmed.at,
+            confirmedDone: record.confirmed.done,
+          }),
       createdAt: existing?.createdAt ?? Date.now(),
     };
     this.writes = this.writes.then(async () => {
@@ -616,6 +646,7 @@ export class TeamsService extends Service {
       seats: [...input.seats],
       speaking: new Map(),
       draft: undefined,
+      confirmed: undefined,
       materials: [],
       disposed: false,
     };
@@ -730,6 +761,7 @@ export class TeamsService extends Service {
       seats: base.seats,
       speaking: new Map(),
       draft: undefined,
+      confirmed: undefined,
       materials: base.materials,
       disposed: false,
     };
@@ -906,6 +938,14 @@ export class TeamsService extends Service {
       get draft() {
         return record.draft;
       },
+      get confirmed() {
+        return record.confirmed;
+      },
+      resumeAgenda: () => {
+        const held = record.confirmed;
+        if (held === undefined) throw new Error("没有未跑完的议程。");
+        return this.runAgenda(record, held.agenda, held.done.length);
+      },
       setDraft: (draft, fromTurnId) => {
         record.draft =
           draft === undefined
@@ -1060,10 +1100,32 @@ export class TeamsService extends Service {
    * and record a boundary in the middle of something the host asked for as a
    * unit. The round-end signal fires once, at the end.
    */
-  private async runAgenda(record: TeamRecord, agenda: AgendaSpec): Promise<AgendaOutcome> {
+  private async runAgenda(record: TeamRecord, agenda: AgendaSpec, startFrom = 0): Promise<AgendaOutcome> {
     if (record.disposed) throw new Error("团队已销毁。");
     if (record.running !== undefined) throw new Error("这支团队已经在跑一个议程了。");
+    // Written down BEFORE the first phase runs. A crash between confirmation
+    // and the first turn used to leave nothing at all — no plan, no record
+    // that one was confirmed.
+    record.confirmed = {
+      agenda,
+      at: record.confirmed?.at ?? Date.now(),
+      done: [...agenda.phases.slice(0, startFrom).map((phase) => phase.title)],
+    };
+    this.persist(record);
     const host = record.handle.agent;
+    if (startFrom > 0) {
+      // Said in the record, because the record is about to look odd: only
+      // FINISHED phases are skipped, so a phase cut off halfway runs again
+      // from the top and its instruction appears twice. That is the right
+      // trade — we cannot know whether the interrupted seat's work landed —
+      // but an unexplained duplicate reads like a bug.
+      recordSpoken(
+        host,
+        "系统",
+        `▶ 从第 ${startFrom + 1} 阶段「${agenda.phases[startFrom]?.title ?? ""}」继续。` +
+          `已跑完的阶段不重跑；上次中断在半途的那个阶段会从头再来一遍。`,
+      );
+    }
     const replies: SeatReply[] = [];
     const artifacts: string[] = [];
     let pausedAfter: string | undefined;
@@ -1086,6 +1148,10 @@ export class TeamsService extends Service {
     record.roundsInFlight += 1;
     try {
       for (const [phaseIndex, phase] of agenda.phases.entries()) {
+        // Phases already finished in an earlier run of this agenda are
+        // skipped, not re-run. Re-running them would bill the work twice and
+        // put a second copy of every answer in the record.
+        if (phaseIndex < startFrom) continue;
         running.progress = {
           phase: phase.title,
           phaseIndex: phaseIndex + 1,
@@ -1160,6 +1226,13 @@ export class TeamsService extends Service {
         // stop cut through is not done, and calling it done would put its
         // unfinished tasks in neither list.
         running.completedPhases.push(phase.title);
+        // Recorded as it goes, so an interruption knows where it stopped.
+        record.confirmed = {
+          agenda,
+          at: record.confirmed?.at ?? Date.now(),
+          done: [...agenda.phases.slice(0, phaseIndex + 1).map((one) => one.title)],
+        };
+        this.persist(record);
 
         if (pausesAfter(phase)) {
           pausedAfter = phase.title;
@@ -1169,6 +1242,14 @@ export class TeamsService extends Service {
     } finally {
       record.roundsInFlight -= 1;
       record.running = undefined;
+      // Finished means finished: nothing left to carry on from. A stop or a
+      // pause keeps the record, which is what makes 「继续」 possible.
+      const finished =
+        !running.abort.signal.aborted &&
+        pausedAfter === undefined &&
+        running.completedPhases.length >= agenda.phases.length - startFrom;
+      if (finished) record.confirmed = undefined;
+      this.persist(record);
     }
 
     this.signalRoundEnded(record);
@@ -1643,6 +1724,15 @@ interface TeamRecord {
   readonly speaking: Map<string, string>;
   /** An agenda waiting on the host, and when it was drafted. */
   draft: { readonly agenda: AgendaSpec; readonly at: number; readonly fromTurnId?: string } | undefined;
+  /**
+   * The agenda the host CONFIRMED, and the phases that finished.
+   *
+   * Persisted, unlike `running`, which is the live loop's own bookkeeping and
+   * dies with the process. Without this a restart during an agenda lost the
+   * plan entirely: the record kept the instructions it had issued and nothing
+   * said what they were part of or where it had got to.
+   */
+  confirmed: { readonly agenda: AgendaSpec; readonly at: number; done: string[] } | undefined;
   /**
    * Background material every seat reads.
    *

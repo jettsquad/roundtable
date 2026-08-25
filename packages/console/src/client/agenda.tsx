@@ -32,6 +32,35 @@ export function Agenda({
   readonly onChanged: () => void;
 }): JSX.Element | null {
   const { error, run } = useAction(onChanged);
+
+  // An agenda that was confirmed and did not finish. Offered, never resumed
+  // on its own: a restart is exactly when nobody is watching.
+  if (team.progress === undefined && team.unfinished !== undefined) {
+    const { phases, done } = team.unfinished;
+    const next = phases[done.length];
+    return (
+      <div className={styles.section}>
+        <div className={styles.subhead}>有一份议程没跑完</div>
+        <div className={styles.muted}>
+          已完成 {done.length} / {phases.length} 个阶段
+          {next === undefined ? "" : ` · 下一个是「${next}」`}
+        </div>
+        <div className={styles.row}>
+          <button
+            type="button"
+            className={styles.button}
+            disabled={team.busy}
+            onClick={() => void run(() => api.resumeAgenda({ teamId: team.teamId }))}
+          >
+            从「{next ?? "下一阶段"}」继续
+          </button>
+          <span className={styles.hint}>已经跑完的阶段不会重跑。</span>
+        </div>
+        {error === undefined ? null : <div className={styles.error}>{error}</div>}
+      </div>
+    );
+  }
+
   if (team.progress === undefined) return null;
 
   const { phase, phaseIndex, phaseCount, completedPhases } = team.progress;
