@@ -12,13 +12,15 @@
  */
 import { api, useAction } from "./api.ts";
 import type { SquadSnapshot } from "./api.ts";
+import { useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 type CriterionView = SquadSnapshot["criteria"]["proposals"][number];
 
 function Trigger({ trigger }: { readonly trigger: CriterionView["trigger"] }): JSX.Element {
+  const t = useT();
   const parts = [...trigger.action, ...trigger.features, ...(trigger.step ?? [])];
-  return <span className={styles.muted}>{parts.length === 0 ? "任何场合" : parts.join(" · ")}</span>;
+  return <span className={styles.muted}>{parts.length === 0 ? t("criteria.anywhere") : parts.join(" · ")}</span>;
 }
 
 export function CriteriaPage({
@@ -28,18 +30,16 @@ export function CriteriaPage({
   readonly criteria: SquadSnapshot["criteria"];
   readonly onChanged: () => void;
 }): JSX.Element {
+  const t = useT();
   const { error, run } = useAction(onChanged);
 
   return (
     <div>
-      <div className={styles.hint}>
-        判据是从你的裁定里蒸馏出来的判断——一句主张，加上它在哪里不成立。
-        待裁定的那些是机器提出的，采纳之前不会影响任何人。
-      </div>
+      <div className={styles.hint}>{t("criteria.intro")}</div>
 
-      <div className={styles.subhead}>待裁定（{criteria.proposals.length}）</div>
+      <div className={styles.subhead}>{t("criteria.pending.head", { n: criteria.proposals.length })}</div>
       {criteria.proposals.length === 0 ? (
-        <div className={styles.hint}>没有待裁定的。</div>
+        <div className={styles.hint}>{t("criteria.pending.none")}</div>
       ) : (
         criteria.proposals.map((criterion) => (
           <div key={criterion.id} className={styles.card}>
@@ -48,13 +48,14 @@ export function CriteriaPage({
               // Said out loud, because a criterion with no boundary is a
               // slogan with no conditions attached — which is how a useful
               // judgement turns into dogma.
-              <div className={styles.hint}>还没有写「在哪里不成立」。</div>
+              <div className={styles.hint}>{t("criteria.boundary.missing")}</div>
             ) : (
-              <div className={styles.muted}>不适用于：{criterion.boundary}</div>
+              <div className={styles.muted}>{t("criteria.boundary", { text: criterion.boundary })}</div>
             )}
             <div className={styles.muted}>
-              触发：
-              <Trigger trigger={criterion.trigger} /> · {criterion.evidence} 条证据
+              {t("criteria.trigger")}
+              <Trigger trigger={criterion.trigger} />
+              {t("criteria.evidence", { n: criterion.evidence })}
             </div>
             <div className={styles.row}>
               <button
@@ -62,23 +63,23 @@ export function CriteriaPage({
                 className={styles.button}
                 onClick={() => void run(() => api.resolveCriterion({ id: criterion.id, verdict: "accept" }))}
               >
-                采纳
+                {t("criteria.adopt")}
               </button>
               <button
                 type="button"
                 className={styles.button}
                 onClick={() => void run(() => api.resolveCriterion({ id: criterion.id, verdict: "reject" }))}
               >
-                否掉
+                {t("criteria.reject")}
               </button>
             </div>
           </div>
         ))
       )}
 
-      <div className={styles.subhead}>已生效（{criteria.live.length}）</div>
+      <div className={styles.subhead}>{t("criteria.live.head", { n: criteria.live.length })}</div>
       {criteria.live.length === 0 ? (
-        <div className={styles.hint}>还没有生效的判据。</div>
+        <div className={styles.hint}>{t("criteria.live.none")}</div>
       ) : (
         criteria.live.map((criterion) => (
           <div key={criterion.id} className={styles.card}>
@@ -87,11 +88,12 @@ export function CriteriaPage({
               {criterion.status === "active" ? null : <span className={styles.badgeBad}>{criterion.status}</span>}
             </div>
             {criterion.boundary === undefined ? null : (
-              <div className={styles.muted}>不适用于：{criterion.boundary}</div>
+              <div className={styles.muted}>{t("criteria.boundary", { text: criterion.boundary })}</div>
             )}
             <div className={styles.muted}>
-              触发：
-              <Trigger trigger={criterion.trigger} /> · {criterion.evidence} 条证据
+              {t("criteria.trigger")}
+              <Trigger trigger={criterion.trigger} />
+              {t("criteria.evidence", { n: criterion.evidence })}
             </div>
             {criterion.health === undefined ? null : (
               <div className={styles.muted}>

@@ -32,6 +32,7 @@ import { numberOrUndefined } from "./number-field.ts";
 import { MoveButtons, SearchBox, matches } from "./order-controls.tsx";
 import { MINIMAX_VOICES, defaultVoiceFor, voiceLabel, voicesFor, voicesOf } from "@squad/shared";
 import { speech } from "./speech.ts";
+import { useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 const BACKENDS: readonly { readonly id: AgentBackend; readonly label: string }[] = [
@@ -159,6 +160,7 @@ interface AgentsPageProps {
 }
 
 export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps): JSX.Element {
+  const t = useT();
   const [draft, setDraft] = useState<Draft>(blank);
   const [newConnection, setNewConnection] = useState(false);
   /**
@@ -211,7 +213,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
           ? {
               connection: {
                 connectionId,
-                displayName: `${draft.displayName.trim() || "未命名"} 的连接`,
+                displayName: t("agent.connectionFor", { name: draft.displayName.trim() || t("agent.unnamed") }),
                 authMode: draft.authMode,
                 backend: draft.backend,
                 ...(draft.modelId.trim() === "" ? {} : { modelId: draft.modelId.trim() }),
@@ -246,20 +248,22 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
     <div className={styles.twoColumn}>
       <div className={`${styles.column} ${styles.columnSticky}`}>
         <div className={styles.subhead}>
-          {agents.some((a) => a.templateId === draft.templateId) ? "编辑" : "新建"} Agent
+          {t("agent.formHead", {
+            verb: agents.some((a) => a.templateId === draft.templateId) ? t("agent.edit") : t("agent.new"),
+          })}
         </div>
 
         <div className={styles.row}>
           <input
             className={styles.field}
             value={draft.displayName}
-            placeholder="Agent 名字，如 架构"
+            placeholder={t("agent.name.placeholder")}
             onChange={(event) => set({ displayName: event.target.value })}
           />
           <input
             className={styles.field}
             value={draft.role}
-            placeholder="角色，如 系统设计"
+            placeholder={t("agent.role.placeholder")}
             onChange={(event) => set({ role: event.target.value })}
           />
         </div>
@@ -268,7 +272,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
           className={styles.textarea}
           value={draft.systemPrompt}
           rows={3}
-          placeholder="提示词——这个 agent 每一轮唯一读到的常驻说明"
+          placeholder={t("agent.prompt.placeholder")}
           onChange={(event) => set({ systemPrompt: event.target.value })}
         />
 
@@ -309,7 +313,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
             >
               {permissionModesFor(draft.backend).map((permissionMode) => (
                 <option key={permissionMode} value={permissionMode}>
-                  权限：{permissionMode}
+                  {t("agent.permission", { mode: permissionMode })}
                 </option>
               ))}
             </select>
@@ -320,17 +324,17 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               value={draft.reasoningEffort}
               onChange={(event) => set({ reasoningEffort: event.target.value as ReasoningEffort | "" })}
             >
-              <option value="">推理档位：默认</option>
+              <option value="">{t("agent.effort.default")}</option>
               {REASONING_EFFORTS.map((effort) => (
                 <option key={effort} value={effort}>
-                  推理档位：{effort}
+                  {t("agent.effort", { effort })}
                 </option>
               ))}
             </select>
           )}
         </div>
 
-        <div className={styles.subhead}>模型</div>
+        <div className={styles.subhead}>{t("agent.model")}</div>
         <div className={styles.row}>
           <select
             className={styles.field}
@@ -343,7 +347,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               }
             }}
           >
-            <option value="">本机登录（用宿主 CLI 的登录态和默认模型）</option>
+            <option value="">{t("agent.localLogin")}</option>
             {/* Only this backend's connections. A provider is registered under
                 the CONNECTION's backend, so a codex agent on a claude-code
                 connection asks for a name that does not exist — and the two
@@ -358,7 +362,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                   {connection.modelId === undefined ? "" : ` · ${connection.modelId}`}
                 </option>
               ))}
-            <option value="__new__">＋ 新建一个连接…</option>
+            <option value="__new__">{t("agent.newConnection")}</option>
           </select>
         </div>
 
@@ -370,13 +374,13 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                 value={draft.authMode}
                 onChange={(event) => set({ authMode: event.target.value as AuthMode })}
               >
-                <option value="subscription">订阅（用本机 CLI 的登录态）</option>
+                <option value="subscription">{t("conn.mode.subscription")}</option>
                 <option value="api-key">API key</option>
               </select>
               <input
                 className={styles.field}
                 value={draft.modelId}
-                placeholder={draft.authMode === "subscription" ? "模型（只能是自家的，如 sonnet）" : "模型"}
+                placeholder={draft.authMode === "subscription" ? t("agent.model.own") : t("conn.model.any")}
                 onChange={(event) => set({ modelId: event.target.value })}
               />
             </div>
@@ -386,14 +390,14 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                   <input
                     className={styles.field}
                     value={draft.endpoint}
-                    placeholder="接口地址（留空用默认）"
+                    placeholder={t("conn.baseUrl.placeholder")}
                     onChange={(event) => set({ endpoint: event.target.value })}
                   />
                   {draft.useExistingCredential ? (
                     <input
                       className={styles.field}
                       value={draft.credentialRef}
-                      placeholder="环境变量名，如 DEEPSEEK_API_KEY"
+                      placeholder={t("conn.envName.placeholder")}
                       onChange={(event) => set({ credentialRef: event.target.value })}
                     />
                   ) : (
@@ -401,7 +405,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                       className={styles.field}
                       type="password"
                       value={draft.credential}
-                      placeholder="API key（只写入，永不回显）"
+                      placeholder={t("conn.key.placeholder")}
                       onChange={(event) => set({ credential: event.target.value })}
                     />
                   )}
@@ -412,25 +416,25 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                     checked={draft.useExistingCredential}
                     onChange={(event) => set({ useExistingCredential: event.target.checked })}
                   />
-                  这把 key 已经在环境变量里了
+                  {t("conn.key.inEnv")}
                 </label>
               </div>
             )}
           </div>
         )}
 
-        <div className={styles.subhead}>上限</div>
+        <div className={styles.subhead}>{t("agent.caps")}</div>
         <div className={styles.row}>
           <input
             className={`${styles.field} ${styles.narrow}`}
             value={draft.maxTurns}
-            placeholder="轮数上限"
+            placeholder={t("caps.maxTurns")}
             onChange={(event) => set({ maxTurns: event.target.value })}
           />
           <input
             className={`${styles.field} ${styles.narrow}`}
             value={draft.maxTokens}
-            placeholder="token 上限"
+            placeholder={t("caps.maxTokens")}
             onChange={(event) => set({ maxTokens: event.target.value })}
           />
           {/* Absent, not disabled: a greyed-out box still reads as "a thing
@@ -440,13 +444,13 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
             <input
               className={`${styles.field} ${styles.narrow}`}
               value={draft.maxCostUsd}
-              placeholder="花费上限 $"
+              placeholder={t("caps.maxCostUsd")}
               onChange={(event) => set({ maxCostUsd: event.target.value })}
             />
           )}
         </div>
         {meaningfulCaps(mode).includes("maxCostUsd") ? null : (
-          <div className={styles.hint}>订阅模式不计费，所以没有花费上限。</div>
+          <div className={styles.hint}>{t("caps.subscription")}</div>
         )}
 
         <div className={styles.row}>
@@ -456,7 +460,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               checked={draft.secretaryCandidate}
               onChange={(event) => set({ secretaryCandidate: event.target.checked })}
             />
-            可以当秘书
+            {t("agent.canSecretary")}
           </label>
           {/* What this backend can actually do about the web, said where the
               choice is made. Every seat gets this in its prompt automatically
@@ -465,12 +469,12 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               behind that is quietly no longer true. */}
           <div className={styles.hint}>
             {draft.backend === "dsh"
-              ? "联网：只能用 bash + curl（这条会自动写进它的提示词）。它没有 WebFetch，web_search 认的是 DeepSeek 的 key。"
+              ? t("agent.web.codeBash")
               : draft.backend === "codex"
-                ? "联网：不行。沙箱没有出网通道，提示词里会告诉它拿不到就直说，别凭记忆编。"
+                ? t("agent.web.sandboxed")
                 : draft.webAccess
-                  ? "联网：用 WebFetch / WebSearch，仅 HTTPS（这条会自动写进它的提示词）。bash + curl 仍会被权限拦下。"
-                  : "联网：不行。勾上下面这项才行。"}
+                  ? t("agent.web.fetch")
+                  : t("agent.web.off")}
           </div>
 
           {/* Only for Claude Code, and that is a fact about the backends
@@ -486,7 +490,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                 checked={draft.webAccess}
                 onChange={(event) => set({ webAccess: event.target.checked })}
               />
-              允许联网（预先批准 WebFetch / WebSearch）
+              {t("agent.allowWeb")}
             </label>
           )}
           {/* Beside the colour, because it is the same kind of thing: how you
@@ -494,7 +498,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               the name, so a roster is followable by ear before anyone
               configures anything — this is for when two seats collide, or
               when a voice simply does not suit the role. */}
-          <div className={styles.subhead}>声音</div>
+          <div className={styles.subhead}>{t("agent.voice")}</div>
           <div className={styles.row}>
             {/* A list AND a box. The list is every system voice; the box is
                 for the ones no list can have — a voice you cloned, whose id
@@ -507,7 +511,9 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               value={known.has(draft.voiceId) || draft.voiceId === "" ? draft.voiceId : CUSTOM}
               onChange={(event) => set({ voiceId: event.target.value === CUSTOM ? " " : event.target.value })}
             >
-              <option value="">按名字自动分配（{voiceLabel(defaultVoiceFor(draft.displayName || "未命名"))}）</option>
+              <option value="">
+                {t("agent.voice.auto", { voice: voiceLabel(defaultVoiceFor(draft.displayName || t("agent.unnamed"))) })}
+              </option>
               {/* Grouped by language rather than listed flat: a seat that
                   writes English is picked from a list where every second
                   entry would otherwise be unusable for it. Nothing is
@@ -519,8 +525,8 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                   ones a working roster wants where they are found first. */}
               {(
                 [
-                  ["中文", "zh", "plain"],
-                  ["中文 · 角色音", "zh", "character"],
+                  [t("agent.voice.zh"), "zh", "plain"],
+                  [t("agent.voice.zhCharacter"), "zh", "character"],
                   ["English", "en", "plain"],
                   ["English · character", "en", "character"],
                 ] as const
@@ -536,33 +542,33 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                   </optgroup>
                 );
               })}
-              <option value={CUSTOM}>自己填一个 voice_id…</option>
+              <option value={CUSTOM}>{t("agent.voice.custom")}</option>
             </select>
             <VoicePreview
               voiceId={
-                draft.voiceId.trim() === "" ? defaultVoiceFor(draft.displayName || "未命名") : draft.voiceId.trim()
+                draft.voiceId.trim() === ""
+                  ? defaultVoiceFor(draft.displayName || t("agent.unnamed"))
+                  : draft.voiceId.trim()
               }
-              name={draft.displayName === "" ? "这个席位" : draft.displayName}
+              name={draft.displayName === "" ? t("agent.voice.thisSeat") : draft.displayName}
             />
           </div>
           {known.has(draft.voiceId) || draft.voiceId === "" ? null : (
             <>
               <input
                 className={styles.field}
-                placeholder="MiniMax 的 voice_id，比如你复刻出来的那个"
+                placeholder={t("agent.voice.custom.placeholder")}
                 value={draft.voiceId.trim()}
                 onChange={(event) => set({ voiceId: event.target.value })}
               />
-              <div className={styles.hint}>
-                原样发给 MiniMax。写错了不会在这里被拦下——合成那一刻它会把 MiniMax 的原话报出来。
-              </div>
+              <div className={styles.hint}>{t("agent.voice.custom.hint")}</div>
             </>
           )}
           {COLORS.map((color) => (
             <button
               key={color}
               type="button"
-              title="标色"
+              title={t("agent.color.title")}
               className={`${styles.swatch} ${draft.color === color ? styles.swatchOn : ""}`}
               style={{ background: color }}
               onClick={() => set({ color })}
@@ -573,22 +579,22 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
         {error === undefined ? null : <div className={styles.error}>{error}</div>}
         <div className={styles.row}>
           <button type="button" className={styles.button} onClick={() => void save()}>
-            保存 Agent
+            {t("agent.save")}
           </button>
           <button type="button" className={styles.button} onClick={() => setDraft(blank())}>
-            清空
+            {t("agent.clear")}
           </button>
         </div>
       </div>
 
       <div className={styles.column}>
         <div className={styles.subhead}>
-          已有 Agent（{query.trim() === "" ? agents.length : `${shown.length} / ${agents.length}`}）
+          {t("agent.list.head", { n: query.trim() === "" ? agents.length : `${shown.length} / ${agents.length}` })}
         </div>
-        <SearchBox value={query} onChange={setQuery} placeholder="搜名字、角色、后端、提示词……" />
-        {agents.length === 0 ? <div className={styles.hint}>还没有。左边配一个，之后每支团队都能直接选它。</div> : null}
+        <SearchBox value={query} onChange={setQuery} placeholder={t("agent.search.placeholder")} />
+        {agents.length === 0 ? <div className={styles.hint}>{t("agent.list.none")}</div> : null}
         {agents.length > 0 && shown.length === 0 ? (
-          <div className={styles.hint}>没有匹配「{query}」的 agent。</div>
+          <div className={styles.hint}>{t("agent.list.noMatch", { query })}</div>
         ) : null}
         {shown.map((agent) => (
           <div key={agent.templateId} className={styles.card}>
@@ -596,7 +602,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               <span className={styles.dot} style={{ background: agent.color }} />
               <span className={styles.teamName}>{agent.displayName}</span>
               <span className={styles.muted}>{agent.role}</span>
-              {agent.secretaryCandidate ? <span className={styles.muted}>★ 可当秘书</span> : null}
+              {agent.secretaryCandidate ? <span className={styles.muted}>{t("agent.secretaryBadge")}</span> : null}
               {/* Hidden while filtering: the arrows move a row one place in the
                   REAL list, and next to a filtered view they would appear to
                   do nothing — the neighbour they swap with is not on screen. */}
@@ -614,18 +620,23 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               {agent.permissionMode === undefined ? "" : ` · ${agent.permissionMode}`}
               {" · "}
               {agent.connectionId === undefined
-                ? "本机登录"
-                : (connections.find((c) => c.connectionId === agent.connectionId)?.displayName ?? "⚠️ 连接已删除")}
+                ? t("agent.localLogin")
+                : (connections.find((c) => c.connectionId === agent.connectionId)?.displayName ??
+                  t("agent.connection.gone"))}
             </div>
             {(() => {
               const report = reports[agent.templateId];
               if (report === undefined) return null;
-              if (report === "running") return <div className={styles.hint}>测试中……</div>;
+              if (report === "running") return <div className={styles.hint}>{t("agent.test.running")}</div>;
               const overall = overallOf(report);
               return (
                 <div className={styles.report}>
                   <div className={overall === "fail" ? styles.error : styles.muted}>
-                    {overall === "ok" ? "✅ 能用" : overall === "fail" ? "❌ 有问题" : "⚠️ 有检查没能跑，结论不完整"}
+                    {overall === "ok"
+                      ? t("agent.test.ok")
+                      : overall === "fail"
+                        ? t("agent.test.fail")
+                        : t("agent.test.partial")}
                   </div>
                   {report.checks.map((check) => (
                     <div key={check.name} className={check.outcome === "fail" ? styles.error : styles.muted}>
@@ -646,7 +657,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
             })()}
             <div className={styles.row}>
               <button type="button" className={styles.button} onClick={() => setDraft(draftOf(agent))}>
-                编辑
+                {t("agent.edit")}
               </button>
               <button
                 type="button"
@@ -662,20 +673,20 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
                         [agent.templateId]: {
                           templateId: agent.templateId,
                           displayName: agent.displayName,
-                          checks: [{ name: "测试", outcome: "fail", detail: String(failure.message) }],
+                          checks: [{ name: t("agent.test"), outcome: "fail", detail: String(failure.message) }],
                         },
                       })),
                     );
                 }}
               >
-                测试
+                {t("agent.test")}
               </button>
               <button
                 type="button"
                 className={styles.button}
                 onClick={() => void run(() => api.removeAgent({ templateId: agent.templateId }))}
               >
-                删除
+                {t("agent.delete")}
               </button>
             </div>
           </div>
@@ -704,6 +715,7 @@ const known = new Set(MINIMAX_VOICES.map((voice) => voice.voiceId));
 const ENGLISH_ONLY = new Set(voicesFor("en").map((voice) => voice.voiceId));
 
 function VoicePreview({ voiceId, name }: { readonly voiceId: string; readonly name: string }): JSX.Element {
+  const t = useT();
   const [state, setState] = useState(speech.state());
   useEffect(() => speech.subscribe(setState), []);
   const playing = state.turnId === `preview-${voiceId}`;
@@ -712,7 +724,7 @@ function VoicePreview({ voiceId, name }: { readonly voiceId: string; readonly na
       type="button"
       className={styles.button}
       disabled={!speech.ready}
-      title={speech.ready ? "念一句试试" : "先在团队页的「朗读设置」里选一个合成用的连接"}
+      title={speech.ready ? t("agent.preview.ready") : t("agent.preview.blocked")}
       onClick={() =>
         void speech.play({
           turnId: `preview-${voiceId}`,
@@ -720,12 +732,12 @@ function VoicePreview({ voiceId, name }: { readonly voiceId: string; readonly na
           text:
             voiceId.startsWith("English") || ENGLISH_ONLY.has(voiceId)
               ? "This is my voice. I will sound like this whenever I speak."
-              : "这是我的声音，之后我说的话都会是这个调子。",
+              : t("agent.preview.line"),
           voiceId,
         })
       }
     >
-      {playing ? "■ 停" : "▶ 试听"}
+      {playing ? t("agent.preview.stop") : t("agent.preview.play")}
     </button>
   );
 }

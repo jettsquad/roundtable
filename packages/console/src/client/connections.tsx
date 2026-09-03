@@ -21,6 +21,7 @@ import {
 } from "@squad/shared";
 import type { PanelConnection } from "../wire.ts";
 import { api, useAction } from "./api.ts";
+import { useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 interface ConnectionsProps {
@@ -29,6 +30,7 @@ interface ConnectionsProps {
 }
 
 export function Connections({ connections, onChanged }: ConnectionsProps): JSX.Element {
+  const t = useT();
   /**
    * The connection being edited, or `undefined` for a new one.
    *
@@ -113,39 +115,37 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
 
   return (
     <div>
-      <div className={styles.hint}>
-        一个连接就是一套模型配置：订阅走本机 CLI 的登录态，API key 走你自己的网关。多个 Agent
-        可以共用同一个连接——换网关只改一处。
-      </div>
+      <div className={styles.hint}>{t("conn.intro")}</div>
       <div>
         {connections.map((connection) => (
           <div key={connection.connectionId} className={styles.row}>
             <span>{connection.displayName}</span>
             <span className={styles.muted}>
-              {connection.backend} · {connection.authMode === "subscription" ? "订阅" : "API key"}
+              {connection.backend} ·{" "}
+              {connection.authMode === "subscription" ? t("conn.auth.subscription") : t("conn.auth.apiKey")}
               {connection.modelId === undefined ? "" : ` · ${connection.modelId}`}
             </span>
             {/* Honest about what is actually built. A connection on a backend
                 with no seat plugin saves, renders, and then fails at the first
                 round with a provider name nobody typed. */}
-            {connection.providerReady ? null : <span className={styles.badgeBad}>没有席位后端认领它</span>}
+            {connection.providerReady ? null : <span className={styles.badgeBad}>{t("conn.unclaimed")}</span>}
             <button type="button" className={styles.button} onClick={() => edit(connection)}>
-              编辑
+              {t("conn.edit")}
             </button>
             {connection.authMode !== "api-key" ? null : connection.credentialConfigured ? (
-              <span className={styles.muted}>密钥已配置</span>
+              <span className={styles.muted}>{t("conn.secret.set")}</span>
             ) : connection.credentialWritable ? (
-              <span className={styles.badgeBad}>密钥未配置</span>
+              <span className={styles.badgeBad}>{t("conn.secret.unset")}</span>
             ) : (
               // `set` refuses while a read-only source shadows the name, so
               // this connection cannot be fixed from here at all — and
               // without saying so, the key box would silently keep failing.
-              <span className={styles.badgeBad}>密钥名「{connection.credentialRef}」被只读来源占了，这里改不了</span>
+              <span className={styles.badgeBad}>{t("conn.secret.readonly", { name: connection.credentialRef })}</span>
             )}
             <button
               type="button"
               className={styles.drop}
-              title="删除这个连接"
+              title={t("conn.delete.title")}
               onClick={() => void run(() => api.removeConnection({ connectionId: connection.connectionId }))}
             >
               ×
@@ -157,7 +157,7 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
           <input
             className={styles.field}
             value={name}
-            placeholder="连接名"
+            placeholder={t("conn.name.placeholder")}
             onChange={(event) => setName(event.target.value)}
           />
           <select
@@ -170,13 +170,13 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
             <option value="dsh">DeepSeek Harness</option>
           </select>
           <select className={styles.field} value={mode} onChange={(event) => setMode(event.target.value as AuthMode)}>
-            <option value="subscription">订阅（用本机 CLI 的登录态）</option>
+            <option value="subscription">{t("conn.mode.subscription")}</option>
             <option value="api-key">API key</option>
           </select>
           <input
             className={styles.field}
             value={model}
-            placeholder={mode === "subscription" ? `模型（只能是 ${backend} 自家的）` : "模型"}
+            placeholder={mode === "subscription" ? t("conn.model.own", { backend }) : t("conn.model.any")}
             onChange={(event) => setModel(event.target.value)}
           />
         </div>
@@ -187,14 +187,14 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
               <input
                 className={styles.field}
                 value={endpoint}
-                placeholder="接口地址（留空用默认）"
+                placeholder={t("conn.baseUrl.placeholder")}
                 onChange={(event) => setEndpoint(event.target.value)}
               />
               {existing ? (
                 <input
                   className={styles.field}
                   value={credentialRef}
-                  placeholder="环境变量名，如 DEEPSEEK_API_KEY"
+                  placeholder={t("conn.envName.placeholder")}
                   onChange={(event) => setCredentialRef(event.target.value)}
                 />
               ) : (
@@ -202,20 +202,16 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
                   className={styles.field}
                   type="password"
                   value={key}
-                  placeholder="API key（只写入，永不回显）"
+                  placeholder={t("conn.key.placeholder")}
                   onChange={(event) => setKey(event.target.value)}
                 />
               )}
             </div>
             <label className={styles.check}>
               <input type="checkbox" checked={existing} onChange={(event) => setExisting(event.target.checked)} />
-              这把 key 已经在环境变量里了
+              {t("conn.key.inEnv")}
             </label>
-            <div className={styles.hint}>
-              {existing
-                ? "填变量名，不填值——每次启动子进程时按这个名字去取，所以你在别处换了 key，下一轮就生效。"
-                : "key 存进宿主的凭据服务，配置里只留一个名字。填过之后不会再显示出来。"}
-            </div>
+            <div className={styles.hint}>{existing ? t("conn.key.hint.env") : t("conn.key.hint.stored")}</div>
           </div>
         )}
 
@@ -223,24 +219,19 @@ export function Connections({ connections, onChanged }: ConnectionsProps): JSX.E
             model on a subscription, and that reason is one a person can act
             on only while the field is still in front of them. */}
         {mode !== "subscription" || model.trim() === "" || isOwnModel(backend, model.trim()) ? null : (
-          <div className={styles.hint}>
-            「{model.trim()}」不是 {backend} 自家的模型。订阅模式用的是本机 CLI 的登录态，这个名字会被发到那个端点，
-            报出来的错会指向模型而不是这个不匹配。要用它就选 API key，填它自己的地址和密钥。
-          </div>
+          <div className={styles.hint}>{t("conn.model.mismatch", { model: model.trim(), backend })}</div>
         )}
         {error === undefined ? null : <div className={styles.error}>{error}</div>}
         <div className={styles.row}>
           <button type="button" className={styles.button} onClick={() => void save()}>
-            {editing === undefined ? "新建连接" : "保存修改"}
+            {editing === undefined ? t("conn.create") : t("conn.saveEdit")}
           </button>
           {editing === undefined ? null : (
             <button type="button" className={styles.button} onClick={clear}>
-              取消编辑
+              {t("conn.cancelEdit")}
             </button>
           )}
-          {editing === undefined ? null : (
-            <span className={styles.hint}>密钥留空就是不动已存的那把。要换就直接填新的。</span>
-          )}
+          {editing === undefined ? null : <span className={styles.hint}>{t("conn.key.keepHint")}</span>}
         </div>
       </div>
     </div>

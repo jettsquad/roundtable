@@ -49,16 +49,27 @@ export function TeamButton(): JSX.Element {
  * 「尚未计量」 is not 「0」: a backend that reported nothing and a turn that
  * cost nothing are different facts, and only one of them is good news.
  */
-function usageLine(usage: UsageTotals | undefined): string {
-  if (usage === undefined || usage.turns === 0) return "用量：尚未计量";
+type Translate = ReturnType<typeof useT>;
+
+/**
+ * The usage figures, WITHOUT the "usage:" prefix.
+ *
+ * `t` is a parameter because this is a plain function, not a component, and
+ * hooks are only legal in components. Returning the bare figures is what
+ * removed the caller that used to strip the prefix back off with
+ * `.replace("用量：", "")` — a string that had to match a translation exactly,
+ * which is the one thing a translation is free to change.
+ */
+function usageFigures(t: Translate, usage: UsageTotals | undefined): string | undefined {
+  if (usage === undefined || usage.turns === 0) return undefined;
   const parts = [
-    `${usage.turns} 轮`,
-    `入 ${usage.inputTokens.toLocaleString()}`,
-    `出 ${usage.outputTokens.toLocaleString()}`,
-    `缓存 ${(usage.cacheCreationTokens + usage.cacheReadTokens).toLocaleString()}`,
+    t("team.usage.turns", { n: usage.turns }),
+    t("team.usage.in", { n: usage.inputTokens.toLocaleString() }),
+    t("team.usage.out", { n: usage.outputTokens.toLocaleString() }),
+    t("team.usage.cache", { n: (usage.cacheCreationTokens + usage.cacheReadTokens).toLocaleString() }),
   ];
   if (usage.costUsd !== undefined) parts.push(`$${usage.costUsd.toFixed(4)}`);
-  return `用量：${parts.join(" · ")}`;
+  return parts.join(" · ");
 }
 
 /**
@@ -77,6 +88,7 @@ function RefreshDesigner({
   readonly team: TeamSummary;
   readonly onChanged: () => void;
 }): JSX.Element {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<number | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -85,7 +97,7 @@ function RefreshDesigner({
       <button
         type="button"
         className={styles.drop}
-        title="把这五个元席位的提示词更新到程序里的最新版本。你配的模型、上限、联网设置都保留。"
+        title={t("team.refresh.title")}
         disabled={busy || team.busy}
         onClick={() => {
           setBusy(true);
@@ -100,7 +112,7 @@ function RefreshDesigner({
             .finally(() => setBusy(false));
         }}
       >
-        {busy ? "更新中…" : done === undefined ? "更新提示词" : `已更新 ${done} 个 ✓`}
+        {busy ? t("team.refresh.busy") : done === undefined ? t("team.refresh") : t("team.refresh.done", { n: done })}
       </button>
       {error === undefined ? null : <span className={styles.error}>{error}</span>}
     </>
@@ -124,6 +136,7 @@ function RefreshDesigner({
  * designer team gets its five phases put back up as a draft on the way in.
  */
 function NewSitting({ team, onChanged }: { readonly team: TeamSummary; readonly onChanged: () => void }): JSX.Element {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const shell = shellSessions();
@@ -132,7 +145,7 @@ function NewSitting({ team, onChanged }: { readonly team: TeamSummary; readonly 
       <button
         type="button"
         className={styles.drop}
-        title="用同一批人开一场新的讨论，上一场留着"
+        title={t("team.sitting.title")}
         disabled={busy || shell === undefined}
         onClick={() => {
           if (shell === undefined) return;
@@ -141,7 +154,7 @@ function NewSitting({ team, onChanged }: { readonly team: TeamSummary; readonly 
             // Says which folder it looked for, because the failure people
             // actually hit is a path that does not match — a symlink, a
             // trailing slash — not a workspace that is genuinely missing.
-            setError(`侧边栏里找不到 ${team.projectFolder} 这个 workspace，开不了新会话。`);
+            setError(t("team.sitting.noWorkspace", { folder: team.projectFolder }));
             return;
           }
           setBusy(true);
@@ -164,7 +177,7 @@ function NewSitting({ team, onChanged }: { readonly team: TeamSummary; readonly 
             .finally(() => setBusy(false));
         }}
       >
-        {busy ? "开场中…" : "新开一场"}
+        {busy ? t("team.sitting.busy") : t("team.sitting")}
       </button>
       {error === undefined ? null : <span className={styles.error}>{error}</span>}
     </>
@@ -197,6 +210,7 @@ function TeamCard({
   readonly expanded: boolean;
   readonly onToggle: () => void;
 }): JSX.Element {
+  const t = useT();
   return (
     <div className={`${styles.card} ${styles.cardTinted}`} style={{ borderLeftColor: teamTint(team.displayName) }}>
       {/* The row that is always visible. Everything on it is something you
@@ -210,22 +224,28 @@ function TeamCard({
           className={styles.chipOpen}
           onClick={onToggle}
           aria-expanded={expanded}
-          title={expanded ? "收起" : "展开这支团队"}
+          title={expanded ? t("team.collapse") : t("team.expand")}
         >
           {expanded ? "▾" : "▸"} <span className={styles.teamName}>{team.displayName}</span>
         </button>
         <span className={styles.muted}>
-          {team.seats.length} 席 · 记录 {team.recorded} 行 · {usageLine(team.usage).replace("用量：", "")}
+          {t("team.meta", {
+            seats: team.seats.length,
+            rows: team.recorded,
+            usage: usageFigures(t, team.usage) ?? t("team.usage.none"),
+          })}
         </span>
-        {team.busy ? <span className={styles.badgeRun}>进行中</span> : null}
+        {team.busy ? <span className={styles.badgeRun}>{t("team.badge.running")}</span> : null}
         {team.busy || team.unfinished === undefined ? null : team.unfinished.awaitingHost ? (
-          <span className={styles.badgeWait}>等你回答</span>
+          <span className={styles.badgeWait}>{t("team.badge.awaiting")}</span>
         ) : (
           <span className={styles.muted}>
-            议程 {team.unfinished.done.length}/{team.unfinished.phases.length}
+            {t("team.badge.agenda", { done: team.unfinished.done.length, total: team.unfinished.phases.length })}
           </span>
         )}
-        {team.seats.some((seat) => seat.isSecretary) ? null : <span className={styles.badgeWait}>没有秘书</span>}
+        {team.seats.some((seat) => seat.isSecretary) ? null : (
+          <span className={styles.badgeWait}>{t("team.badge.noSecretary")}</span>
+        )}
         <span className={styles.grow} />
         <span className={styles.muted}>{team.projectFolder}</span>
       </div>
@@ -240,23 +260,27 @@ function TeamCard({
             <button
               type="button"
               className={styles.drop}
-              title="解散这支团队"
+              title={t("team.disband.title")}
               onClick={() => {
                 // Asked first, and the question says what survives: the record
                 // this team wrote stays, because the discussion happened and a
                 // checkpoint whose team is gone is still the only account of what
                 // was decided.
-                if (window.confirm(`解散「${team.displayName}」？已经写下的记录会留着，但这张桌子就没了。`)) {
+                if (window.confirm(t("team.disband.confirm", { name: team.displayName }))) {
                   void api.disbandTeam({ teamId: team.teamId }).then(onChanged);
                 }
               }}
             >
-              解散
+              {t("team.disband")}
             </button>
           </div>
           {team.progress === undefined ? null : (
             <div className={styles.muted}>
-              议程：{team.progress.phase}（{team.progress.phaseIndex + 1}/{team.progress.phaseCount}）
+              {t("team.progress", {
+                phase: team.progress.phase,
+                index: team.progress.phaseIndex + 1,
+                total: team.progress.phaseCount,
+              })}
             </div>
           )}
           <SeatEditor team={team} connections={data.connections} agents={data.agents} onChanged={onChanged} />
@@ -273,7 +297,7 @@ function TeamCard({
           session in a team's workspace has none — so you could talk to the
           team and never see a word of what it said back. */}
           <details>
-            <summary className={styles.sectionToggle}>讨论记录（{team.recorded} 行）</summary>
+            <summary className={styles.sectionToggle}>{t("team.transcript", { n: team.recorded })}</summary>
             <Discussion team={team} onChanged={onChanged} pickerKind={data.picker} />
           </details>
           {/* The panel builds and edits teams; talking to one happens in its
@@ -417,15 +441,15 @@ export function TeamPanel(): JSX.Element | null {
           </div>
         </div>
 
-        {snapshot.state === "loading" ? <div className={styles.muted}>读取中……</div> : null}
+        {snapshot.state === "loading" ? <div className={styles.muted}>{t("teams.loading")}</div> : null}
         {snapshot.state === "error" ? <div className={styles.error}>{snapshot.detail}</div> : null}
         {snapshot.state !== "ready" ? null : page === "teams" ? (
           <div>
             <SearchBox value={query} onChange={setQuery} placeholder={t("panel.search")} />
             {teams.length === 0 ? (
-              <div className={styles.hint}>还没有团队。用下面的表单建一支，或者在会话里敲 /squad-new。</div>
+              <div className={styles.hint}>{t("teams.none")}</div>
             ) : shownTeams.length === 0 ? (
-              <div className={styles.hint}>没有匹配「{query}」的团队。</div>
+              <div className={styles.hint}>{t("teams.noMatch", { query })}</div>
             ) : (
               shownTeams.map((team) => (
                 <TeamCard

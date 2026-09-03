@@ -17,6 +17,7 @@ import type { PickerKind } from "./api.ts";
 import { api, useAction } from "./api.ts";
 import { checkTeamDraft, type DraftProblem } from "../parse.ts";
 import { FolderField } from "./folder-picker.tsx";
+import { useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 interface CreateFormProps {
@@ -26,6 +27,7 @@ interface CreateFormProps {
 }
 
 export function CreateForm({ agents, picker, onCreated }: CreateFormProps): JSX.Element {
+  const t = useT();
   const [displayName, setDisplayName] = useState("");
   const [projectFolder, setProjectFolder] = useState("");
   const [picked, setPicked] = useState<readonly string[]>([]);
@@ -69,13 +71,13 @@ export function CreateForm({ agents, picker, onCreated }: CreateFormProps): JSX.
 
   return (
     <div className={styles.card}>
-      <div className={styles.subhead}>新建团队</div>
+      <div className={styles.subhead}>{t("create.head")}</div>
 
       <div className={styles.row}>
         <input
           className={`${styles.field} ${complaint("displayName") === undefined ? "" : styles.invalid}`}
           value={displayName}
-          placeholder="团队名"
+          placeholder={t("create.name.placeholder")}
           onChange={(event) => setDisplayName(event.target.value)}
         />
       </div>
@@ -91,9 +93,9 @@ export function CreateForm({ agents, picker, onCreated }: CreateFormProps): JSX.
         <div className={styles.error}>{complaint("projectFolder")}</div>
       )}
 
-      <div className={styles.subhead}>成员</div>
+      <div className={styles.subhead}>{t("create.members")}</div>
       {agents.length === 0 ? (
-        <div className={styles.hint}>Agent 库是空的——先去「Agent 库」建一个，这里才有人可选。</div>
+        <div className={styles.hint}>{t("create.members.empty")}</div>
       ) : (
         <div className={`${styles.pickList} ${complaint("members") === undefined ? "" : styles.invalid}`}>
           {agents.map((agent) => {
@@ -118,10 +120,10 @@ export function CreateForm({ agents, picker, onCreated }: CreateFormProps): JSX.
                       checked={secretary === agent.templateId}
                       onChange={() => setSecretary(agent.templateId)}
                     />
-                    当秘书
+                    {t("create.asSecretary")}
                   </label>
                 ) : (
-                  <span className={styles.muted}>不能当秘书</span>
+                  <span className={styles.muted}>{t("create.notSecretary")}</span>
                 )}
               </div>
             );
@@ -132,9 +134,9 @@ export function CreateForm({ agents, picker, onCreated }: CreateFormProps): JSX.
 
       <div className={styles.row}>
         <button type="button" className={styles.button} onClick={() => void create()}>
-          建团队
+          {t("create.submit")}
         </button>
-        <span className={styles.hint}>建好之后还能从 Agent 库里继续加人。</span>
+        <span className={styles.hint}>{t("create.hint")}</span>
       </div>
       {error === undefined ? null : <div className={styles.error}>{error}</div>}
     </div>

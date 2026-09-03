@@ -14,6 +14,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, type DirectoryListing, type PickerKind } from "./api.ts";
+import { useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 interface BrowserProps {
@@ -24,6 +25,7 @@ interface BrowserProps {
 
 /** The in-app browser, for a host with no OS dialog to open. */
 function DirectoryBrowser({ value, onPick, onClose }: BrowserProps): JSX.Element {
+  const t = useT();
   const [listing, setListing] = useState<DirectoryListing | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -56,8 +58,8 @@ function DirectoryBrowser({ value, onPick, onClose }: BrowserProps): JSX.Element
         ))}
       </div>
       <div className={styles.pickerList}>
-        {listing === undefined ? <div className={styles.hint}>读取中……</div> : null}
-        {listing?.entries.length === 0 ? <div className={styles.hint}>这里没有子文件夹。</div> : null}
+        {listing === undefined ? <div className={styles.hint}>{t("folder.loading")}</div> : null}
+        {listing?.entries.length === 0 ? <div className={styles.hint}>{t("folder.empty")}</div> : null}
         {(listing?.entries ?? []).map((entry) => (
           <button key={entry.path} type="button" className={styles.pickerRow} onClick={() => go(entry.path)}>
             {entry.name}/
@@ -65,7 +67,7 @@ function DirectoryBrowser({ value, onPick, onClose }: BrowserProps): JSX.Element
         ))}
         {/* Said out loud. A truncated listing that looked complete would send
             someone hunting for a folder the host simply did not report. */}
-        {listing?.truncated === true ? <div className={styles.hint}>子文件夹太多，这里只列了一部分。</div> : null}
+        {listing?.truncated === true ? <div className={styles.hint}>{t("folder.truncated")}</div> : null}
       </div>
       <div className={styles.row}>
         <button
@@ -76,10 +78,10 @@ function DirectoryBrowser({ value, onPick, onClose }: BrowserProps): JSX.Element
             if (listing !== undefined) onPick(listing.path);
           }}
         >
-          就用 {listing?.path ?? "……"}
+          {t("folder.use", { path: listing?.path ?? "…" })}
         </button>
         <button type="button" className={styles.button} onClick={onClose}>
-          取消
+          {t("folder.cancel")}
         </button>
       </div>
     </div>
@@ -98,6 +100,7 @@ export function FolderField({
   readonly kind: PickerKind;
   readonly invalid?: boolean;
 }): JSX.Element {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -117,17 +120,17 @@ export function FolderField({
     <div className={styles.grow}>
       <div className={styles.row}>
         <span className={`${styles.pathBox} ${invalid === true ? styles.invalid : ""}`}>
-          {value === "" ? <span className={styles.muted}>还没有选项目文件夹</span> : value}
+          {value === "" ? <span className={styles.muted}>{t("folder.unset")}</span> : value}
         </span>
         {kind === "none" ? (
-          <span className={styles.hint}>这台宿主没有可用的文件夹选择器。</span>
+          <span className={styles.hint}>{t("folder.unavailable")}</span>
         ) : (
           <button
             type="button"
             className={styles.button}
             onClick={() => (kind === "native" ? openNative() : setOpen(!open))}
           >
-            {kind === "native" ? "选择文件夹…" : open ? "收起" : "选择文件夹…"}
+            {kind === "native" ? t("folder.pick") : open ? t("folder.collapse") : t("folder.pick")}
           </button>
         )}
       </div>

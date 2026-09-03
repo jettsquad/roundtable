@@ -16,12 +16,20 @@
 import { useState } from "react";
 import { meaningfulCaps, type AuthMode, type SeatCaps } from "@squad/shared";
 import { numberOrUndefined } from "./number-field.ts";
+import { useT } from "./locale.ts";
+import type { SquadKey } from "./locales.ts";
 import styles from "./panel.module.css";
 
-const LABELS: Readonly<Record<keyof SeatCaps, string>> = {
-  maxTurns: "轮数上限",
-  maxCostUsd: "花费上限 $",
-  maxTokens: "token 上限",
+/**
+ * Field labels as dictionary KEYS, looked up at render.
+ *
+ * A module-level map of translated strings would be built once, at import, in
+ * whatever language happened to be active then — and never change again.
+ */
+const LABELS: Readonly<Record<keyof SeatCaps, SquadKey>> = {
+  maxTurns: "caps.maxTurns",
+  maxCostUsd: "caps.maxCostUsd",
+  maxTokens: "caps.maxTokens",
 };
 
 interface CapsEditorProps {
@@ -31,6 +39,7 @@ interface CapsEditorProps {
 }
 
 export function CapsEditor({ caps, mode, onSave }: CapsEditorProps): JSX.Element {
+  const t = useT();
   const allowed = meaningfulCaps(mode);
   const [draft, setDraft] = useState<Record<string, string>>(() =>
     Object.fromEntries(allowed.map((key) => [key, caps?.[key] === undefined ? "" : String(caps[key])])),
@@ -53,14 +62,14 @@ export function CapsEditor({ caps, mode, onSave }: CapsEditorProps): JSX.Element
           className={`${styles.field} ${styles.narrow}`}
           value={draft[key] ?? ""}
           inputMode="decimal"
-          placeholder={LABELS[key]}
+          placeholder={t(LABELS[key])}
           onChange={(event) => setDraft({ ...draft, [key]: event.target.value })}
         />
       ))}
       <button type="button" className={styles.button} onClick={save}>
-        存上限
+        {t("caps.save")}
       </button>
-      {mode === "subscription" ? <span className={styles.hint}>订阅模式不计费，所以没有花费上限。</span> : null}
+      {mode === "subscription" ? <span className={styles.hint}>{t("caps.subscription")}</span> : null}
     </div>
   );
 }
