@@ -1,7 +1,22 @@
 {
   "name": "@jettsquad/roundtable",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "Squad —— 一张人主持的圆桌：多个 agent 席位，由人点名发言，跑在 DeepSeek Harness 上。",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "agents",
+    "multi-agent"
+  ],
+  "homepage": "https://github.com/jettsquad/roundtable#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jettsquad/roundtable.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jettsquad/roundtable/issues"
+  },
   "license": "MIT",
   "type": "module",
   "exports": {
