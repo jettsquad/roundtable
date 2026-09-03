@@ -131,11 +131,16 @@ export async function buildBundle() {
     logLevel: "warning",
   });
 
-  // The browser half is built by its own script (its externals are the
-  // shell's frozen module table, which has nothing to do with Node's), then
-  // copied in under the name `exports["./client"]` promises.
-  await buildClient("console", { id: PACKAGE });
-  await cp(join(root, "packages/console/client/client.js"), join(outDir, "client.js"));
+  // The browser half is built by its own script — its externals are the
+  // shell's frozen module table, which has nothing to do with Node's — and
+  // written STRAIGHT into the bundle, never through the development artifact.
+  //
+  // It used to be built to the development path and copied from there, which
+  // silently broke the running dev UI: the two bundles differ only in the id
+  // they register under, so the published build overwrote the development one
+  // and the next page load failed with `failed to import loader entry
+  // (@squad/console)` — an error naming neither build.
+  await buildClient("console", { id: PACKAGE, outfile: join(outDir, "client.js") });
 
   const readme = join(root, "bundle/README.md");
   if (!existsSync(readme)) await writeFile(readme, `# ${PACKAGE}\n`);

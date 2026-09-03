@@ -118,11 +118,19 @@ const purityGate = {
  *   bundle up by the package it resolved the row to, and a mismatch fails as
  *   `loaded without registering "<name>"`, after everything else has already
  *   worked.
+ * @param outfile where to write. Defaults to the development artifact. The
+ *   published build MUST pass its own path: the two bundles differ only in the
+ *   id they register under, so writing both to one file means whichever ran
+ *   last wins — and the loser is a running UI that now fails to boot with an
+ *   error naming neither build. That happened once; the parameter is the fix.
  */
-export async function buildClient(pkg, { watch = false, dev = false, id = `@squad/${pkg}` } = {}) {
+export async function buildClient(
+  pkg,
+  { watch = false, dev = false, id = `@squad/${pkg}`, outfile = join(root, "packages", pkg, "client/client.js") } = {},
+) {
   const options = {
     entryPoints: [join(root, "packages", pkg, "src/client/index.tsx")],
-    outfile: join(root, "packages", pkg, "client/client.js"),
+    outfile,
     bundle: true,
     format: "cjs",
     platform: "browser",
