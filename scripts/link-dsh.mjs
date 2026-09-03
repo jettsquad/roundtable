@@ -168,11 +168,53 @@ if (sourceIndex !== undefined) {
   process.exit(1);
 }
 
+/**
+ * The harness checkout the farm points into.
+ *
+ * Read from the farm's own cordis link rather than assumed: how dsh was
+ * installed decides where that is, and this script must not be the place
+ * that hardcodes an answer it can look up.
+ */
+function installRoot() {
+  const target = readlinkSync(join(farm, "cordis"));
+  try {
+    return execFileSync("git", ["-C", target, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return target;
+  }
+}
+
 const modules = join(repoRoot, "node_modules");
 const scope = join(modules, "@deepseek-ai");
 mkdirSync(scope, { recursive: true });
 
-const from = (packageName, farmPath) => (sourceIndex === undefined ? farmPath : sourceIndex.get(packageName));
+/**
+ * The installation's own source tree, indexed lazily.
+ *
+ * The farm holds one symlink per package the installation must RESOLVE at
+ * runtime — which is not the same set as the packages we need TYPES from.
+ * `dsh-client-ui-slots` and `dsh-client-ui-primitives` are platform modules:
+ * they are compiled into the shell, so Node never resolves them and the farm
+ * has no reason to carry them. They still own declaration merges we type
+ * against, so falling back to the checkout is the honest answer rather than
+ * demanding the farm hold something it has no use for.
+ *
+ * Runtime packages still come from the farm, and must: the farm entry is what
+ * makes our copy and dsh's copy one realpath.
+ */
+let installIndex;
+const inInstall = (packageName) => {
+  installIndex ??= indexSource(installRoot());
+  return installIndex.get(packageName);
+};
+
+const from = (packageName, farmPath) => {
+  if (sourceIndex !== undefined) return sourceIndex.get(packageName);
+  return existsSync(farmPath) ? farmPath : inInstall(packageName);
+};
 
 const targets = [
   ...NEEDED.map((name) => ({
