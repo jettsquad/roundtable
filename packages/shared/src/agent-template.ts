@@ -65,6 +65,16 @@ export interface AgentTemplate {
   /** A tint, so a roster of six is readable at a glance. */
   readonly color: string;
   /**
+   * Which voice reads this agent's replies aloud.
+   *
+   * On the agent rather than in the listener's browser, for the same reason
+   * `color` is: it is how you tell this member from the others, and it should
+   * not have to be set again on every machine. Absent falls back to a voice
+   * derived from the display name — see `defaultVoiceFor` — so a roster is
+   * followable by ear before anyone configures anything.
+   */
+  readonly voiceId?: string | undefined;
+  /**
    * Let this agent reach the web without stopping to ask.
    *
    * Claude Code only, and that is a fact about the backends rather than a
@@ -95,6 +105,14 @@ export interface AgentTemplate {
    * referring to an agent that no screen could explain.
    */
   readonly enabled: boolean;
+  /**
+   * Position in the library, lowest first.
+   *
+   * Not a property of the agent — a property of the shelf it sits on. Kept on
+   * the record anyway because there is nowhere else that survives a restart,
+   * and a list whose order resets is a list nobody bothers to arrange.
+   */
+  readonly order?: number | undefined;
 }
 
 /**

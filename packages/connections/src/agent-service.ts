@@ -42,6 +42,7 @@ function templateOf(record: AgentTemplateRecord): AgentTemplate {
     caps: record.caps,
     secretaryCandidate: record.secretaryCandidate,
     color: record.color,
+    voiceId: record.voiceId,
     webAccess: record.webAccess,
     enabled: record.enabled,
   };
@@ -65,13 +66,49 @@ export class AgentTemplatesService extends Service {
     });
   }
 
-  /** Live templates, oldest first. Soft-deleted ones are not here. */
+  /**
+   * Live templates, in the order the library shows them.
+   *
+   * Arranged order wins; anything never arranged keeps falling back to when
+   * it was made. The two never interleave badly because the first `move`
+   * writes an order onto EVERY entry — before that they are all `undefined`,
+   * after it they are all numbers.
+   */
   list(): readonly AgentTemplate[] {
     return [...this.table().entries()]
       .map(([, record]) => record)
       .filter((record) => record.enabled)
-      .sort((a, b) => a.createdAt - b.createdAt)
+      .sort(
+        (a, b) =>
+          (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER) || a.createdAt - b.createdAt,
+      )
       .map(templateOf);
+  }
+
+  /**
+   * Move one template up or down the library.
+   *
+   * Rewrites the position of every live entry rather than swapping two. A
+   * swap is cheaper and wrong here: the entries that have never been arranged
+   * carry no position at all, so a swap between two of them changes nothing
+   * anybody can see. Normalising to 0..n-1 on every move means the list is
+   * always fully ordered afterwards, whatever it was before.
+   */
+  async move(templateId: string, delta: number): Promise<void> {
+    const ordered = this.list();
+    const at = ordered.findIndex((template) => template.templateId === templateId);
+    if (at < 0) throw new Error(`Agent 库里没有这个模板：${templateId}。`);
+    const to = at + delta;
+    if (to < 0 || to >= ordered.length) return;
+    const next = [...ordered];
+    const [moved] = next.splice(at, 1);
+    if (moved === undefined) return;
+    next.splice(to, 0, moved);
+    for (const [index, template] of next.entries()) {
+      const record = this.table().get(template.templateId);
+      if (record === undefined || record.order === index) continue;
+      await this.table().put(template.templateId, { ...record, order: index });
+    }
   }
 
   /**
@@ -92,7 +129,11 @@ export class AgentTemplatesService extends Service {
     const existing = this.table().get(template.templateId);
     await this.table().put(template.templateId, {
       ...template,
+      // Both are facts about the SHELF rather than the agent, and an edit
+      // form does not carry them. Dropped, a saved agent would jump to the
+      // end of a list somebody had arranged.
       createdAt: existing?.createdAt ?? Date.now(),
+      ...((template.order ?? existing?.order) === undefined ? {} : { order: template.order ?? existing?.order }),
     });
   }
 

@@ -31,6 +31,7 @@ export type AuditKind =
   | "agenda-stopped"
   | "agenda-finished"
   | "agenda-discarded"
+  | "agenda-rewound"
   | "material-added"
   | "material-removed"
   | "checkpoint-folded"

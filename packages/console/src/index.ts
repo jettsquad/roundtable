@@ -20,7 +20,9 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 // compilation, so without this `ctx.commands` does not exist as far as tsc is
 // concerned — while working perfectly at runtime, which is the worst of both.
 import type { CommandInvocation } from "@deepseek-ai/dsh-commands";
+import { shortHash } from "@squad/shared";
 import { createTeamFrom, registerSquadApi } from "./http.ts";
+import { TEAM_DESIGNER_PLAN, designerAgendaFor, instantiateTeamPlan, latestPlanOf } from "./team-designer.ts";
 import { parseSay } from "./parse.ts";
 
 /**
@@ -56,6 +58,11 @@ export const inject = [
   "reasoning",
   "seatConnections",
   "agentTemplates",
+  // The prompt fragment library. Declared, because cordis refuses a service
+  // that was not asked for — and refuses it at the first READ, so a missing
+  // entry here does not fail at boot: every screen in the panel dies at once
+  // with 「cannot get property "promptBlocks" without inject」.
+  "promptBlocks",
   // The configuration test asks these directly: is a provider registered for
   // this agent's backend, is that backend's CLI on PATH, and — the only check
   // that separates "configured" from "works" — can the seat actually answer,
@@ -82,6 +89,7 @@ export class SquadConsole extends Service {
     "reasoning",
     "seatConnections",
     "agentTemplates",
+    "promptBlocks",
     "agents",
     "subagents",
     "subprocess",
@@ -138,6 +146,61 @@ export class SquadConsole extends Service {
         `项目文件夹：${team.projectFolder}\n` +
         `席位：${team.seats.map((seat) => `${seat.displayName}（${seat.role}）`).join("、")}\n\n` +
         `接着可以：/squad-say 你的指令`
+      );
+    });
+
+    register(
+      "squad-design",
+      "建一支「组队团队」；留空则给当前团队重新放一份组队议程",
+      "空文件夹的绝对路径，或留空",
+      async (raw) => {
+        const projectFolder = raw.trim();
+        // Empty means "this table again". A sitting starts with no draft on
+        // purpose — a fresh piece of work inherits no decisions — but the
+        // five phases are not a decision, they are the same every time.
+        if (projectFolder === "") {
+          const team = this.team();
+          team.setDraft(designerAgendaFor(team));
+          return (
+            `已经给「${team.displayName}」放了一份组队议程草案（五个阶段），还没确认。\n` +
+            `到面板或「团队」标签页里看一眼，确认了就开始。`
+          );
+        }
+        const built = await instantiateTeamPlan(this.ctx, { plan: TEAM_DESIGNER_PLAN, projectFolder });
+        const team = this.ctx.teams.get(built.teamId);
+        if (team === undefined) throw new Error(`团队 ${built.teamId} 建好了却读不回来。`);
+        this.current = team.teamId;
+        return (
+          `已建「${team.displayName}」（${team.teamId}），已设为当前团队。\n` +
+          `席位：${team.seats.map((seat) => `${seat.displayName}（${seat.role}）`).join("、")}\n` +
+          `Agent 库新增：${built.templateIds.join("、")}\n` +
+          `方案指纹：${shortHash(built.hash)}\n\n` +
+          `五阶段议程已经作为**草案**放好了（不是确认——第一场怎么开是你的第二个决定）。\n` +
+          `接着：/squad-say 我想通过创作文章来获利`
+        );
+      },
+    );
+
+    register("squad-build", "把当前团队设计出来的方案，建成一支真的团队", "项目文件夹（绝对路径）", async (raw) => {
+      const projectFolder = raw.trim();
+      if (projectFolder === "") throw new Error("要给一个项目文件夹的绝对路径，新团队在那里工作。");
+      // Read out of the record, not re-generated: the final phase already
+      // asked the secretary for this JSON, and running it through a model
+      // again would be a second chance to change what the host is about to
+      // approve.
+      const { plan } = latestPlanOf(this.team());
+      const built = await instantiateTeamPlan(this.ctx, { plan, projectFolder });
+      const team = this.ctx.teams.get(built.teamId);
+      if (team === undefined) throw new Error(`团队 ${built.teamId} 建好了却读不回来。`);
+      this.current = team.teamId;
+      return (
+        `已建「${team.displayName}」（${team.teamId}），已设为当前团队。\n` +
+        `目标：${plan.goal}\n` +
+        `席位：${team.seats.map((seat) => `${seat.displayName}（${seat.role}）`).join("、")}\n` +
+        `Agent 库新增：${built.templateIds.join("、")}\n` +
+        `方案指纹：${shortHash(built.hash)}\n` +
+        (plan.risks.length === 0 ? "" : `\n红队留下的风险：\n${plan.risks.map((r) => `  · ${r}`).join("\n")}\n`) +
+        `\n首场议程已经作为**草案**放好了，还没确认。到面板里看一眼再决定跑不跑。`
       );
     });
 
@@ -245,4 +308,5 @@ export { parseNewTeam, parseSay } from "./parse.ts";
 export type { NewTeamInput, SayInput, SeatDraft } from "./parse.ts";
 
 export { SQUAD_API_PREFIX, snapshotOf, registerSquadApi } from "./http.ts";
+export { TEAM_DESIGNER_PLAN, instantiateTeamPlan, latestPlanOf, planFromReply, planHash } from "./team-designer.ts";
 export type { SquadSnapshot, TeamSummary } from "./http.ts";

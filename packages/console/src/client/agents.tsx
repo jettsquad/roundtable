@@ -11,7 +11,7 @@
  * What gets stored is still a connection plus a reference to it: the form is
  * a convenience, not a second place where model configuration lives.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   credentialRefFor,
   defaultPermissionMode,
@@ -29,6 +29,9 @@ import {
 } from "@squad/shared";
 import { api, useAction, type AgentCheckReport } from "./api.ts";
 import { numberOrUndefined } from "./number-field.ts";
+import { MoveButtons, SearchBox, matches } from "./order-controls.tsx";
+import { MINIMAX_VOICES, defaultVoiceFor, voiceLabel, voicesFor, voicesOf } from "@squad/shared";
+import { speech } from "./speech.ts";
 import styles from "./panel.module.css";
 
 const BACKENDS: readonly { readonly id: AgentBackend; readonly label: string }[] = [
@@ -72,6 +75,7 @@ interface Draft {
   secretaryCandidate: boolean;
   webAccess: boolean;
   color: string;
+  voiceId: string;
   /** "" means the host's own login. */
   connectionId: string;
   /** Set only when building a new connection from this form. */
@@ -98,6 +102,7 @@ const blank = (): Draft => ({
   secretaryCandidate: false,
   webAccess: false,
   color: COLORS[0] ?? "#2e7d6b",
+  voiceId: "",
   connectionId: "",
   authMode: "subscription",
   modelId: "",
@@ -124,6 +129,7 @@ function draftOf(template: AgentTemplate): Draft {
     secretaryCandidate: template.secretaryCandidate,
     webAccess: template.webAccess === true,
     color: template.color,
+    voiceId: template.voiceId ?? "",
     connectionId: template.connectionId ?? "",
     maxTurns: template.caps?.maxTurns === undefined ? "" : String(template.caps.maxTurns),
     maxTokens: template.caps?.maxTokens === undefined ? "" : String(template.caps.maxTokens),
@@ -161,6 +167,12 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
    * must not read the previous run's green ticks as this one's.
    */
   const [reports, setReports] = useState<Record<string, AgentCheckReport | "running">>({});
+  const [query, setQuery] = useState("");
+  // Searched over the prompt too: 「哪个 agent 里写了红队」 is a real way to
+  // look for one, and the name alone often does not say.
+  const shown = agents.filter((agent) =>
+    matches(query, agent.displayName, agent.role, agent.backend, agent.systemPrompt, agent.templateId),
+  );
   const { error, run } = useAction(onChanged);
   const set = (patch: Partial<Draft>): void => setDraft({ ...draft, ...patch });
 
@@ -185,6 +197,10 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
         secretaryCandidate: draft.secretaryCandidate,
         webAccess: draft.webAccess,
         color: draft.color,
+        // Trimmed, and an all-whitespace value counts as unset: the picker
+        // uses a single space as its 「自己填一个」 sentinel, and saving that
+        // as a voice id would send a space to MiniMax on the first round.
+        ...(draft.voiceId.trim() === "" ? {} : { voiceId: draft.voiceId.trim() }),
         ...(connectionId === "" ? {} : { connectionId }),
         ...(draft.backend === "dsh" ? {} : { permissionMode: draft.permissionMode }),
         ...(draft.backend === "codex" && draft.reasoningEffort !== ""
@@ -228,7 +244,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
 
   return (
     <div className={styles.twoColumn}>
-      <div className={styles.column}>
+      <div className={`${styles.column} ${styles.columnSticky}`}>
         <div className={styles.subhead}>
           {agents.some((a) => a.templateId === draft.templateId) ? "编辑" : "新建"} Agent
         </div>
@@ -473,6 +489,75 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               允许联网（预先批准 WebFetch / WebSearch）
             </label>
           )}
+          {/* Beside the colour, because it is the same kind of thing: how you
+              tell this member from the others. The default is derived from
+              the name, so a roster is followable by ear before anyone
+              configures anything — this is for when two seats collide, or
+              when a voice simply does not suit the role. */}
+          <div className={styles.subhead}>声音</div>
+          <div className={styles.row}>
+            {/* A list AND a box. The list is every system voice; the box is
+                for the ones no list can have — a voice you cloned, whose id
+                you chose yourself, or a MiniMax voice added after this build.
+                The id is passed through untouched all the way to synthesis,
+                so anything MiniMax accepts works here; a list-only control
+                would be the one thing standing between the two. */}
+            <select
+              className={styles.field}
+              value={known.has(draft.voiceId) || draft.voiceId === "" ? draft.voiceId : CUSTOM}
+              onChange={(event) => set({ voiceId: event.target.value === CUSTOM ? " " : event.target.value })}
+            >
+              <option value="">按名字自动分配（{voiceLabel(defaultVoiceFor(draft.displayName || "未命名"))}）</option>
+              {/* Grouped by language rather than listed flat: a seat that
+                  writes English is picked from a list where every second
+                  entry would otherwise be unusable for it. Nothing is
+                  filtered out — MiniMax will read either language in either
+                  voice, it just sounds wrong. */}
+              {/* Grouped, because fifty in one flat list is a list nobody
+                  reads to the end. Nothing is hidden — MiniMax will read
+                  either language in any of these — the groups only put the
+                  ones a working roster wants where they are found first. */}
+              {(
+                [
+                  ["中文", "zh", "plain"],
+                  ["中文 · 角色音", "zh", "character"],
+                  ["English", "en", "plain"],
+                  ["English · character", "en", "character"],
+                ] as const
+              ).map(([label, language, kind]) => {
+                const voices = voicesOf(language, kind);
+                return voices.length === 0 ? null : (
+                  <optgroup key={label} label={label}>
+                    {voices.map((voice) => (
+                      <option key={voice.voiceId} value={voice.voiceId}>
+                        {voice.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                );
+              })}
+              <option value={CUSTOM}>自己填一个 voice_id…</option>
+            </select>
+            <VoicePreview
+              voiceId={
+                draft.voiceId.trim() === "" ? defaultVoiceFor(draft.displayName || "未命名") : draft.voiceId.trim()
+              }
+              name={draft.displayName === "" ? "这个席位" : draft.displayName}
+            />
+          </div>
+          {known.has(draft.voiceId) || draft.voiceId === "" ? null : (
+            <>
+              <input
+                className={styles.field}
+                placeholder="MiniMax 的 voice_id，比如你复刻出来的那个"
+                value={draft.voiceId.trim()}
+                onChange={(event) => set({ voiceId: event.target.value })}
+              />
+              <div className={styles.hint}>
+                原样发给 MiniMax。写错了不会在这里被拦下——合成那一刻它会把 MiniMax 的原话报出来。
+              </div>
+            </>
+          )}
           {COLORS.map((color) => (
             <button
               key={color}
@@ -497,15 +582,32 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
       </div>
 
       <div className={styles.column}>
-        <div className={styles.subhead}>已有 Agent（{agents.length}）</div>
+        <div className={styles.subhead}>
+          已有 Agent（{query.trim() === "" ? agents.length : `${shown.length} / ${agents.length}`}）
+        </div>
+        <SearchBox value={query} onChange={setQuery} placeholder="搜名字、角色、后端、提示词……" />
         {agents.length === 0 ? <div className={styles.hint}>还没有。左边配一个，之后每支团队都能直接选它。</div> : null}
-        {agents.map((agent) => (
+        {agents.length > 0 && shown.length === 0 ? (
+          <div className={styles.hint}>没有匹配「{query}」的 agent。</div>
+        ) : null}
+        {shown.map((agent) => (
           <div key={agent.templateId} className={styles.card}>
             <div className={styles.row}>
               <span className={styles.dot} style={{ background: agent.color }} />
               <span className={styles.teamName}>{agent.displayName}</span>
               <span className={styles.muted}>{agent.role}</span>
               {agent.secretaryCandidate ? <span className={styles.muted}>★ 可当秘书</span> : null}
+              {/* Hidden while filtering: the arrows move a row one place in the
+                  REAL list, and next to a filtered view they would appear to
+                  do nothing — the neighbour they swap with is not on screen. */}
+              {query.trim() !== "" ? null : (
+                <MoveButtons
+                  index={agents.indexOf(agent)}
+                  count={agents.length}
+                  label={agent.displayName}
+                  onMove={(delta) => api.moveAgent({ templateId: agent.templateId, delta }).then(onChanged)}
+                />
+              )}
             </div>
             <div className={styles.muted}>
               {agent.backend}
@@ -580,5 +682,50 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * Hear a voice before assigning it.
+ *
+ * Picking from a list of names — 「温润男声」, 「阅历姐姐」 — is picking
+ * blind: the labels describe a register, not a sound, and two of them can be
+ * near-identical in a way no word conveys. One sentence is enough to know,
+ * and it costs a fraction of one reply's worth of quota.
+ */
+/** The sentinel the picker uses to mean 「不在这张单子上」. A space, so it is
+ *  not empty (empty means 「自动分配」) and cannot collide with a real id. */
+const CUSTOM = " ";
+
+/** Every id the list offers, for telling a listed voice from a typed one. */
+const known = new Set(MINIMAX_VOICES.map((voice) => voice.voiceId));
+
+/** English voices whose id does not start with `English`. */
+const ENGLISH_ONLY = new Set(voicesFor("en").map((voice) => voice.voiceId));
+
+function VoicePreview({ voiceId, name }: { readonly voiceId: string; readonly name: string }): JSX.Element {
+  const [state, setState] = useState(speech.state());
+  useEffect(() => speech.subscribe(setState), []);
+  const playing = state.turnId === `preview-${voiceId}`;
+  return (
+    <button
+      type="button"
+      className={styles.button}
+      disabled={!speech.ready}
+      title={speech.ready ? "念一句试试" : "先在团队页的「朗读设置」里选一个合成用的连接"}
+      onClick={() =>
+        void speech.play({
+          turnId: `preview-${voiceId}`,
+          speaker: name,
+          text:
+            voiceId.startsWith("English") || ENGLISH_ONLY.has(voiceId)
+              ? "This is my voice. I will sound like this whenever I speak."
+              : "这是我的声音，之后我说的话都会是这个调子。",
+          voiceId,
+        })
+      }
+    >
+      {playing ? "■ 停" : "▶ 试听"}
+    </button>
   );
 }

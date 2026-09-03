@@ -27,11 +27,13 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { SeatUsage } from "@squad/shared";
 import { silenceMessage, watchSilence, type SilenceLimits } from "./silence.ts";
 import { activityKey, beginActivity, endActivity, reportActivity } from "./activity.ts";
+import { withoutHeartbeats } from "./alive.ts";
 
 export { silenceVerdict, watchSilence, silenceMessage, SEAT_SILENCE_LIMITS } from "./silence.ts";
 export type { SilenceLimits, SilenceReason } from "./silence.ts";
 export { activityFor, activityKey, beginActivity, endActivity, reportActivity, resetActivity } from "./activity.ts";
 export type { SeatActivity } from "./activity.ts";
+export { SEAT_ALIVE_PREFIX, isAliveLine, withoutHeartbeats } from "./alive.ts";
 
 /** What a backend's parser makes of one run's output. */
 export interface SeatOutcome {
@@ -85,7 +87,10 @@ async function readAll(child: SubprocessHandle): Promise<string> {
 /** The last few lines a CLI wrote to stderr. */
 async function readStderrTail(child: SubprocessHandle, lines = 8): Promise<string> {
   const read = await child.collected.stderr?.readFrom(0);
-  const text = (read?.text ?? "").trim();
+  // Heartbeats dropped BEFORE the tail is taken. They share this stream — see
+  // `alive.ts` — and a long run emits enough of them to push the one line
+  // that explains the failure out of the window entirely.
+  const text = withoutHeartbeats(read?.text ?? "").trim();
   if (text === "") return "";
   return text.split("\n").slice(-lines).join("\n");
 }
@@ -182,7 +187,14 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
     let silence: "silent" | "no-output" | undefined;
     const watch = watchSilence(
       async () => {
-        const bytes = (await child.collected.stdout?.readFrom(0))?.nextOffset ?? 0;
+        // BOTH streams. A backend that cannot stream its answer says it is
+        // alive on stderr instead (see `alive.ts`), and counting only stdout
+        // would leave that signal unread — which is exactly the state this
+        // was in: a healthy dsh seat cancelled at five minutes for producing
+        // no output, while its child was emitting an event every second.
+        const out = (await child.collected.stdout?.readFrom(0))?.nextOffset ?? 0;
+        const err = (await child.collected.stderr?.readFrom(0))?.nextOffset ?? 0;
+        const bytes = out + err;
         // The same number the watchdog judges on. Reading it twice from two
         // places is how a display comes to disagree with the decision it is
         // supposed to be explaining.

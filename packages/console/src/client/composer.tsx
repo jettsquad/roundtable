@@ -26,6 +26,7 @@ import { useSitting } from "./use-sitting.ts";
 import { DRAFT_ANCHOR } from "./draft-card.tsx";
 import { clearQuotes, toggleQuote } from "./quotes.ts";
 import { useQuotes } from "./use-quotes.ts";
+import { Dictate } from "./dictate.tsx";
 import styles from "./panel.module.css";
 
 interface SquadComposerProps {
@@ -366,6 +367,12 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
             the picker simply never opens, which is 「只有按钮，但是添加不了
             文档」. A label opens it through the browser's own path, with no
             script involved. */}
+        {/* Beside the send button, because dictating IS how you fill the box
+            — and what it produces has to be reviewable in the same place
+            before it costs a round. */}
+        <Dictate
+          onText={(text) => setInstruction((current) => (current.trim() === "" ? text : `${current} ${text}`))}
+        />
         <label className={styles.button} title="导入 PDF、Word、Markdown 或纯文本作为背景资料">
           {importing === undefined
             ? `＋资料${current.materials.length === 0 ? "" : `（${current.materials.length}）`}`

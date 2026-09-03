@@ -28,10 +28,21 @@ const agentTemplateRecord = z.object({
   caps: capsRecord.optional(),
   secretaryCandidate: z.boolean(),
   color: z.string(),
+  /** MiniMax voice id for reading this agent's replies aloud. */
+  voiceId: z.string().optional(),
   /** Pre-approve the web tools for this agent. Claude Code only. */
   webAccess: z.boolean().optional(),
   /** Soft delete: a disabled template is hidden, not gone. */
   enabled: z.boolean(),
+  /**
+   * Where this sits in the library, when somebody has said.
+   *
+   * Absent on every row written before ordering existed, and absent is not
+   * zero: a library that has never been reordered falls back to creation
+   * order, which is what it always showed. The first move assigns one to
+   * every entry, so the two schemes never have to be mixed.
+   */
+  order: z.number().optional(),
   createdAt: z.number(),
 });
 

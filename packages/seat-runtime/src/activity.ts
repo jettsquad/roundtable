@@ -56,7 +56,7 @@ export function reportActivity(key: string, bytes: number, at = Date.now()): voi
   const current = live.get(key);
   if (current === undefined) return;
   if (bytes <= current.bytes) return;
-  live.set(key, { startedAt: current.startedAt, bytes, lastOutputAt: at });
+  live.set(key, { ...current, bytes, lastOutputAt: at });
 }
 
 /** The seat has settled, one way or another. */

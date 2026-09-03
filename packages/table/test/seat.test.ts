@@ -9,6 +9,38 @@ const seat: SeatSpec = {
   backend: "claude-code",
 };
 
+describe("composeSeatPrompt · 团队共用提示词", () => {
+  it("排在席位自己的职责之前", () => {
+    // Order is the argument, not a preference: a seat that reads its own job
+    // first takes the shared rules as commentary on it; read second, its job
+    // is an exception inside the frame.
+    const prompt = composeSeatPrompt({
+      seat,
+      instruction: "干活",
+      context: [],
+      blocks: [{ name: "本队章程", text: "我们在写付费文章。产出交给主持人，不直接发布。" }],
+    });
+    expect(prompt).toContain("我们在写付费文章");
+    expect(prompt.indexOf("我们在写付费文章")).toBeLessThan(prompt.indexOf("你重视可维护性。"));
+    expect(prompt).toContain("## 本队章程");
+    expect(prompt).toContain("## 你的职责");
+  });
+
+  it("没写就完全不出现，不留空标题", () => {
+    // An empty section on every prompt of every round is a heading people
+    // learn to skip — and then stop reading the one that has content.
+    const prompt = composeSeatPrompt({
+      seat,
+      instruction: "干活",
+      context: [],
+      blocks: [{ name: "空的", text: "   " }],
+    });
+    expect(prompt).not.toContain("## 空的");
+    expect(prompt).not.toContain("## 你的职责");
+    expect(prompt).toContain("你重视可维护性。");
+  });
+});
+
 describe("composeSeatPrompt", () => {
   // The CLI providers hand the child the text and nothing else — no parent
   // conversation, no persona option — so anything the seat needs must be here.

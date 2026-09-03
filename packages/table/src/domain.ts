@@ -170,6 +170,14 @@ const teamRecord = z.object({
   draftedAt: z.number().optional(),
   /** The secretary turn this draft was converted from, when it came from one. */
   draftFromTurnId: z.string().optional(),
+  /**
+   * Where this team sits in the list, when somebody has said.
+   *
+   * Absent means 「从没排过」, and that is not the same as first: a list that
+   * has never been arranged falls back to the order teams were made in, which
+   * is what it always showed. The first move writes one onto every team.
+   */
+  order: z.number().optional(),
   createdAt: z.number(),
 });
 

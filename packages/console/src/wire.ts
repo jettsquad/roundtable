@@ -13,6 +13,7 @@
  * second declaration, and a second declaration of a wire format is a bug
  * waiting for a field rename.
  */
+import type { PromptBlock, TeamPrompts } from "@squad/shared";
 import type {
   AgendaSpec,
   AgentTemplate,
@@ -40,6 +41,8 @@ export interface TeamSummary {
     /** What this seat was last asked, while it is speaking. */
     readonly instruction?: string | undefined;
     readonly connectionId?: string | undefined;
+    /** Which voice reads this seat aloud, when it was given one. */
+    readonly voiceId?: string | undefined;
     readonly caps?: SeatCaps | undefined;
     readonly permissionMode?: PermissionMode | undefined;
     /** Where this seat came from, when it was taken from the library. */
@@ -166,8 +169,75 @@ export interface TeamSummary {
         readonly hash: string;
         /** Who joined or left since it was confirmed. Empty when nobody did. */
         readonly rosterDrift: readonly string[];
+        /**
+         * The agenda stopped here because the phase asked for the host.
+         *
+         * Distinguished from every other reason an agenda is unfinished — a
+         * crash, a restart, 「结束议程」 — because it is the only one where
+         * something is WAITING ON A PERSON. Told apart in the record all
+         * along (`exit: "wait-for-host"`); it simply never reached the
+         * screen, so a deliberate pause and an interrupted run looked
+         * identical and both offered the same 「继续」 button.
+         */
+        readonly awaitingHost: boolean;
+        /**
+         * The seats whose phase asked for the host, by display name.
+         *
+         * So the panel can NAME who to answer instead of saying 「可以点名」.
+         * The difference is not politeness: a reply sent to nobody in
+         * particular is a round for the WHOLE table, and the seats whose turn
+         * has not come answer it anyway — each doing its own job on an input
+         * that was not meant for it. Measured once: four seats ran ahead, one
+         * of them invented a JSON schema, and the agenda was still paused the
+         * whole time.
+         */
+        readonly awaitingFrom: readonly string[];
       }
     | undefined;
+  /**
+   * The secretary replies in the visible tail that ARE a buildable team plan.
+   *
+   * Computed here rather than probed from the panel, so the offer to build
+   * appears only where building would actually work: a reply that parses but
+   * fails `checkTeamPlan` gets no button, instead of a button that fails when
+   * pressed. Empty for every ordinary team, which is the common case.
+   */
+  readonly planTurnIds?: readonly string[] | undefined;
+  /**
+   * This roster is a designer team's, so the plan controls belong on it.
+   *
+   * A flag rather than the panel matching names itself: 「这五个人是不是组队
+   * 团队」 is decided by the same function the server uses to place the seed
+   * agenda, and two answers to one question is how they drift apart.
+   */
+  readonly designer?: boolean | undefined;
+  /**
+   * The team's copies of the shared prompt blocks, and how they are shared out.
+   *
+   * Sent whole: the panel edits blocks, the team's selection and the sets on
+   * one screen, and three fields that can arrive separately is how two of
+   * them come to describe a state the third never agreed to.
+   */
+  readonly prompts: TeamPrompts;
+  /**
+   * Which of this team's copies differ from the library, by block id.
+   *
+   * Computed here rather than stored, so it cannot go stale: it is a
+   * comparison, and a stored comparison is a second fact to keep true. The
+   * panel needs it to say 「已被本队改过」 before a refresh silently replaces
+   * something somebody wrote on purpose.
+   */
+  readonly editedBlockIds: readonly string[];
+  /**
+   * Secretary replies that LOOK like a plan and were refused, with why.
+   *
+   * Carried because the alternative is what shipped first: a reply that
+   * failed its checks simply grew no button, and 「没看到建团按钮」 is
+   * indistinguishable from 「这个功能没做」. The refusal already names what is
+   * wrong — nineteen tasks addressed to seats that do not exist, say — and
+   * that sentence is the entire value of the refusal.
+   */
+  readonly planProblems?: readonly { readonly turnId: string; readonly detail: string }[] | undefined;
   /** The standing draft's identity, echoed back when confirming it. */
   readonly draftAgendaId?: string | undefined;
   readonly draftRevision?: number | undefined;
@@ -250,6 +320,8 @@ export interface SquadSnapshot {
   readonly connections: readonly PanelConnection[];
   /** The reusable agent library. */
   readonly agents: readonly AgentTemplate[];
+  /** The reusable prompt fragments, user-level, in library order. */
+  readonly blocks: readonly PromptBlock[];
   /**
    * How this host lets a person choose a folder.
    *

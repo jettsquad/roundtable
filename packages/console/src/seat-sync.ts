@@ -41,6 +41,7 @@ export interface SyncableSeat {
   readonly permissionMode?: PermissionMode | undefined;
   readonly caps?: SeatCaps | undefined;
   readonly color?: string | undefined;
+  readonly voiceId?: string | undefined;
   readonly webAccess?: boolean | undefined;
   readonly templateId?: string | undefined;
   readonly isSecretary?: boolean | undefined;
@@ -57,6 +58,7 @@ export interface TemplateFacts {
   readonly permissionMode?: SyncableSeat["permissionMode"];
   readonly caps?: SyncableSeat["caps"];
   readonly color?: string | undefined;
+  readonly voiceId?: string | undefined;
   readonly webAccess?: boolean | undefined;
 }
 
@@ -79,6 +81,7 @@ export function syncSeat<T extends SyncableSeat>(seat: T, template: TemplateFact
       : { permissionMode: template.permissionMode }),
     ...(template.caps === undefined ? { caps: undefined } : { caps: template.caps }),
     ...(template.color === undefined ? {} : { color: template.color }),
+    ...(template.voiceId === undefined ? {} : { voiceId: template.voiceId }),
     // Assigned rather than added: turning web access OFF in the library has
     // to reach the teams too, and a sync that only ever set `true` could
     // never carry that.
@@ -97,6 +100,7 @@ export function seatMatches(seat: SyncableSeat, template: TemplateFacts): boolea
     next.connectionId === seat.connectionId &&
     next.permissionMode === seat.permissionMode &&
     next.color === seat.color &&
+    next.voiceId === seat.voiceId &&
     next.webAccess === seat.webAccess &&
     next.caps?.maxTurns === seat.caps?.maxTurns &&
     next.caps?.maxCostUsd === seat.caps?.maxCostUsd &&

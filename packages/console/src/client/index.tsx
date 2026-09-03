@@ -24,7 +24,7 @@ import type {} from "@deepseek-ai/dsh-client-ui-conversation/client";
 import { TeamButton, TeamPanel } from "./panel.tsx";
 import { SquadComposer } from "./composer.tsx";
 import { api } from "./api.ts";
-import { setTeamFolders, teamFolders, watchTeamFolders } from "./team-sessions.ts";
+import { setShellSessions, setTeamFolders, teamFolders, watchTeamFolders } from "./team-sessions.ts";
 import { preferTeamView } from "./land-on-team.ts";
 import { claimSession } from "./use-sitting.ts";
 import { TeamView } from "./team-view.tsx";
@@ -43,6 +43,22 @@ export function apply(ctx: Context): void {
   ctx.slots.inject("sidebar.footer.action", () =>
     ctx.slots.register({ name: "sidebar.footer.action", id: "squad-teams", order: 10 }, TeamButton),
   );
+  // Handed to the panel, which is rendered into a slot and so never sees
+  // `ctx`. Opening a session is a shell act — only the shell knows how to
+  // reuse a workspace's blank session instead of minting a second one.
+  setShellSessions({
+    connectWorkspace: (workspaceId: string) => ctx.workspaces.connectWorkspace(workspaceId as never),
+    open: (sessionId: string) => {
+      ctx.sessions.open(sessionId as never);
+    },
+    // `workspaceId`, not `id`. The first version read `.id`, which is not a
+    // field on `WorkspaceView` — so the lookup always answered "undefined"
+    // and every team reported 「还没注册成 workspace」 while its workspace
+    // sat in the sidebar. Typed loosely enough that tsc had nothing to say.
+    workspaceIdFor: (folder: string) =>
+      ctx.workspaces.list.getSnapshot().items.find((workspace) => workspace.path === folder)?.workspaceId,
+  });
+
   ctx.slots.inject("shell.overlay", () =>
     ctx.slots.register({ name: "shell.overlay", id: "squad-workbench" }, TeamPanel),
   );

@@ -126,4 +126,26 @@ describe("整队一行", () => {
       describeTeam([{ displayName: "甲", status: describeSeat({ running: true, blocked: "没连接", silence, now }) }]),
     ).toBeUndefined();
   });
+
+  /**
+   * The failure this used to hide.
+   *
+   * `dsh --profile headless` writes nothing until its turn is over, so a
+   * healthy dsh seat sat here counting down toward 「按连不上处理」 and was
+   * cancelled at five minutes. The fix is not in this file — that backend now
+   * reports its own progress, so zero bytes means what this says it means
+   * again — but the case is kept because the reading has to stay true: on a
+   * seat that really has said nothing, silence IS the verdict, and saying so
+   * early is the whole point of the short deadline.
+   */
+  it("零字节拖久了要报，因为这时静默确实是判据", () => {
+    const status = describeSeat({
+      running: true,
+      activity: { startedAt: now - 200_000, bytes: 0, lastOutputAt: now - 200_000 },
+      silence,
+      now,
+    });
+    expect(status.phase).toBe("stalling");
+    expect(status.detail).toContain("连不上");
+  });
 });

@@ -42,6 +42,7 @@ import {
   type SeatUsage,
   type UsageTotals,
 } from "@squad/shared";
+import { EMPTY_TEAM_PROMPTS, blocksForSeat, type TeamPrompts } from "@squad/shared";
 import { activityFor, activityKey, type SeatActivity } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
 import { baseForFolder, recordForSession, restoreOrder, unclaimed } from "./sitting.ts";
@@ -71,6 +72,14 @@ export interface CreateTeamInput {
    * again on every model change. Asked once, as a coefficient.
    */
   readonly checkpointCoefficient?: number | undefined;
+  /**
+   * The team's copies of the shared prompt blocks, and how they are used.
+   *
+   * Copies, like the seats themselves: an edit in the library must not change
+   * what a team already at work is being told. See `@squad/shared`'s
+   * `prompt-blocks.ts`.
+   */
+  readonly prompts?: TeamPrompts | undefined;
 }
 
 export interface SeatReply {
@@ -163,6 +172,23 @@ export interface Team {
    */
   resumeAgenda(): Promise<AgendaOutcome>;
   /**
+   * Put the agenda back to before phase `phaseIndex`, so a resume re-runs it.
+   *
+   * The flexibility a linear plan cannot have on its own: a problem found in
+   * phase five is usually a problem MADE in phase two, and without this the
+   * only repair is to confirm the whole plan again and re-run everything.
+   *
+   * It rewinds the PLAN, never the discussion. Nothing said is removed — the
+   * re-run sees the earlier attempt and the argument against it, which is the
+   * only way the second attempt can be different from the first.
+   *
+   * Never runs anything by itself. Same rule as `resumeAgenda`: work that
+   * starts without being asked is work nobody decided to do.
+   */
+  rewindAgenda(phaseIndex: number): void;
+  /** Where this team sits in the list, when it has been arranged. */
+  readonly order: number | undefined;
+  /**
    * Put a draft up for confirmation, or clear the one standing.
    *
    * `fromTurnId` is the secretary reply it was converted from. Carried so the
@@ -206,6 +232,21 @@ export interface Team {
   rename(displayName: string): void;
   /** The team's checkpoint coefficient, if it set one. */
   readonly checkpointCoefficient?: number | undefined;
+  /** The team's prompt blocks and how they are shared out. */
+  readonly prompts: TeamPrompts;
+  /**
+   * Replace them wholesale.
+   *
+   * Wholesale rather than field by field, because every caller is editing one
+   * screen where the blocks, the team's selection and the sets are visible
+   * together — and a partial update is how two of the three end up describing
+   * a state the third never agreed to.
+   *
+   * Takes effect from the NEXT round: a seat mid-answer is running on the
+   * text it was handed. Written on the BASE team, so every sitting shares it
+   * exactly as it shares the roster.
+   */
+  setPrompts(prompts: TeamPrompts): void;
   /**
    * The host node itself.
    *
@@ -505,6 +546,7 @@ export class TeamsService extends Service {
       teamId: saved.teamId,
       sessionId: saved.sessionId ?? saved.teamId,
       baseTeamId: saved.baseTeamId,
+      ...(saved.order === undefined ? {} : { order: saved.order }),
       input,
       handle,
       roundsInFlight: 0,
@@ -574,6 +616,7 @@ export class TeamsService extends Service {
         : { checkpointCoefficient: record.input.checkpointCoefficient }),
       seats: record.seats as unknown as TeamPersisted["seats"],
       usage: record.usage,
+      ...(record.order === undefined ? {} : { order: record.order }),
       ...(record.draft === undefined
         ? {}
         : {
@@ -878,18 +921,33 @@ export class TeamsService extends Service {
       // NOT is a dsh model loop, so nothing here pretends an assistant
       // answered — the turn opens, one user line is recorded, and it closes
       // as completed.
-      session.append("turn/start", { turn: 0 } as never);
-      session.append(
-        "user/message",
-        {
-          id: `squad-mark-${Date.now().toString(36)}`,
-          role: "user",
-          source: { kind: "user" },
-          content: [{ type: "text", text: `团队「${teamName}」的新一场工作。讨论在「团队」标签页。` }],
-        } as never,
-        { surfaceOp: "append" } as never,
-      );
-      session.append("turn/end", { turn: 0, reason: { kind: "completed" } } as never);
+      // Turn ONE, and the number is not free.
+      //
+      // `turn` is a COUNTER, not a marker: dsh's loop takes the last
+      // `turn/start` in the log and adds one, from a base of zero. So the
+      // only correct value here is 1 — and it is correct only because of the
+      // `used` guard above, which returns before this line whenever the
+      // session already has a turn. Widen that guard and this constant
+      // becomes a duplicate turn number.
+      //
+      // It was 0, meaning 「这不是真的一轮」 — a meaning `turn` does not
+      // have. dsh's persistence validator refuses any stored `turn/end`
+      // below 1, and refuses it at LOAD: the marker wrote cleanly, sat on
+      // disk, and made the session unresumable and unrenamable weeks later.
+      // 51 sessions were written that way before a rename hit one.
+      //
+      // Nothing warned at write time because these go through `as never`.
+      // The cast gets us past a type we cannot reach — and past every rule
+      // that came with it.
+      for (const event of sessionMarkEvents(teamName)) {
+        // `surfaceOp` on the message only: it is the one event of the three
+        // that joins the ordered surface model history is derived from.
+        if (event.type === "user/message") {
+          session.append(event.type as never, event.data as never, { surfaceOp: "append" } as never);
+        } else {
+          session.append(event.type as never, event.data as never);
+        }
+      }
     } catch (error) {
       this.ctx.logger?.warn?.(`没能给会话留下标记：${error instanceof Error ? error.message : String(error)}`);
     }
@@ -942,11 +1000,61 @@ export class TeamsService extends Service {
     for (const member of this.family(record)) this.persist(member);
   }
 
+  /**
+   * Every live team, in the order the list shows them.
+   *
+   * Arranged order wins; anything never arranged keeps the order it was made
+   * in. They never interleave badly because `move` writes a position onto
+   * every team at once — before the first move they are all absent, after it
+   * they are all numbers.
+   */
   list(): readonly string[] {
-    return [...this.teams.values()].filter((r) => !r.disposed).map((r) => r.teamId);
+    const live = [...this.teams.values()].filter((r) => !r.disposed);
+    return live
+      .map((record, index) => ({ record, index }))
+      .sort(
+        (a, b) =>
+          (a.record.order ?? Number.MAX_SAFE_INTEGER) - (b.record.order ?? Number.MAX_SAFE_INTEGER) ||
+          a.index - b.index,
+      )
+      .map(({ record }) => record.teamId);
+  }
+
+  /**
+   * Move one team up or down the list.
+   *
+   * Positions are rewritten for everyone rather than swapped between two,
+   * because a swap between two teams that have never been arranged changes
+   * nothing anybody can see — neither of them has a position to swap. Only
+   * BASE teams are arranged: a sitting belongs to its team and appears under
+   * it, so giving one its own place in the list would let a session outrank
+   * the team it is a session of.
+   */
+  async move(teamId: string, delta: number): Promise<void> {
+    const ordered = this.list()
+      .map((id) => this.teams.get(id))
+      .filter((record): record is TeamRecord => record !== undefined && record.baseTeamId === undefined);
+    const at = ordered.findIndex((record) => record.teamId === teamId);
+    if (at < 0) throw new Error(`没有这支团队：${teamId}。`);
+    const to = at + delta;
+    if (to < 0 || to >= ordered.length) return;
+    const next = [...ordered];
+    const [moved] = next.splice(at, 1);
+    if (moved === undefined) return;
+    next.splice(to, 0, moved);
+    for (const [index, record] of next.entries()) {
+      if (record.order === index) continue;
+      record.order = index;
+      this.persist(record);
+    }
+    await Promise.resolve();
   }
 
   private viewOf(record: TeamRecord): Team {
+    // An arrow, not an alias of `this`: inside a getter in the literal below,
+    // `this` is the view being built rather than the service that owns the
+    // records — while an arrow declared here keeps the service's.
+    const baseRecord = (): TeamRecord => this.baseOf(record);
     return {
       teamId: record.teamId,
       displayName: record.input.displayName,
@@ -1005,10 +1113,57 @@ export class TeamsService extends Service {
           ? undefined
           : { agendaId: record.draft.agendaId, revision: record.draft.revision };
       },
+      get prompts() {
+        return baseRecord().input.prompts ?? EMPTY_TEAM_PROMPTS;
+      },
+      setPrompts: (prompts: TeamPrompts) => {
+        // Written on the BASE, and read from it — a sitting shares its team's
+        // roster and must share its shared prompts too, or one session's
+        // seats work to different standing instructions than another's.
+        const base = baseRecord();
+        base.input = { ...base.input, prompts };
+        this.note(
+          base,
+          "team-renamed",
+          `改了共用提示词：${prompts.teamBlockIds.length} 段全员、${prompts.sets.length} 个集合、共 ${prompts.blocks.length} 段片段。`,
+        );
+        this.persist(base);
+      },
       resumeAgenda: () => {
         const held = record.confirmed;
         if (held === undefined) throw new Error("没有未跑完的议程。");
+        // A finished agenda is now kept rather than cleared, so 「跑完了」 has
+        // to be refused here instead of being implied by an absence.
+        if (held.done.length >= held.agenda.phases.length) {
+          throw new Error("这份议程已经跑完了。要重跑某个阶段，用「从这里重来」。");
+        }
         return this.runAgenda(record, held.agenda, held.done.length);
+      },
+      get order() {
+        return record.order;
+      },
+      rewindAgenda: (phaseIndex: number) => {
+        const held = record.confirmed;
+        if (held === undefined) throw new Error("这支团队没有确认过的议程，无处可回。");
+        if (record.running !== undefined) throw new Error("议程正在跑，先叫停再回退。");
+        if (phaseIndex < 0 || phaseIndex >= held.agenda.phases.length) {
+          throw new Error(`没有第 ${phaseIndex + 1} 个阶段。`);
+        }
+        const title = held.agenda.phases[phaseIndex]?.title ?? "";
+        record.confirmed = { ...held, done: held.done.slice(0, phaseIndex) };
+        this.note(record, "agenda-rewound", `退回到第 ${phaseIndex + 1} 阶段「${title}」，等主持人续跑。`, held.hash);
+        // Said in the record, because the discussion is NOT rewound and the
+        // next reader has to know why the same phase appears twice. Deleting
+        // the earlier attempt was the alternative and it is worse: what was
+        // said was said, the correction only makes sense next to it, and a
+        // re-run that cannot see the criticism repeats the mistake.
+        recordSpoken(
+          record.handle.agent,
+          "系统",
+          `⏪ 主持人把议程退回到第 ${phaseIndex + 1} 阶段「${title}」。` +
+            `之前说过的话都留着——重跑这一阶段的席位看得见它们，包括为什么要重来。`,
+        );
+        this.persist(record);
       },
       setDraft: (draft, fromTurnId) => {
         if (draft === undefined) {
@@ -1356,7 +1511,20 @@ export class TeamsService extends Service {
             : `议程停在「${pausedAfter ?? ""}」之后，等主持人。`,
         hash,
       );
-      if (finished) record.confirmed = undefined;
+      // KEPT after it finishes, where it used to be cleared.
+      //
+      // Clearing was right while the only question a finished agenda could
+      // answer was 「要不要续跑」 — there is nothing to continue. But the
+      // question that actually comes up is 「第三阶段漏了一件事，能不能从那
+      // 里再来一遍」, and answering it needs the phase list and how far it
+      // got. Thrown away, the only way back was to re-confirm the whole plan
+      // and re-run five phases to fix one.
+      //
+      // `done.length === phases.length` is what "finished" now looks like in
+      // the record, and every reader that offers 「继续」 checks it.
+      if (finished && record.confirmed !== undefined) {
+        record.confirmed = { ...record.confirmed, done: agenda.phases.map((phase) => phase.title) };
+      }
       this.persist(record);
     }
 
@@ -1583,6 +1751,9 @@ export class TeamsService extends Service {
         // should be someone the next round can hand work to.
         roster: record.seats,
         hostDisplayName: record.input.hostDisplayName,
+        // From the BASE team: a sitting is another piece of the same team's
+        // work, and its seats read the same shared blocks.
+        blocks: blocksForSeat(this.baseOf(record).input.prompts ?? EMPTY_TEAM_PROMPTS, seat.seatId),
         // Only what this round attached, plus anything pinned. Carrying every
         // imported document on every turn is what made importing one file so a
         // seat could summarise it once cost that file on every later turn of
@@ -1867,6 +2038,8 @@ interface TeamRecord {
    * see in the next would be a team with two different memories.
    */
   materials: Material[];
+  /** Where it sits in the list, once somebody has arranged one. */
+  order?: number | undefined;
   disposed: boolean;
 }
 
@@ -1912,6 +2085,39 @@ function recordSpoken(host: Agent, speaker: string, text: string, turnId?: strin
     // that model history is derived from.
     { surfaceOp: "append" } as never,
   );
+}
+
+/**
+ * The three events that make a session real to dsh.
+ *
+ * Extracted from `markSession` so a test can hand them to dsh's OWN
+ * validator. That is the only kind of test that catches what happened here:
+ * `turn: 0` was written for weeks, every in-process check passed, and the
+ * refusal came from storage — at LOAD, days later, as a failed rename.
+ *
+ * Same lesson `spokenMessage` already carries, and the reason this exists is
+ * that the earlier fix covered the discussion events and left these three
+ * beside them, unchecked.
+ */
+export function sessionMarkEvents(
+  teamName: string,
+  now = Date.now(),
+): readonly { readonly type: string; readonly data: Record<string, unknown> }[] {
+  return [
+    // Turn ONE. `turn` is a counter dsh continues from, not a slot for a
+    // sentinel, and its persistence layer refuses anything below 1.
+    { type: "turn/start", data: { turn: 1 } },
+    {
+      type: "user/message",
+      data: {
+        id: `squad-mark-${now.toString(36)}`,
+        role: "user",
+        source: { kind: "user" },
+        content: [{ type: "text", text: `团队「${teamName}」的新一场工作。讨论在「团队」标签页。` }],
+      },
+    },
+    { type: "turn/end", data: { turn: 1, reason: { kind: "completed" } } },
+  ];
 }
 
 /**

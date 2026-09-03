@@ -25,8 +25,18 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildDshArgv } from "./argv.ts";
-import { buildDshPatch, COMPAT_API_KEY_ENV } from "./patch.ts";
+import { buildDshPatch, heartbeatRows, COMPAT_API_KEY_ENV } from "./patch.ts";
 import { readDshOutput } from "./stream.ts";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Where the child finds the heartbeat plugin.
+ *
+ * Resolved from this module's own URL rather than from `process.cwd()` or a
+ * config entry: a seat runs with the TEAM's folder as its cwd, and a path
+ * relative to that would point at the user's project.
+ */
+const HEARTBEAT_MODULE = fileURLToPath(new URL("./heartbeat.ts", import.meta.url));
 
 export const name = "squad-seat-dsh";
 
@@ -123,22 +133,23 @@ export class SquadSeatDsh extends Service {
         // dsh has no environment variable for either, so this is the only
         // way they can take effect — and without it a MiniMax key goes to
         // DeepSeek's endpoint and comes back as an invalid key.
-        const patch =
+        const model =
           connection === undefined
             ? undefined
             : buildDshPatch({
                 model: (connection.modelId ?? "").trim(),
                 baseUrl: (connection.endpoint ?? "").trim(),
               });
-        let patchDir: string | undefined;
-        let patchPath: string | undefined;
-        if (patch !== undefined) {
-          patchDir = await mkdtemp(join(tmpdir(), "squad-dsh-"));
-          patchPath = join(patchDir, "seat.patch.yml");
-          // 0600: the file names an env var rather than carrying the secret,
-          // but it still describes where this seat sends its traffic.
-          await writeFile(patchPath, patch, { mode: 0o600 });
-        }
+        // ALWAYS written now, where it used to appear only when a connection
+        // named a model. The heartbeat has to be mounted on every run — a
+        // seat on the profile's own default model is exactly as invisible to
+        // the watchdog as one on a configured endpoint.
+        const patch = [heartbeatRows(HEARTBEAT_MODULE).join("\n"), ...(model === undefined ? [] : [model])].join("\n");
+        const patchDir = await mkdtemp(join(tmpdir(), "squad-dsh-"));
+        const patchPath = join(patchDir, "seat.patch.yml");
+        // 0600: the file names an env var rather than carrying the secret,
+        // but it still describes where this seat sends its traffic.
+        await writeFile(patchPath, patch, { mode: 0o600 });
 
         const env = {
           ...(config.env ?? {}),
@@ -155,21 +166,13 @@ export class SquadSeatDsh extends Service {
           who: name,
           request,
           command: config.command ?? DEFAULTS.command,
-          argv: ({ prompt }) =>
-            buildDshArgv({
-              prompt,
-              profile: config.profile ?? DEFAULTS.profile,
-              ...(patchPath === undefined ? {} : { patchPath }),
-            }),
+          argv: ({ prompt }) => buildDshArgv({ prompt, profile: config.profile ?? DEFAULTS.profile, patchPath }),
           env,
           // Removed after the run either way. A patch left behind describes
           // where a seat sent its traffic, in a world-readable temp dir.
-          cleanup:
-            patchDir === undefined
-              ? undefined
-              : async () => {
-                  await rm(patchDir, { recursive: true, force: true }).catch(() => undefined);
-                },
+          cleanup: async () => {
+            await rm(patchDir, { recursive: true, force: true }).catch(() => undefined);
+          },
           parse: readDshOutput,
           limits: {
             idleMs: config.idleMs ?? DEFAULTS.idleMs,

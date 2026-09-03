@@ -23,6 +23,9 @@ import { useEffect, useRef, useState } from "react";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, type TeamSummary } from "./api.ts";
 import { DraftCard } from "./draft-card.tsx";
+import { PlanCard, PlanMessage, PlanRefused } from "./plan-card.tsx";
+import { speech } from "./speech.ts";
+import { defaultVoiceFor } from "@squad/shared";
 import { toggleQuote } from "./quotes.ts";
 import { useQuotes } from "./use-quotes.ts";
 import styles from "./panel.module.css";
@@ -90,6 +93,43 @@ function copyText(text: string): Promise<boolean> {
  * nothing is indistinguishable from a button that did nothing, and the
  * clipboard gives no other feedback.
  */
+/**
+ * Read one reply aloud.
+ *
+ * Per message rather than a switch over the whole discussion: a global
+ * auto-read decides for you which answers are worth hearing, and pays for all
+ * of them to find out. Here the cost is one click on the one you want.
+ */
+function SpeakButton({
+  turnId,
+  speaker,
+  text,
+  voiceId,
+}: {
+  readonly turnId: string;
+  readonly speaker: string;
+  readonly text: string;
+  readonly voiceId: string;
+}): JSX.Element {
+  const [state, setState] = useState(speech.state());
+  useEffect(() => speech.subscribe(setState), []);
+  const playing = state.turnId === turnId;
+  return (
+    <>
+      <button
+        type="button"
+        className={`${styles.quoteButton} ${playing ? styles.quoted : ""}`}
+        title={speech.ready ? "念这一条（再点一次停）" : "先在上面的「朗读设置」里选一个连接"}
+        onClick={() => void speech.play({ turnId, speaker, text, voiceId })}
+        disabled={!speech.ready}
+      >
+        {playing ? `■ ${state.chunk}/${state.chunks}` : "▶ 念"}
+      </button>
+      {!playing || state.error === undefined ? null : <span className={styles.error}>{state.error}</span>}
+    </>
+  );
+}
+
 function CopyButton({ text }: { readonly text: string }): JSX.Element {
   const [state, setState] = useState<"idle" | "done" | "failed">("idle");
   return (
@@ -154,12 +194,25 @@ export function Discussion({
   team,
   autoScroll = false,
   onChanged,
+  tail,
+  pickerKind = "none",
 }: {
   readonly team: TeamSummary;
   /** Follow the newest message. On in the working view, off in the panel. */
   readonly autoScroll?: boolean;
   /** Called after the host resolves a draft rendered inside the thread. */
   readonly onChanged?: () => void;
+  /**
+   * Drawn after the last message and BEFORE the spacer the composer needs.
+   *
+   * A slot rather than a sibling, because the spacer is inside this thread:
+   * anything rendered after `<Discussion>` lands on the far side of a
+   * screen-height gap. That is what 「议程停下来等你回答」 looked like when it
+   * was moved down here — a banner marooned below a void.
+   */
+  readonly tail?: JSX.Element | null;
+  /** How this host lets a folder be chosen; passed through to the plan card. */
+  readonly pickerKind?: "native" | "browse" | "none";
 }): JSX.Element {
   const end = useRef<HTMLDivElement>(null);
   const start = useRef<HTMLDivElement>(null);
@@ -170,8 +223,24 @@ export function Discussion({
     if (autoScroll) end.current?.scrollIntoView({ block: "end" });
   }, [autoScroll, count]);
 
+  // An empty thread still has to draw a standing draft. This used to return
+  // here, and the draft card below never ran — so a team created FROM a plan,
+  // which arrives with an opening agenda and no discussion at all, showed
+  // 「还没有讨论」 over a plan that was sitting in the record waiting to be
+  // confirmed. Invisible, not absent: the whole class of failure this project
+  // keeps finding.
   if (count === 0) {
-    return <div className={styles.hint}>还没有讨论。在下面说一句，团队就开始了。</div>;
+    return (
+      <>
+        <div className={styles.hint}>
+          {team.draft === undefined
+            ? "还没有讨论。在下面说一句，团队就开始了。"
+            : "还没有讨论。下面这份议程是建团时一起放好的，确认了它就开始。"}
+        </div>
+        {team.draft === undefined ? null : <DraftCard team={team} onChanged={onChanged ?? (() => undefined)} />}
+        {tail}
+      </>
+    );
   }
 
   return (
@@ -212,7 +281,16 @@ export function Discussion({
               className={`${styles.messageBody} ${host ? styles.bodyMine : styles.bodyTheirs}`}
               style={tint === undefined || host ? undefined : { borderLeftColor: tint }}
             >
-              <MarkdownText text={line.text} />
+              {/* A plan is rendered, not printed. The secretary writes JSON
+                  because that is what the build button needs; the person
+                  reading this thread is deciding whether this is the roster
+                  they want, and escaped braces are unreadable at exactly the
+                  moment reading matters most. The bytes stay one click away. */}
+              {(team.planTurnIds ?? []).includes(line.turnId) ? (
+                <PlanMessage team={team} turnId={line.turnId} raw={line.text} />
+              ) : (
+                <MarkdownText text={line.text} />
+              )}
             </div>
             {/* Under the message, not above it. A seat's answer runs to
                 hundreds of lines; buttons at the top mean scrolling back to
@@ -232,6 +310,16 @@ export function Discussion({
                 {picked ? "已引用 ✓" : "引用"}
               </button>
               <CopyButton text={line.text} />
+              {/* Next to 复制, at the END of the message — where you finish
+                  reading and decide you would rather hear the rest. */}
+              <SpeakButton
+                turnId={line.turnId}
+                speaker={line.speaker}
+                text={line.text}
+                voiceId={
+                  team.seats.find((seat) => seat.displayName === line.speaker)?.voiceId ?? defaultVoiceFor(line.speaker)
+                }
+              />
               {/* Only on the secretary's own lines. This is 1.x's move and the
                   one that makes a secretary an organiser rather than a
                   note-taker: ask it in the DISCUSSION how the work should be
@@ -241,6 +329,25 @@ export function Discussion({
                   the secretary had. */}
               {!secretaryNames.includes(line.speaker) ? null : <ToAgendaButton team={team} turnId={line.turnId} />}
             </div>
+            {/* The act this whole thing exists for, offered where the plan
+                is. It used to be a slash command typed in another session,
+                which is the same as not existing. Only on turns the server
+                already parsed and checked. */}
+            {(team.planTurnIds ?? []).includes(line.turnId) ? (
+              <PlanCard team={team} turnId={line.turnId} pickerKind={pickerKind} />
+            ) : null}
+            {/* And when it was refused, say so HERE — next to the reply that
+                was refused — with the reason and the way to ask again. */}
+            {(team.planProblems ?? [])
+              .filter((problem) => problem.turnId === line.turnId)
+              .map((problem) => (
+                <PlanRefused
+                  key={problem.turnId}
+                  team={team}
+                  detail={problem.detail}
+                  onChanged={onChanged ?? (() => undefined)}
+                />
+              ))}
             {/* The plan, directly under the sentence it was made from. */}
             {team.draftFromTurnId === line.turnId ? (
               <DraftCard team={team} onChanged={onChanged ?? (() => undefined)} />
@@ -254,6 +361,7 @@ export function Discussion({
       {team.draft !== undefined && team.draftFromTurnId === undefined ? (
         <DraftCard team={team} onChanged={onChanged ?? (() => undefined)} />
       ) : null}
+      {tail}
       {/* The composer floats over this view, so the thread needs room under
           its last message — otherwise the newest lines, the ones you just
           caused, sit behind the box you typed into. Measured against the

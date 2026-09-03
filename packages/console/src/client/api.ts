@@ -5,7 +5,15 @@
  * the route cannot disagree about a field name without the build saying so.
  */
 import { useEffect, useState } from "react";
-import type { AgentCheckReport, AgentTemplate, SeatCaps, SeatConnection } from "@squad/shared";
+import type {
+  AgentCheckReport,
+  AgentTemplate,
+  PromptBlock,
+  SeatCaps,
+  SeatConnection,
+  TeamPlan,
+  TeamPrompts,
+} from "@squad/shared";
 import type { AgentRequest, DirectoryListing, NativePickResult, PickerKind, SquadSnapshot } from "../wire.ts";
 
 export type { AgentCheckReport, AgentTemplate, DirectoryListing, PickerKind, SquadSnapshot };
@@ -37,6 +45,25 @@ async function call<T>(path: string, method: string, body?: unknown): Promise<T>
 
 export const api = {
   snapshot: (): Promise<SquadSnapshot> => call<SquadSnapshot>("/teams", "GET"),
+  /**
+   * One chunk of text, as audio.
+   *
+   * Bytes rather than JSON: the page turns the blob into an object URL and
+   * hands it to an `<audio>` element, and base64 in an envelope would cost a
+   * third more transfer and a re-encode at both ends for nothing.
+   */
+  speak: async (body: { text: string; connectionId: string; voiceId: string; speed: number }): Promise<Blob> => {
+    const response = await fetch(`${PREFIX}/tts`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({ error: response.statusText }))) as { error?: string };
+      throw new Error(detail.error ?? "合成失败。");
+    }
+    return response.blob();
+  },
   createTeam: (body: {
     displayName: string;
     projectFolder: string;
@@ -57,6 +84,12 @@ export const api = {
     call("/connections", "POST", body),
   removeConnection: (body: { connectionId: string }): Promise<unknown> => call("/connections", "DELETE", body),
   saveAgent: (body: AgentRequest): Promise<unknown> => call("/agents", "POST", body),
+  saveBlock: (body: PromptBlock): Promise<unknown> => call("/blocks", "POST", body),
+  removeBlock: (body: { blockId: string }): Promise<unknown> => call("/blocks", "DELETE", body),
+  reorderBlocks: (body: { blockIds: readonly string[] }): Promise<unknown> => call("/blocks/order", "POST", body),
+  /** Replace a team's shared prompts wholesale — blocks, the全员 selection, and the sets. */
+  setTeamPrompts: (body: { teamId: string; prompts: TeamPrompts }): Promise<{ ok: true }> =>
+    call("/teams/prompts", "POST", body),
   removeAgent: (body: { templateId: string }): Promise<unknown> => call("/agents", "DELETE", body),
   testAgent: (body: { templateId: string }): Promise<AgentCheckReport> => call("/agents/test", "POST", body),
   resolveCriterion: (body: { id: string; verdict: "accept" | "reject" }): Promise<unknown> =>
@@ -65,6 +98,10 @@ export const api = {
   pickDirectory: (): Promise<NativePickResult> => call("/pick", "POST", {}),
   disbandTeam: (body: { teamId: string }): Promise<unknown> => call("/teams", "DELETE", body),
   renameTeam: (body: { teamId: string; displayName: string }): Promise<unknown> => call("/teams/rename", "POST", body),
+  /** Move a team up (-1) or down (+1) the list. */
+  moveTeam: (body: { teamId: string; delta: number }): Promise<{ ok: true }> => call("/teams/move", "POST", body),
+  /** Move an agent up (-1) or down (+1) the library. */
+  moveAgent: (body: { templateId: string; delta: number }): Promise<{ ok: true }> => call("/agents/move", "POST", body),
   fold: (body: { teamId: string }): Promise<unknown> => call("/checkpoint", "POST", body),
   revokeCheckpoint: (body: { teamId: string; revokeId: string }): Promise<unknown> => call("/checkpoint", "POST", body),
   /**
@@ -84,6 +121,9 @@ export const api = {
   },
   removeMaterial: (body: { teamId: string; materialId: string }): Promise<{ ok: true }> =>
     call("/materials", "DELETE", body),
+  /** Put the agenda back to before one phase. Never starts it — that is the next decision. */
+  rewindAgenda: (body: { teamId: string; phaseIndex: number }): Promise<{ ok: true }> =>
+    call("/agenda/rewind", "POST", body),
   /** Carry on an agenda that was stopped, paused, or cut short by a restart. */
   resumeAgenda: (body: { teamId: string }): Promise<{ ok: true }> => call("/agenda/resume", "POST", body),
   /** Point a seat at an agent in the library and take its settings. */
@@ -100,6 +140,24 @@ export const api = {
   /** The record this session should use, created on first sight. */
   sitting: (body: { projectFolder: string; sessionId: string }): Promise<{ teamId?: string }> =>
     call("/sitting", "POST", body),
+  /** Read the team plan out of one secretary reply. Throws when it is not one. */
+  previewTeamPlan: (body: { teamId: string; turnId: string }): Promise<TeamPlan> =>
+    call("/team-plan/preview", "POST", body),
+  /** Write its agents into the library and build the team. */
+  buildTeamPlan: (body: {
+    teamId: string;
+    turnId: string;
+    projectFolder: string;
+  }): Promise<{ teamId: string; templateIds: readonly string[]; hash: string }> =>
+    call("/team-plan/build", "POST", body),
+  /** Rewrite a designer team's seats from the current seed prompts. */
+  refreshDesigner: (body: { teamId: string }): Promise<{ refreshed: readonly string[] }> =>
+    call("/team-plan/refresh", "POST", body),
+  /** Ask the secretary for the plan again, carrying what the host says is wrong. */
+  redraftTeamPlan: (body: { teamId: string; note?: string }): Promise<{ ok: true }> =>
+    call("/team-plan/redraft", "POST", body),
+  /** Put the designer's five phases up as a draft. `placed` is false for an ordinary team. */
+  designerAgenda: (body: { teamId: string }): Promise<{ placed: boolean }> => call("/agenda/designer", "POST", body),
   say: (body: {
     teamId: string;
     instruction: string;

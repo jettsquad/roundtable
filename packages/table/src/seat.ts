@@ -54,6 +54,8 @@ export interface SeatSpec {
   readonly templateId?: string | undefined;
   /** A tint, carried from the template so a roster is readable at a glance. */
   readonly color?: string | undefined;
+  /** Which voice reads this seat's replies aloud, when it was given one. */
+  readonly voiceId?: string | undefined;
   /**
    * Let this seat reach the web without stopping to ask.
    *
@@ -76,6 +78,15 @@ export interface SeatTurnInput {
   readonly roster?: readonly SeatSpec[] | undefined;
   /** What the host is called in the record, so a seat can address them. */
   readonly hostDisplayName?: string | undefined;
+  /**
+   * The shared blocks this seat reads, already resolved and in order.
+   *
+   * Resolved by the caller rather than here: which blocks a seat reads is a
+   * fact about the TEAM (see `@squad/shared`'s `blocksForSeat`), and it is
+   * the part worth testing on its own — order, deduplication, a block deleted
+   * out from under a set. This function's job is to render them.
+   */
+  readonly blocks?: readonly { readonly name: string; readonly text: string }[] | undefined;
   /**
    * Background material the host imported, shown to every seat.
    *
@@ -118,7 +129,17 @@ export interface SeatTurnInput {
  */
 export function composeSeatPrompt(input: SeatTurnInput): string {
   const { seat, instruction, context } = input;
-  const lines = [`你是「${seat.displayName}」，在一个小团队里工作。角色：${seat.role}。`, "", seat.systemPrompt.trim()];
+  const lines = [`你是「${seat.displayName}」，在一个小团队里工作。角色：${seat.role}。`];
+
+  // Shared blocks BEFORE the seat's own instructions. Order is the whole
+  // argument: a seat that reads its own job first takes the shared rules as
+  // commentary on it, and one that reads them second treats its job as the
+  // exception inside them. Each block keeps its own name as the heading, so a
+  // person reading this can tell which library entry a paragraph came from.
+  const blocks = (input.blocks ?? []).filter((block) => block.text.trim() !== "");
+  for (const block of blocks) lines.push("", `## ${block.name.trim()}`, block.text.trim());
+
+  lines.push("", ...(blocks.length === 0 ? [] : ["## 你的职责"]), seat.systemPrompt.trim());
 
   // How this seat reaches the web, before it tries to find out. Each backend
   // has exactly one route and they are all different; a seat left to discover

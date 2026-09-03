@@ -35,6 +35,16 @@
 .header {
   position: sticky;
   top: -16px;
+  /*
+   * Above everything that scrolls under it.
+   *
+   * A sticky element without one is painted in document order, so any later
+   * sibling that establishes its own stacking context — a card, the sticky
+   * editor column — draws OVER it. The background was there all along; the
+   * roster lines were simply painted on top of it, and the tab labels ended
+   * up interleaved with whatever was scrolling past.
+   */
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -96,6 +106,178 @@
   min-width: 0;
 }
 
+/*
+ * The editing form, held in place while the list beside it scrolls.
+ *
+ * Both columns used to scroll as one block, because the scrollport is the
+ * panel itself. So looking further down a list of nine agents took the form
+ * you were filling in off the top of the screen — and the further you looked,
+ * the less of your own edit you could see. Reading the list is HOW you decide
+ * what to type, so the two have to be visible at once.
+ *
+ * `top` clears the sticky header rather than being zero: the header is also
+ * sticky, and a second sticky element at the same offset slides underneath it.
+ */
+.columnSticky {
+  position: sticky;
+  top: 52px;
+  /* Below the header, which it scrolls under rather than over. */
+  z-index: 1;
+  align-self: start;
+  max-height: calc(86vh - 96px);
+  overflow-y: auto;
+  /* So a scrollbar, when one appears, does not sit on top of the inputs. */
+  padding-right: 6px;
+}
+
+/* One column below the breakpoint, where sticky would pin the form over the
+   list instead of beside it. */
+@media (width <= 860px) {
+  .columnSticky {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
+  }
+}
+
+/*
+ * A section that is waiting on the person reading it.
+ *
+ * Ordinary sections report; this one asks. Without a mark of its own it reads
+ * as one more block of status in a page full of them — which is exactly how a
+ * paused agenda went unnoticed while everyone waited for the other.
+ */
+.calloutSection {
+  margin: 10px 0 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  border-left: 3px solid var(--dsh-color-accent, #4c8dff);
+  border-radius: 8px;
+  background: rgb(76 141 255 / 7%);
+}
+
+/* Raw model output — JSON, a prompt — shown as bytes rather than prose. */
+.planRaw {
+  margin: 4px 0;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid var(--dsh-color-border, #34343a);
+}
+
+/* Up/down, small enough to sit in a row of buttons without dominating it. */
+.nudge {
+  all: unset;
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  opacity: 0.75;
+}
+
+.nudge:hover {
+  opacity: 1;
+}
+
+.nudge:disabled {
+  cursor: default;
+  opacity: 0.25;
+}
+
+/* The filter box above a long list. */
+.search {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 4px 0 8px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  background: var(--dsh-color-surface, #1b1b1f);
+  color: inherit;
+  font: inherit;
+}
+
+/* A removable token: a block in a set, a seat in a set. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+}
+
+.chipAccent {
+  background: rgb(76 141 255 / 12%);
+  border-color: rgb(76 141 255 / 40%);
+}
+
+/* Edited away from the library. Warm rather than red: it is a fact, not a
+   fault — but a refresh will overwrite it, so it must not look like nothing. */
+.chipWarn {
+  background: rgb(242 169 59 / 14%);
+  border-color: rgb(242 169 59 / 45%);
+}
+
+/* Something is waiting on the person reading this. Warm, not red: it is a
+   state, not a fault — but it must not look like ordinary muted text. */
+.badgeWait {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: rgb(242 169 59 / 16%);
+  color: var(--dsh-color-text, #e8e8ea);
+  border: 1px solid rgb(242 169 59 / 45%);
+}
+
+/* Pushes what follows to the far end of a row. */
+.grow {
+  flex: 1;
+}
+
+.chipOpen {
+  all: unset;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.chipX {
+  all: unset;
+  cursor: pointer;
+  opacity: 0.6;
+  padding: 0 2px;
+}
+
+.chipX:hover {
+  opacity: 1;
+}
+
+.planList {
+  margin: 6px 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
 .subhead {
   margin: 12px 0 4px;
   font-weight: 600;
@@ -107,6 +289,21 @@
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid var(--dsh-color-border, #34343a);
+}
+
+/*
+ * A team's own colour, down its left edge.
+ *
+ * Zebra striping was the other option and it is worse here: it distinguishes
+ * odd rows from even ones, not this team from that one. Sort the list or
+ * type in the search box and every stripe moves — so the one you remembered
+ * as 「浅色那支」 is somewhere else now. This colour is derived from the
+ * team's name, so it is the same on every screen, in every order, forever.
+ */
+.cardTinted {
+  border-left-width: 3px;
+  border-left-style: solid;
+  border-radius: 0 8px 8px 0;
 }
 
 .teamName {
@@ -631,9 +828,22 @@
   font-size: 13px;
 }
 
+/*
+ * Selection goes LIGHTER, and says so with a bar.
+ *
+ * It used to be `--dsh-color-input`, which is a shade DARKER than the list
+ * it sits on. On a light theme that reads as an inset field and is fine; on a
+ * dark one it is 「选中 = 更黑」 against an already dark panel, and the
+ * highlighted row is the hardest one to see. The bar is there because colour
+ * alone is the part that fails first — on a dim screen, at an angle, or for
+ * anyone who does not separate these two blues.
+ */
 .mentionItem:hover,
 .mentionOn {
-  background: var(--dsh-color-input, #131317);
+  background: rgb(76 141 255 / 20%);
+  border-left: 3px solid var(--dsh-color-accent, #4c8dff);
+  /* Keeps the text from shifting 3px when the bar appears. */
+  padding-left: 6px;
 }
 
 /* ── Live seat state ──────────────────────────────────────────────────── */

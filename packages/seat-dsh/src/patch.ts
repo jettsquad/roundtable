@@ -24,6 +24,18 @@
  * The patch is a file on disk; a secret written there would outlive the run.
  */
 
+/**
+ * The heartbeat plugin's row, by absolute path.
+ *
+ * An absolute path rather than a package name because the child resolves
+ * names from ITS profile directory, where nothing of ours is installed —
+ * measured: a `--patch` row naming a `.ts` file by absolute path loads fine,
+ * which is what lets this ship without installing a profile anywhere.
+ */
+export function heartbeatRows(modulePath: string): readonly string[] {
+  return ["- insert:", "    - id: squad-seat-heartbeat", `      name: ${JSON.stringify(modulePath)}`];
+}
+
 /** The provider id a non-DeepSeek model is routed through. */
 export const COMPAT_ROUTE = "squad-compat";
 /** The variable the compat provider reads its key from. */
@@ -52,7 +64,7 @@ export function buildDshPatch(input: PatchInput): string | undefined {
   const baseUrl = input.baseUrl.trim();
   if (model === "") return undefined;
 
-  const lines = isDeepSeekModel(model)
+  const lines: readonly string[] = isDeepSeekModel(model)
     ? [
         "- id: agent-default-model",
         "  config:",

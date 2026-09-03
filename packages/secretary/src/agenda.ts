@@ -17,7 +17,14 @@
 import { assertPublicHostCommand } from "@squad/shared";
 
 export { assertPublicHostCommand };
-import { ACTION_KINDS, FEATURE_FLAGS, checkAgendaAgainstRoster, parseAgendaSpec, type AgendaSpec } from "@squad/shared";
+import {
+  ACTION_KINDS,
+  FEATURE_FLAGS,
+  checkAgendaAgainstRoster,
+  extractJsonObject,
+  parseAgendaSpec,
+  type AgendaSpec,
+} from "@squad/shared";
 
 /** One seat as the drafting prompt needs to see it. */
 export interface RosterSeat {
@@ -56,22 +63,13 @@ export function buildAgendaPrompt(input: AgendaDraftInput): string {
 /**
  * Pull the JSON object out of a reply that may carry stray prose.
  *
- * Tolerant on purpose: the failure mode being avoided is a perfectly good
- * agenda rejected because the model said "Here you go:" first. Tolerance ends
- * at the object boundary — what is inside still faces the strict schema.
+ * The rule itself lives in `@squad/shared` because the console needs the same
+ * tolerance for team plans, on the other side of the plugin wall. What stays
+ * here is the message: 「秘书没有返回 JSON」 says which job failed, which a
+ * generic parse error cannot.
  */
 export function extractJson(text: string): unknown {
-  const trimmed = text.trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start === -1 || end === -1 || end < start) {
-      throw new Error("秘书没有返回 JSON 对象，无法解析成议程。");
-    }
-    return JSON.parse(trimmed.slice(start, end + 1));
-  }
+  return extractJsonObject(text, "秘书没有返回 JSON 对象，无法解析成议程。");
 }
 
 /**

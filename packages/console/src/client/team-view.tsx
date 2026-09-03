@@ -20,10 +20,13 @@ import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api } from "./api.ts";
 import { useAction, useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
 import { Agenda } from "./agenda.tsx";
+import { RedraftPlan } from "./plan-card.tsx";
 import { ContextPanel } from "./context-panel.tsx";
 import { Materials } from "./materials.tsx";
 import { AuditLog } from "./audit.tsx";
 import { Discussion } from "./discussion.tsx";
+import { ListenBar } from "./listen.tsx";
+import { TeamPromptsPanel } from "./team-prompts.tsx";
 import { describeSeat, describeTeam, type SeatStatus } from "../seat-status.ts";
 import { useSitting } from "./use-sitting.ts";
 import styles from "./panel.module.css";
@@ -278,14 +281,35 @@ export function TeamView({
       </div>
 
       <Roster team={team} data={snapshot.data} onChanged={again} />
+      <TeamPromptsPanel team={team} library={snapshot.data.blocks} onChanged={again} />
       {/* The agenda lives here as well as in the panel: this is where the
           work happens, and a plan you must leave the room to confirm is a
           plan you confirm without looking at the discussion it came from. */}
       <Materials team={team} onChanged={again} />
       <ContextPanel team={team} onChanged={again} />
       <AuditLog team={team} />
-      <Agenda team={team} onChanged={again} />
-      <Discussion team={team} autoScroll onChanged={again} />
+      {/* Handed to the thread rather than placed after it. It belongs where
+          you finish reading — under the question it is about — and the
+          thread's own trailing spacer (room for the floating composer) has to
+          stay last, or the block lands below a screen-height gap. */}
+      {/* Settings only. Playing is a control on each message — see
+          `SpeakButton` — because that is where you are when you decide you
+          would rather hear the rest than read it. */}
+      <ListenBar connections={snapshot.data.connections} />
+      <Discussion
+        team={team}
+        autoScroll
+        onChanged={again}
+        pickerKind={snapshot.data.picker}
+        tail={
+          <>
+            <Agenda team={team} onChanged={again} />
+            {/* Under the thread, which is where you are once you have read
+                the plan you did not like. */}
+            <RedraftPlan team={team} onChanged={again} />
+          </>
+        }
+      />
       {/* No input box here. There is exactly one on the screen and it is the
           one at the bottom, in the place people already type — see
           `composer.tsx`. Two boxes with different destinations is what made

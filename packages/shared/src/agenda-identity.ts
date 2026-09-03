@@ -30,7 +30,19 @@ import type { AgendaSpec } from "./agenda.ts";
  * so sorting them would make two different plans hash alike.
  */
 export function canonicalAgenda(agenda: AgendaSpec): string {
-  return JSON.stringify(canonical(agenda));
+  return canonicalJson(agenda);
+}
+
+/**
+ * The same treatment for anything else that gets fingerprinted.
+ *
+ * A team plan needs it for exactly the reason an agenda does — 「落地的是不是
+ * 我确认的那一份」 is the same question asked about a roster instead of a
+ * schedule — and a second copy of these rules would be a second set of
+ * subtleties to get wrong.
+ */
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonical(value));
 }
 
 function canonical(value: unknown): unknown {

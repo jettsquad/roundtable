@@ -57,8 +57,28 @@ import { driftBetween } from "./roster-drift.ts";
 import { extractDocument, MAX_FILE_BYTES } from "./extract.ts";
 import { planSeatSync, syncSeat, type TemplateFacts } from "./seat-sync.ts";
 import { parseNewTeam } from "./parse.ts";
+// Cyclic with `team-designer.ts`, which imports two helpers from here. Safe
+// and deliberate: everything crossing the cycle is a hoisted function
+// declaration used at call time, and both files are halves of one package —
+// splitting a shared module out to hide the cycle would be bookkeeping, not
+// structure.
+import {
+  designerAgendaFor,
+  instantiateTeamPlan,
+  planFromReply,
+  redraftPlanInstruction,
+  refreshDesignerSeats,
+} from "./team-designer.ts";
+import { DEFAULT_VOICE, speak } from "./tts.ts";
 import { tmpdir } from "node:os";
-import { assertPublicHostCommand, checkAgendaAgainstRoster, type AgendaSpec } from "@squad/shared";
+import {
+  assertPublicHostCommand,
+  checkAgendaAgainstRoster,
+  checkPromptSet,
+  type AgendaSpec,
+  type PromptBlock,
+  type TeamPrompts,
+} from "@squad/shared";
 import {
   draftIdentityMatches,
   shortHash,
@@ -148,6 +168,48 @@ function blockedReason(
  */
 const TRANSCRIPT_TAIL = 60;
 
+/** Whether this roster is a designer team's — asked of the same function that seats its agenda. */
+function isDesignerTeam(team: Parameters<typeof designerAgendaFor>[0]): boolean {
+  try {
+    designerAgendaFor(team);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Which of the secretary's visible replies could be built into a team.
+ *
+ * Prefiltered on two field names before anything is parsed: this runs on
+ * every poll, for every team, and JSON.parse over a whole transcript tail
+ * twice a second to answer 「没有」 would be paying for the common case to
+ * serve the rare one.
+ */
+function buildablePlans(team: {
+  readonly secretary?: { readonly displayName: string } | undefined;
+  transcript(): readonly { kind: string; text: string; turnId: string; at: number }[];
+}): { readonly ok: readonly string[]; readonly refused: readonly { turnId: string; detail: string }[] } {
+  const secretary = team.secretary;
+  if (secretary === undefined) return { ok: [], refused: [] };
+  const ok: string[] = [];
+  const refused: { turnId: string; detail: string }[] = [];
+  for (const line of transcriptTail(team.transcript()).transcript) {
+    if (line.speaker !== secretary.displayName) continue;
+    if (!line.text.includes('"seats"') || !line.text.includes('"secretaryKey"')) continue;
+    try {
+      planFromReply(line.text);
+      ok.push(line.turnId);
+    } catch (error) {
+      // Reported, not swallowed. An offer that fails on click is worse than
+      // no offer — but no offer AND no reason is worse than both: it reads as
+      // a feature that was never built.
+      refused.push({ turnId: line.turnId, detail: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { ok, refused };
+}
+
 /**
  * The tail of the discussion, and how much was left out.
  *
@@ -156,7 +218,7 @@ const TRANSCRIPT_TAIL = 60;
  * whole discussion, and a person then concludes the team never said the
  * thing they are looking for.
  */
-function transcriptTail(events: readonly { kind: string; text: string; turnId: string; at: number }[]) {
+export function transcriptTail(events: readonly { kind: string; text: string; turnId: string; at: number }[]) {
   const spoken = events
     .filter((event) => event.kind === "user/message" && event.text !== "")
     .map((event) => {
@@ -256,6 +318,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           systemPrompt: seat.systemPrompt,
           backend: seat.backend,
           ...(seat.connectionId === undefined ? {} : { connectionId: seat.connectionId }),
+          ...(seat.voiceId === undefined ? {} : { voiceId: seat.voiceId }),
           ...(seat.caps === undefined ? {} : { caps: seat.caps }),
           ...(seat.permissionMode === undefined ? {} : { permissionMode: seat.permissionMode }),
           ...(seat.templateId === undefined ? {} : { templateId: seat.templateId }),
@@ -272,6 +335,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           // 「改了配色，团队里没变」.
           orphaned: seat.templateId !== undefined && !liveTemplates.has(seat.templateId),
           ...(seat.color === undefined ? {} : { color: seat.color }),
+          ...(seat.voiceId === undefined ? {} : { voiceId: seat.voiceId }),
           ...(seat.webAccess === undefined ? {} : { webAccess: seat.webAccess }),
           ...(blockedReason(ctx, seat) === undefined ? {} : { blocked: blockedReason(ctx, seat) }),
         };
@@ -303,8 +367,40 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
                 team.confirmed.roster,
                 team.seats.map((seat) => ({ seatId: seat.seatId, displayName: seat.displayName })),
               ),
+              // The phase that just finished asked to stop for the host. The
+              // fact was in the confirmed agenda from the start; it had no
+              // way to reach the panel, so 「在等你回答」 and 「跑了一半断了」
+              // rendered the same.
+              awaitingHost: team.confirmed.agenda.phases[team.confirmed.done.length - 1]?.exit === "wait-for-host",
+              // Who to answer. Named rather than left to 「点名提问的那位」,
+              // because a reply sent to nobody in particular is a round for
+              // the WHOLE table: the seats whose turn has not come answer it
+              // too, each doing its own job on an input that was not meant
+              // for them. Measured once — four seats ran ahead, one invented
+              // a JSON schema, and the agenda stayed paused throughout.
+              awaitingFrom: [
+                ...new Set(
+                  (team.confirmed.agenda.phases[team.confirmed.done.length - 1]?.tasks ?? []).map(
+                    (task) => team.seats.find((seat) => seat.seatId === task.seatId)?.displayName ?? task.seatId,
+                  ),
+                ),
+              ],
             },
           }),
+      prompts: team.prompts,
+      // A comparison, made fresh: a team's copy counts as edited when its
+      // text differs from the library entry it came from. A block whose
+      // library entry is gone is NOT called edited — nothing to differ from,
+      // and calling it edited would offer a refresh that cannot work.
+      editedBlockIds: team.prompts.blocks
+        .filter((block) => {
+          const library = ctx.promptBlocks.get(block.blockId);
+          return library !== undefined && (library.text !== block.text || library.name !== block.name);
+        })
+        .map((block) => block.blockId),
+      planTurnIds: buildablePlans(team).ok,
+      planProblems: buildablePlans(team).refused,
+      designer: isDesignerTeam(team),
       audit: team.audit.slice(-40).map((entry) => ({
         at: entry.at,
         kind: entry.kind,
@@ -367,6 +463,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
         ) !== undefined,
     })),
     agents: ctx.agentTemplates.list(),
+    blocks: ctx.promptBlocks.list(),
     picker: pickerKind(ctx),
   };
 }
@@ -596,6 +693,7 @@ export async function createTeamWithMembers(
       backend: template.backend,
       templateId: template.templateId,
       color: template.color,
+      ...(template.voiceId === undefined ? {} : { voiceId: template.voiceId }),
       ...(member.isSecretary === true ? { isSecretary: true } : {}),
       ...(template.connectionId === undefined ? {} : { connectionId: template.connectionId }),
       ...(template.permissionMode === undefined ? {} : { permissionMode: template.permissionMode }),
@@ -668,6 +766,7 @@ export function addSeatFrom(ctx: Context, request: SeatRequest): void {
       backend: template.backend,
       templateId: template.templateId,
       color: template.color,
+      ...(template.voiceId === undefined ? {} : { voiceId: template.voiceId }),
       ...(request.isSecretary === true ? { isSecretary: true } : {}),
       ...(template.connectionId === undefined ? {} : { connectionId: template.connectionId }),
       ...(template.permissionMode === undefined ? {} : { permissionMode: template.permissionMode }),
@@ -722,6 +821,7 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     backend: request.backend,
     secretaryCandidate: request.secretaryCandidate,
     color: request.color,
+    ...(request.voiceId === undefined ? {} : { voiceId: request.voiceId }),
     enabled: true,
     ...(connectionId === undefined || connectionId === "" ? {} : { connectionId }),
     ...(request.permissionMode === undefined ? {} : { permissionMode: request.permissionMode }),
@@ -743,6 +843,7 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     permissionMode: request.permissionMode,
     caps: request.caps,
     color: request.color,
+    ...(request.voiceId === undefined ? {} : { voiceId: request.voiceId }),
     webAccess: request.webAccess,
   });
 }
@@ -1224,6 +1325,87 @@ export function registerSquadApi(ctx: Context): () => void {
           res.end(JSON.stringify({ ok: true }));
           return;
         }
+        if (suffix === "/teams/move" && req.method === "POST") {
+          const body = await readJson<{ teamId: string; delta: number }>(req);
+          await ctx.teams.move(body.teamId, body.delta);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/agents/move" && req.method === "POST") {
+          const body = await readJson<{ templateId: string; delta: number }>(req);
+          await ctx.agentTemplates.move(body.templateId, body.delta);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/teams/prompts" && req.method === "POST") {
+          // The whole shape at once. See `Team.setPrompts`.
+          const body = await readJson<{ teamId: string; prompts: TeamPrompts }>(req);
+          const team = teamOf(ctx, body.teamId);
+          const known = {
+            blockIds: body.prompts.blocks.map((block) => block.blockId),
+            seatIds: team.seats.map((seat) => seat.seatId),
+          };
+          // ERRORS only. A set with no blocks and no seats is the normal
+          // state of one you just created — refusing it means the only route
+          // to a usable set runs through a state the server will not store,
+          // which is 「新建集合」 doing nothing at all. Those are reported to
+          // the panel as warnings instead, on the card that has them.
+          const refusals = body.prompts.sets.flatMap((set) =>
+            checkPromptSet(set, known)
+              .filter((problem) => problem.severity === "error")
+              .map((problem) => `集合「${set.name}」：${problem.detail}`),
+          );
+          if (refusals.length > 0) throw new Error(refusals.join("\n"));
+          team.setPrompts(body.prompts);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/tts" && req.method === "POST") {
+          // Bytes, not JSON. The browser plays an object URL made from these;
+          // base64 in an envelope would cost a third more transfer and a
+          // re-encode at both ends for nothing.
+          const body = await readJson<{
+            text: string;
+            connectionId: string;
+            voiceId?: string;
+            speed?: number;
+          }>(req);
+          const audio = await speak(ctx, {
+            text: body.text,
+            connectionId: body.connectionId,
+            voiceId: body.voiceId ?? DEFAULT_VOICE,
+            speed: body.speed,
+          });
+          res.writeHead(200, {
+            "content-type": "audio/mpeg",
+            "content-length": String(audio.length),
+            "cache-control": "no-store",
+          });
+          res.end(audio);
+          return;
+        }
+        if (suffix === "/blocks" && req.method === "POST") {
+          const body = await readJson<PromptBlock>(req);
+          await ctx.promptBlocks.save(body);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/blocks" && req.method === "DELETE") {
+          await ctx.promptBlocks.remove((await readJson<{ blockId: string }>(req)).blockId);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/blocks/order" && req.method === "POST") {
+          await ctx.promptBlocks.reorder((await readJson<{ blockIds: string[] }>(req)).blockIds);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
         if (suffix === "/teams/rename" && req.method === "POST") {
           const body = await readJson<RenameTeamRequest>(req);
           teamOf(ctx, body.teamId).rename(body.displayName);
@@ -1301,6 +1483,16 @@ export function registerSquadApi(ctx: Context): () => void {
           res.end(JSON.stringify(draft));
           return;
         }
+        if (suffix === "/agenda/rewind" && req.method === "POST") {
+          // Rewinds and stops there. Running it as well would be one click
+          // doing two decisions — where to go back to, and whether to set off
+          // again — and the second is the expensive one.
+          const body = await readJson<{ teamId: string; phaseIndex: number }>(req);
+          teamOf(ctx, body.teamId).rewindAgenda(body.phaseIndex);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
         if (suffix === "/agenda/resume" && req.method === "POST") {
           const body = await readJson<{ teamId: string }>(req);
           const team = teamOf(ctx, body.teamId);
@@ -1309,6 +1501,100 @@ export function registerSquadApi(ctx: Context): () => void {
           void team.resumeAgenda().catch((error: Error) => ctx.logger.warn(`议程续跑失败：${error.message}`));
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/team-plan/build" && req.method === "POST") {
+          // The plan is read out of the RECORD, from the exact turn the host
+          // was looking at — not re-generated, and not taken from 「the
+          // latest」. A second model call here would be a second chance to
+          // change what was just approved, and 「latest」 would let a reply
+          // that arrived while the card was open be the thing that gets
+          // built.
+          const body = await readJson<{ teamId: string; turnId: string; projectFolder: string }>(req);
+          const team = teamOf(ctx, body.teamId);
+          const line = transcriptTail(team.transcript()).transcript.find((one) => one.turnId === body.turnId);
+          if (line === undefined) throw new Error("找不到这条回复。");
+          const secretary = team.secretary;
+          if (secretary === undefined || line.speaker !== secretary.displayName) {
+            throw new Error(`只能按秘书自己写的方案建团，这条是${line.speaker}说的。`);
+          }
+          const built = await instantiateTeamPlan(ctx, {
+            plan: planFromReply(line.text),
+            projectFolder: body.projectFolder,
+          });
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(built));
+          return;
+        }
+        if (suffix === "/team-plan/refresh" && req.method === "POST") {
+          // The library entries, then the seats. Relinking is the existing
+          // mechanism for 「把改过的 agent 带进已经在用它的团队」 — reused
+          // rather than reimplemented, so a seat refreshed here goes through
+          // exactly the checks a hand relink does.
+          const body = await readJson<{ teamId: string }>(req);
+          const names = await refreshDesignerSeats(ctx, body.teamId);
+          const team = teamOf(ctx, body.teamId);
+          for (const name of names) {
+            const at = team.seats.findIndex((one) => one.displayName === name);
+            const seat = team.seats[at];
+            if (seat === undefined) continue;
+            const template = seat.templateId === undefined ? undefined : ctx.agentTemplates.get(seat.templateId);
+            if (template === undefined) continue;
+            const next = syncSeat({ ...seat, templateId: template.templateId }, templateFactsOf(template));
+            team.removeSeat(seat.seatId, { confirmSecretary: true });
+            team.addSeat(next, { at });
+          }
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ refreshed: names }));
+          return;
+        }
+        if (suffix === "/team-plan/redraft" && req.method === "POST") {
+          // Not a plain round. The secretary is under standing orders never to
+          // invent the schema, so 「重出一份」 said to it in the discussion is
+          // refused — rightly, it has nothing to write against. The shape
+          // lives in code and every request for a plan carries it.
+          const body = await readJson<{ teamId: string; note?: string }>(req);
+          const team = teamOf(ctx, body.teamId);
+          const secretary = team.secretary;
+          if (secretary === undefined) throw new Error("这支团队没有秘书，出不了方案。");
+          const instruction = redraftPlanInstruction(body.note ?? "");
+          // Not awaited: it is a model call, and the click that asked for it
+          // must not hang on it. The reply lands in the discussion.
+          void team
+            .ask(instruction, [secretary.seatId])
+            .catch((error: Error) => ctx.logger.warn(`重出方案失败：${error.message}`));
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/team-plan/preview" && req.method === "POST") {
+          const body = await readJson<{ teamId: string; turnId: string }>(req);
+          const team = teamOf(ctx, body.teamId);
+          const line = transcriptTail(team.transcript()).transcript.find((one) => one.turnId === body.turnId);
+          if (line === undefined) throw new Error("找不到这条回复。");
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(planFromReply(line.text)));
+          return;
+        }
+        if (suffix === "/agenda/designer" && req.method === "POST") {
+          // A sitting starts with no draft, on purpose: a fresh piece of work
+          // inherits no decisions. The designer's five phases are not a
+          // decision though — they are the same every time — so a new sitting
+          // of THAT team gets them put back up, still as a draft.
+          const body = await readJson<{ teamId: string }>(req);
+          const team = teamOf(ctx, body.teamId);
+          let placed = false;
+          try {
+            team.setDraft(designerAgendaFor(team));
+            placed = true;
+          } catch {
+            // Not a designer team. Answered rather than thrown: this runs on
+            // every 「新开一场」, and an ordinary team simply has no seed
+            // agenda to place — which is not a failure of anything.
+            placed = false;
+          }
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ placed }));
           return;
         }
         if (suffix === "/agenda" && req.method === "POST") {
@@ -1396,7 +1682,14 @@ export function registerSquadApi(ctx: Context): () => void {
           res.end(JSON.stringify({ ok: true }));
           return;
         }
-        if (req.method === "POST") {
+        // Named, not a catch-all. This used to be 「any POST that matched
+        // nothing else」, so a request to a route that does not exist — a
+        // typo, a client newer than the server — was handled by CREATING A
+        // TEAM from an empty body. What came back was `/squad-new`'s usage
+        // line, which reads as 「你命令敲错了」 and has nothing to do with
+        // what was actually asked for. An unknown route must say it is
+        // unknown.
+        if (suffix === "/teams" && req.method === "POST") {
           const body = await readJson<CreateTeamRequest>(req);
           // `members` wins when both arrive: it carries configuration, the
           // text grammar carries only names.
@@ -1410,6 +1703,18 @@ export function registerSquadApi(ctx: Context): () => void {
                 });
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ teamId: created }));
+          return;
+        }
+        if (req.method !== "GET") {
+          // Says the version out loud: this is what a panel newer than the
+          // server looks like, and 「重启一下」 is the fix nobody guesses
+          // from a 404.
+          res.writeHead(404, { "content-type": "application/json; charset=utf-8" });
+          res.end(
+            JSON.stringify({
+              error: `这个后端不认识 ${req.method} ${suffix} —— 多半是界面比服务端新。重启一下再试。`,
+            }),
+          );
           return;
         }
         const snapshot = await snapshotOf(ctx);

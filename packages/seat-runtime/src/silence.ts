@@ -41,6 +41,15 @@ export type SilenceReason = "silent" | "no-output";
  * wait fifteen minutes to be told that is a quarter of an hour spent proving
  * something a connection test proves in a second.
  *
+ * It only means anything on a CLI that actually writes while it works, and
+ * one of ours did not: `dsh --profile headless` awaits the whole turn and
+ * then writes the answer in a single call, so its byte count was ZERO however
+ * well it was going — making this five-minute deadline a five-minute cap on
+ * the entire turn, enforced with a message blaming the connection. The answer
+ * was not a longer deadline (that only makes a person wait longer to learn
+ * nothing) but a real signal: that backend now reports its own progress on
+ * stderr, one line per session event. See `alive.ts`.
+ *
  * Five minutes, and the number comes from a measurement rather than a guess:
  * a dsh seat on a real round took about 100 seconds to produce its first
  * byte — profile boot, then the model's first token. It was 33 seconds from

@@ -44,3 +44,30 @@ export function watchTeamFolders(listener: () => void): () => void {
     listeners.delete(listener);
   };
 }
+
+/**
+ * The two shell services the panel needs to open a session, kept here for the
+ * same reason the folder set is: the panel is rendered into a slot and never
+ * receives `ctx`.
+ *
+ * Set once from `apply`. Absent in tests and in any composition that did not
+ * mount them, which is why every caller checks.
+ */
+export interface ShellSessions {
+  /** Reuse this workspace's blank session, or mint one. Returns its id. */
+  connectWorkspace(workspaceId: string): Promise<string>;
+  /** Navigate to a session. */
+  open(sessionId: string): void;
+  /** The workspace whose folder this is, if the shell knows one. */
+  workspaceIdFor(folder: string): string | undefined;
+}
+
+let shell: ShellSessions | undefined;
+
+export function setShellSessions(next: ShellSessions): void {
+  shell = next;
+}
+
+export function shellSessions(): ShellSessions | undefined {
+  return shell;
+}
