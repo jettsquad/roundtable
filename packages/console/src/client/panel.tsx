@@ -9,6 +9,8 @@
 import { useState } from "react";
 import type { UsageTotals } from "@squad/shared";
 import { api, useSnapshot, type SquadSnapshot, type TeamSummary } from "./api.ts";
+import { useT } from "./locale.ts";
+import type { SquadKey } from "./locales.ts";
 import { Agenda } from "./agenda.tsx";
 import { AgentsPage } from "./agents.tsx";
 import { Connections } from "./connections.tsx";
@@ -27,9 +29,10 @@ import styles from "./panel.module.css";
 /** The footer button that opens the panel. */
 export function TeamButton(): JSX.Element {
   const open = usePanelOpen();
+  const t = useT();
   return (
     <button type="button" className={styles.sectionToggle} onClick={() => panelStore.set(!open)}>
-      {open ? "团队 ▾" : "团队 ▸"}
+      {open ? t("panel.open") : t("panel.closed")}
     </button>
   );
 }
@@ -305,16 +308,25 @@ function teamTint(name: string): string {
 
 type Page = "teams" | "agents" | "blocks" | "connections" | "criteria";
 
-const TABS: readonly { readonly id: Page; readonly label: string }[] = [
-  { id: "teams", label: "团队" },
-  { id: "agents", label: "Agent 库" },
-  { id: "blocks", label: "提示词库" },
-  { id: "connections", label: "连接" },
-  { id: "criteria", label: "判据" },
+/**
+ * The tabs, as dictionary KEYS rather than text.
+ *
+ * The label is looked up at render so a language switch reaches this list
+ * without it being rebuilt — a module-level array of translated strings would
+ * be captured once, at import, in whatever language happened to be active.
+ */
+const TABS: readonly { readonly id: Page; readonly label: SquadKey }[] = [
+  { id: "teams", label: "panel.tab.teams" },
+  { id: "agents", label: "panel.tab.agents" },
+  { id: "blocks", label: "panel.tab.blocks" },
+  { id: "connections", label: "panel.tab.connections" },
+  { id: "criteria", label: "panel.tab.criteria" },
 ];
 
 export function TeamPanel(): JSX.Element | null {
   const open = usePanelOpen();
+  // With the other hooks, above the `!open` return — see the note below.
+  const t = useT();
   const [page, setPage] = useState<Page>("teams");
   const [nonce, setNonce] = useState(0);
   const snapshot = useSnapshot(nonce);
@@ -386,8 +398,8 @@ export function TeamPanel(): JSX.Element | null {
                 className={`${styles.tab} ${page === tab.id ? styles.tabOn : ""}`}
                 onClick={() => setPage(tab.id)}
               >
-                {tab.label}
-                {counts === undefined ? "" : `（${counts[tab.id]}）`}
+                {t(tab.label)}
+                {counts === undefined ? "" : t("panel.count", { n: counts[tab.id] })}
               </button>
             ))}
           </div>
@@ -396,11 +408,11 @@ export function TeamPanel(): JSX.Element | null {
                 obligation with nowhere to discharge it. */}
             {snapshot.state === "ready" && snapshot.data.criteria.pending > 0 ? (
               <button type="button" className={styles.close} onClick={() => setPage("criteria")}>
-                {snapshot.data.criteria.pending} 条判据待裁定 →
+                {t("panel.criteria.pending", { n: snapshot.data.criteria.pending })}
               </button>
             ) : null}
             <button type="button" className={styles.close} onClick={() => panelStore.set(false)}>
-              关闭
+              {t("panel.close")}
             </button>
           </div>
         </div>
@@ -409,7 +421,7 @@ export function TeamPanel(): JSX.Element | null {
         {snapshot.state === "error" ? <div className={styles.error}>{snapshot.detail}</div> : null}
         {snapshot.state !== "ready" ? null : page === "teams" ? (
           <div>
-            <SearchBox value={query} onChange={setQuery} placeholder="搜团队名、文件夹、成员……" />
+            <SearchBox value={query} onChange={setQuery} placeholder={t("panel.search")} />
             {teams.length === 0 ? (
               <div className={styles.hint}>还没有团队。用下面的表单建一支，或者在会话里敲 /squad-new。</div>
             ) : shownTeams.length === 0 ? (

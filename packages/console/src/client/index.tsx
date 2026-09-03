@@ -24,6 +24,10 @@ import type {} from "@deepseek-ai/dsh-client-ui-layout/client";
 // Declares `conversation.view` — the keyed slot Chat and Trajectory are tabs
 // in, and therefore where a team view belongs.
 import type {} from "@deepseek-ai/dsh-client-ui-conversation/client";
+// The language switch. Not type-only: we register a dictionary with it.
+import type {} from "@deepseek-ai/dsh-client-locale/client";
+import { setLocale } from "./locale.ts";
+import { en, type SquadKey, zh } from "./locales.ts";
 import { TeamButton, TeamPanel } from "./panel.tsx";
 import { SquadComposer } from "./composer.tsx";
 import { api } from "./api.ts";
@@ -39,7 +43,23 @@ import { TeamView } from "./team-view.tsx";
  * `cannot get property "workspaces" without inject`, which the tab surfaced
  * as an empty pane.
  */
-export const inject = ["slots", "workspaces", "sessions"];
+/**
+ * The dictionary namespace this plugin owns.
+ *
+ * Declared into `LocaleNamespaceMap` so `register` can type-check every key of
+ * every language against one union — a key present in zh and missing from en
+ * is a compile error, not a raw key shown to a user.
+ */
+declare module "@deepseek-ai/dsh-client-ui-slots" {
+  interface LocaleNamespaceMap {
+    /** Squad's own UI copy. */
+    squad: SquadKey;
+  }
+}
+
+const NS = "squad";
+
+export const inject = ["slots", "workspaces", "sessions", "locale"];
 
 /**
  * Does this workspace hold that session?
@@ -81,6 +101,15 @@ async function connectWorkspace(ctx: Context, workspaceId: string): Promise<stri
 }
 
 export function apply(ctx: Context): void {
+  // Dictionaries first: a slot that renders before they land would show the
+  // fallback for one frame, and the registration is synchronous anyway.
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), "squad: dictionaries");
+  setLocale({
+    t: ctx.locale.bind(NS),
+    subscribe: (fn) => ctx.locale.subscribe(fn),
+    revision: () => ctx.locale.getSnapshot().revision,
+  });
+
   // `inject` waits for the slot to be declared before registering.
   ctx.slots.inject("sidebar.footer.action", () =>
     ctx.slots.register({ name: "sidebar.footer.action", id: "squad-teams", order: 10 }, TeamButton),

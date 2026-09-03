@@ -57,6 +57,11 @@ const NEEDED = [
   // resolvable, and the bundle keeps it external because it is a platform
   // module the shell already holds.
   "dsh-client-ui-slots",
+  // The language switch. Linked for `ctx.locale` and for the typed key union:
+  // `register` checks every dictionary key against the namespace declared in
+  // `LocaleNamespaceMap`, so a key that exists in zh and not in en fails at
+  // compile time rather than showing the raw key to a user.
+  "dsh-client-locale",
   // Owns the `ctx.slots` declaration merge. Was `dsh-client-runtime` until
   // 0.1.2, which split that package into modules/connection/store/renderer;
   // the registry went to the renderer. Nothing about our own code changed —
