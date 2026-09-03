@@ -493,12 +493,15 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               {t("agent.allowWeb")}
             </label>
           )}
-          {/* Beside the colour, because it is the same kind of thing: how you
-              tell this member from the others. The default is derived from
-              the name, so a roster is followable by ear before anyone
-              configures anything — this is for when two seats collide, or
-              when a voice simply does not suit the role. */}
-          <div className={styles.subhead}>{t("agent.voice")}</div>
+        </div>
+
+        {/* Its own section, not another item in the checkbox row.
+            Everything above is a yes/no; a voice is a choice from a list with
+            a preview button beside it, and letting the two share a wrapping
+            flex row means which one lands on which line depends on the panel
+            width — the control moves as you resize. */}
+        <div className={styles.subhead}>{t("agent.voice")}</div>
+        <div>
           <div className={styles.row}>
             {/* A list AND a box. The list is every system voice; the box is
                 for the ones no list can have — a voice you cloned, whose id
@@ -564,6 +567,13 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               <div className={styles.hint}>{t("agent.voice.custom.hint")}</div>
             </>
           )}
+        </div>
+
+        {/* Same reason as the voice: the swatches are a row of their own, so
+            they stay put. They also read as a set only when nothing else
+            shares their line. */}
+        <div className={styles.subhead}>{t("agent.colour")}</div>
+        <div className={styles.row}>
           {COLORS.map((color) => (
             <button
               key={color}

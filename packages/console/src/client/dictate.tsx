@@ -12,6 +12,7 @@
  * checked. What you dictate lands as text you can fix first.
  */
 import { useEffect, useRef, useState } from "react";
+import { translate, useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 interface Recogniser {
@@ -35,6 +36,7 @@ function recogniserClass(): (new () => Recogniser) | undefined {
 }
 
 export function Dictate({ onText }: { readonly onText: (text: string) => void }): JSX.Element | null {
+  const t = useT();
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const held = useRef<Recogniser | undefined>(undefined);
@@ -74,8 +76,8 @@ export function Dictate({ onText }: { readonly onText: (text: string) => void })
     recogniser.onerror = (event) => {
       setError(
         event.error === "not-allowed"
-          ? "浏览器没给麦克风权限——地址栏左边那个图标可以改。"
-          : `识别出错：${event.error ?? "未知"}`,
+          ? translate("dictate.denied")
+          : translate("dictate.error", { error: event.error ?? translate("dictate.unknown") }),
       );
     };
     recogniser.onend = () => {
@@ -92,13 +94,13 @@ export function Dictate({ onText }: { readonly onText: (text: string) => void })
       <button
         type="button"
         className={styles.button}
-        title={listening ? "停止听写" : "说话，转成文字填进输入框（不会自动发送）"}
+        title={listening ? t("dictate.stop.title") : t("dictate.start.title")}
         onClick={() => {
           if (listening) held.current?.stop();
           else start();
         }}
       >
-        {listening ? "● 听写中" : "🎤 说"}
+        {listening ? t("dictate.listening") : t("dictate.speak")}
       </button>
       {error === undefined ? null : <span className={styles.error}>{error}</span>}
     </>

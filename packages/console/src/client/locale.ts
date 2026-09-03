@@ -45,6 +45,18 @@ function fallback(key: SquadKey, params?: Record<string, unknown>): string {
 const NO_SUBSCRIBE = (): (() => void) => () => {};
 
 /**
+ * Translate outside React.
+ *
+ * For the places that are not components and never render: a slot
+ * descriptor's `label()`, a confirm() message, an error string. The bound
+ * function reads the active locale when CALLED, so a label evaluated on each
+ * render follows a language switch without any subscription of its own.
+ */
+export function translate(key: SquadKey, params?: Record<string, unknown>): string {
+  return (face?.t ?? fallback)(key, params);
+}
+
+/**
  * The translate function, re-rendering the caller when the language changes.
  *
  * `useSyncExternalStore` rather than an effect: the locale is external state

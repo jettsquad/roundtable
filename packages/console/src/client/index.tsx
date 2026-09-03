@@ -26,7 +26,7 @@ import type {} from "@deepseek-ai/dsh-client-ui-layout/client";
 import type {} from "@deepseek-ai/dsh-client-ui-conversation/client";
 // The language switch. Not type-only: we register a dictionary with it.
 import type {} from "@deepseek-ai/dsh-client-locale/client";
-import { setLocale } from "./locale.ts";
+import { setLocale, translate } from "./locale.ts";
 import { en, type SquadKey, zh } from "./locales.ts";
 import { TeamButton, TeamPanel } from "./panel.tsx";
 import { SquadComposer } from "./composer.tsx";
@@ -279,7 +279,10 @@ export function apply(ctx: Context): void {
         name: "conversation.view",
         id: "squad-team",
         order: 20,
-        label: () => "团队",
+        // Through the bound `t` rather than a hook: this is a slot
+        // descriptor, not a component, and the label is called on render — so
+        // reading the active locale at call time is exactly right here.
+        label: () => translate("view.tab"),
         // The session's workspace decides which team. Read from the
         // workspace list rather than the session's own cwd: the registry
         // canonicalises paths, and a team stores the canonical spelling

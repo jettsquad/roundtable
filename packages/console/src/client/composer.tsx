@@ -27,6 +27,7 @@ import { DRAFT_ANCHOR } from "./draft-card.tsx";
 import { clearQuotes, toggleQuote } from "./quotes.ts";
 import { useQuotes } from "./use-quotes.ts";
 import { Dictate } from "./dictate.tsx";
+import { useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 interface SquadComposerProps {
@@ -49,6 +50,7 @@ interface SquadComposerProps {
 }
 
 export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.Element {
+  const t = useT();
   const [nonce, setNonce] = useState(0);
   const snapshot = useSnapshot(nonce);
   const onSent = (): void => setNonce((value) => value + 1);
@@ -133,7 +135,9 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
     return (
       <div className={styles.composerBox}>
         <span className={styles.muted}>
-          {snapshot.state === "loading" || sittingId === undefined ? "读取团队中……" : `${folder} 的团队已经不在了。`}
+          {snapshot.state === "loading" || sittingId === undefined
+            ? t("composer.loading")
+            : t("composer.gone", { folder })}
         </span>
       </div>
     );
@@ -255,7 +259,8 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
   return (
     <div className={styles.composerBox}>
       <div className={styles.composerWho}>
-        发给团队「{current.displayName}」{current.seats.length === 0 ? " · 还没有成员" : ""}
+        {t("composer.head", { name: current.displayName })}
+        {current.seats.length === 0 ? t("composer.head.noSeats") : ""}
       </div>
 
       <div className={styles.row} ref={row}>
@@ -268,7 +273,7 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           className={`${styles.grow ?? ""} ${styles.composerInput ?? ""}`}
           value={instruction}
           rows={1}
-          placeholder={`跟「${current.displayName}」说点什么，@ 点名单独问某人…（⌘↵ 发送，↵ 换行）`}
+          placeholder={t("composer.placeholder", { name: current.displayName })}
           disabled={running}
           ref={box}
           onChange={(event) => {
@@ -353,10 +358,10 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           onClick={() => void send()}
         >
           {running
-            ? `进行中 ${elapsed}s`
+            ? t("composer.running", { seconds: elapsed })
             : named.length === 0
-              ? "问所有人"
-              : `问 ${named.map((seat) => seat.displayName).join("、")}`}
+              ? t("composer.askAll")
+              : t("composer.askSome", { names: named.map((seat) => seat.displayName).join("、") })}
         </Button>
         {/* Next to the send button, because importing a document is part of
             saying what you want the team to work on. It sat at the top of the
@@ -373,10 +378,12 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
         <Dictate
           onText={(text) => setInstruction((current) => (current.trim() === "" ? text : `${current} ${text}`))}
         />
-        <label className={styles.button} title="导入 PDF、Word、Markdown 或纯文本作为背景资料">
+        <label className={styles.button} title={t("composer.materials.title")}>
           {importing === undefined
-            ? `＋资料${current.materials.length === 0 ? "" : `（${current.materials.length}）`}`
-            : `读取 ${importing}…`}
+            ? current.materials.length === 0
+              ? t("composer.materials")
+              : t("composer.materials.count", { n: current.materials.length })
+            : t("composer.materials.importing", { name: importing })}
           <input
             ref={filePicker}
             type="file"
@@ -398,7 +405,10 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
         <button
           type="button"
           className={styles.button}
-          title={`已累计 ${current.context.accumulated.toLocaleString()} / ${current.context.limit.toLocaleString()} token`}
+          title={t("composer.context.title", {
+            used: current.context.accumulated.toLocaleString(),
+            limit: current.context.limit.toLocaleString(),
+          })}
           disabled={current.busy || current.context.folding}
           onClick={() => {
             setError(undefined);
@@ -408,7 +418,7 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
               .catch((failure: Error) => setError(String(failure.message)));
           }}
         >
-          {current.context.folding ? "秘书正在总结…" : "总结"}
+          {current.context.folding ? t("composer.summarising") : t("composer.summarise")}
         </button>
         {!current.busy ? null : (
           <Button
@@ -422,7 +432,7 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
                 .catch((failure: Error) => setError(String(failure.message)))
             }
           >
-            叫停
+            {t("composer.stop")}
           </Button>
         )}
       </div>
@@ -434,7 +444,7 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           resends everything. What travels is visible here instead. */}
       {current.materials.length === 0 ? null : (
         <div className={styles.row}>
-          <span className={styles.hint}>本轮带上：</span>
+          <span className={styles.hint}>{t("composer.carry")}</span>
           {current.materials.map((material) => {
             const on = material.pinned || attached.includes(material.materialId);
             return (
@@ -505,15 +515,15 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
 
       <div className={styles.row}>
         <span className={styles.hint}>
-          成员：{current.seats.map((seat) => seat.displayName).join("、") || "（还没有）"}
-          {named.length === 0 ? " · 不点名就是问所有人" : ""}
+          {t("composer.members", {
+            names: current.seats.map((seat) => seat.displayName).join("、") || t("composer.members.none"),
+          })}
+          {named.length === 0 ? t("composer.members.hint") : ""}
         </span>
       </div>
 
       {!misnamed ? null : (
-        <div className={styles.error}>
-          没有叫「{mentions.unknown.join("、")}」的成员。名字打错的话这句话会发给全团，所以先改过来。
-        </div>
+        <div className={styles.error}>{t("composer.unknownMention", { names: mentions.unknown.join("、") })}</div>
       )}
 
       {/* What every seat is doing, while it is doing it.
@@ -534,7 +544,7 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
       {worry === undefined ? null : <div className={styles.hint}>{worry}</div>}
       {blocked.length === 0 ? null : (
         <div className={styles.error}>
-          {allBlocked ? "这一轮问不出去：" : "这几位跑不了，会被跳过："}
+          {allBlocked ? t("composer.allBlocked") : t("composer.someBlocked")}
           {blocked.map((seat) => `${seat.displayName}（${seat.blocked}）`).join("、")}
         </div>
       )}

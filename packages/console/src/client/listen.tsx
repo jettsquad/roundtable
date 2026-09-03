@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import { speech } from "./speech.ts";
 import type { SquadSnapshot } from "./api.ts";
+import { useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 const CONNECTION_KEY = "squad.listen.connection";
@@ -36,6 +37,7 @@ const remember = (key: string, value: string): void => {
 };
 
 export function ListenBar({ connections }: { readonly connections: SquadSnapshot["connections"] }): JSX.Element {
+  const t = useT();
   const [connectionId, setConnectionId] = useState(() => remembered(CONNECTION_KEY, ""));
   const [speed, setSpeed] = useState(() => Number(remembered(SPEED_KEY, "1")) || 1);
 
@@ -44,7 +46,8 @@ export function ListenBar({ connections }: { readonly connections: SquadSnapshot
   return (
     <details className={styles.section}>
       <summary className={styles.sectionToggle}>
-        朗读设置{connectionId === "" ? "（还没选连接，播放键点不动）" : ""}
+        {t("listen.head")}
+        {connectionId === "" ? t("listen.head.unset") : ""}
       </summary>
       <div className={styles.row}>
         <select
@@ -55,7 +58,7 @@ export function ListenBar({ connections }: { readonly connections: SquadSnapshot
             remember(CONNECTION_KEY, event.target.value);
           }}
         >
-          <option value="">用哪个连接合成…</option>
+          <option value="">{t("listen.pick")}</option>
           {connections.map((connection) => (
             <option key={connection.connectionId} value={connection.connectionId}>
               {connection.displayName}
@@ -77,9 +80,7 @@ export function ListenBar({ connections }: { readonly connections: SquadSnapshot
           ))}
         </select>
       </div>
-      <div className={styles.hint}>
-        选好之后，每条发言下面的 ▶ 就能单独播放那一条。代码块和表格会念成一句「略过」，不会逐字念。
-      </div>
+      <div className={styles.hint}>{t("listen.hint")}</div>
     </details>
   );
 }
