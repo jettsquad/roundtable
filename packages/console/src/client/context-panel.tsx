@@ -13,6 +13,7 @@
  * it.
  */
 import { useState } from "react";
+import { MARKDOWN_LABELS } from "./markdown-labels.ts";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, useAction, type TeamSummary } from "./api.ts";
@@ -91,7 +92,7 @@ export function ContextPanel({
                 </Button>
               </div>
               <div className={styles.messageBody}>
-                <MarkdownText text={checkpoint.text} />
+                <MarkdownText text={checkpoint.text} labels={MARKDOWN_LABELS} />
               </div>
             </div>
           )}

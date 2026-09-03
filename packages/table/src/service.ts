@@ -2162,7 +2162,10 @@ export function spokenMessage(speaker: string, text: string, turnId?: string): R
  * kinds that prove the host node ran a turn.
  */
 function transcriptOf(host: Agent): readonly TranscriptEvent[] {
-  return host.session.events.map((event) => {
+  // `snapshotEvents()`, not `.events`. 0.1.2 replaced the property with an
+  // explicit range snapshot; the no-argument call is the whole log, and it is
+  // frozen, which is what a reader wants anyway.
+  return host.session.snapshotEvents().map((event) => {
     // Flat, matching what `recordSpoken` writes and what the persistence layer
     // requires. Reading `.message` here is what let the wrong write shape go
     // unnoticed: the reader agreed with the writer, and neither agreed with

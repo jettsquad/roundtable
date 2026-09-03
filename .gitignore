@@ -10,3 +10,7 @@ package-lock.json
 # you edit the tsx, nothing changes, and the file that is actually loaded
 # still looks plausible.
 packages/*/client/
+
+# Which harness build this checkout is linked to. Machine state written by
+# link-dsh — a path from one machine tells another machine nothing.
+.dsh-link.json

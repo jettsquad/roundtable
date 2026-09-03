@@ -15,6 +15,7 @@
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
+  readdirSync,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -56,7 +57,16 @@ const NEEDED = [
   // resolvable, and the bundle keeps it external because it is a platform
   // module the shell already holds.
   "dsh-client-ui-slots",
-  "dsh-client-runtime",
+  // Owns the `ctx.slots` declaration merge. Was `dsh-client-runtime` until
+  // 0.1.2, which split that package into modules/connection/store/renderer;
+  // the registry went to the renderer. Nothing about our own code changed —
+  // `ctx.slots` is still `ctx.slots` — which is why the name is worth a line:
+  // the only trace of the move is here.
+  "dsh-client-ui-renderer",
+  // Owns `connectWorkspace`. It used to sit on `ctx.workspaces`, the read
+  // model; opening a workspace is navigation, and 0.1.2 moved it to the
+  // navigation service where it belongs.
+  "dsh-client-ui-workspace",
   // The two slot OWNERS. A slot name is only a legal argument if the package
   // that declares it has merged it into `SlotMap`; without these,
   // `ctx.slots.register({ name: "shell.overlay" })` does not type-check —
@@ -85,7 +95,72 @@ const NEEDED = [
  */
 const NEEDED_UNSCOPED = ["zod"];
 
-if (!existsSync(farm)) {
+/**
+ * Where to resolve the harness packages from.
+ *
+ * Normally the profile farm, which is the installed dsh's own build. But a
+ * harness upgrade has to be tried against a checkout that is NOT the one
+ * `dsh` currently launches — otherwise the only way to test the next version
+ * is to replace the working one first, which is the wrong order. `DSH_SOURCE`
+ * points at such a checkout and packages are located by NAME rather than by
+ * directory, because the directory layout is exactly what moves between
+ * versions (`packages/client/runtime` became `packages/client/modules`, and
+ * cordis lives under `vendor/`).
+ */
+const sourceRoot = process.env.DSH_SOURCE;
+
+/** name → package directory, built by scanning a source checkout once. */
+function indexSource(root) {
+  const index = new Map();
+  const walk = (dir, depth) => {
+    if (depth > 4) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      const child = join(dir, entry.name);
+      const manifest = join(child, "package.json");
+      if (existsSync(manifest)) {
+        try {
+          const { name } = JSON.parse(readFileSync(manifest, "utf8"));
+          if (typeof name === "string" && !index.has(name)) index.set(name, child);
+        } catch {
+          /* an unparseable manifest is not ours to complain about */
+        }
+      }
+      walk(child, depth + 1);
+    }
+  };
+  for (const top of ["packages", "vendor", "apps"]) {
+    const dir = join(root, top);
+    if (existsSync(dir)) walk(dir, 0);
+  }
+  return index;
+}
+
+/**
+ * Find an unscoped npm dependency inside a pnpm checkout.
+ *
+ * pnpm does not hoist, so `node_modules/<name>` exists only when something at
+ * the root depends on it. The authoritative copy lives in the store under a
+ * version-stamped directory; taking the single match keeps us honest — more
+ * than one means the checkout holds two versions and picking either silently
+ * would recreate the very duplicate-identity problem this script exists to
+ * prevent.
+ */
+function inStore(root, name) {
+  const direct = join(root, "node_modules", name);
+  if (existsSync(direct)) return direct;
+  const store = join(root, "node_modules", ".pnpm");
+  if (!existsSync(store)) return undefined;
+  const matches = readdirSync(store).filter((entry) => entry.startsWith(`${name}@`));
+  if (matches.length !== 1) return undefined;
+  return join(store, matches[0], "node_modules", name);
+}
+
+const sourceIndex = sourceRoot === undefined ? undefined : indexSource(sourceRoot);
+
+if (sourceIndex !== undefined) {
+  console.log(`DSH_SOURCE=${sourceRoot} —— 从源码 checkout 解析（找到 ${sourceIndex.size} 个包）。`);
+} else if (!existsSync(farm)) {
   console.error(
     `找不到 DSH 的包农场：${farm}\n` +
       `先跑一次 dsh（例如 \`dsh --profile headless --dump-config\`）让它初始化 profile，再重试。`,
@@ -97,15 +172,28 @@ const modules = join(repoRoot, "node_modules");
 const scope = join(modules, "@deepseek-ai");
 mkdirSync(scope, { recursive: true });
 
+const from = (packageName, farmPath) => (sourceIndex === undefined ? farmPath : sourceIndex.get(packageName));
+
 const targets = [
-  ...NEEDED.map((name) => ({ name: `@deepseek-ai/${name}`, source: join(farm, name), link: join(scope, name) })),
-  ...NEEDED_UNSCOPED.map((name) => ({ name, source: join(farmRoot, name), link: join(modules, name) })),
+  ...NEEDED.map((name) => ({
+    name: `@deepseek-ai/${name}`,
+    source: from(`@deepseek-ai/${name}`, join(farm, name)),
+    link: join(scope, name),
+  })),
+  ...NEEDED_UNSCOPED.map((name) => ({
+    name,
+    // zod is a plain npm dependency, not a harness package, so a source
+    // checkout has it under its own node_modules — and pnpm does not hoist,
+    // so the real copy is in the store and the top level may hold nothing.
+    source: sourceIndex === undefined ? join(farmRoot, name) : inStore(sourceRoot, name),
+    link: join(modules, name),
+  })),
 ];
 
 let linked = 0;
 for (const { name, source, link } of targets) {
-  if (!existsSync(source)) {
-    console.error(`农场里没有 ${name}：${source}`);
+  if (source === undefined || !existsSync(source)) {
+    console.error(`解析不到 ${name}${source === undefined ? "（这个版本里没有这个包）" : `：${source}`}`);
     process.exit(1);
   }
   // Resolve through the farm's own symlink so both paths share one realpath.
@@ -122,7 +210,9 @@ for (const { name, source, link } of targets) {
 // otherwise show up as behaviour that no diff explains.
 // Ask git for the root rather than counting `..` segments: the vendored copy
 // sits at a depth that changes with how the harness was installed.
-const linkTarget = readlinkSync(join(farm, "cordis"));
+const cordisLink = join(farm, "cordis");
+const linkTarget =
+  sourceIndex === undefined ? readlinkSync(cordisLink) : (sourceIndex.get("@deepseek-ai/cordis") ?? sourceRoot);
 const gitIn = (args) =>
   execFileSync("git", ["-C", linkTarget, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 let harnessRoot = linkTarget;

@@ -68,16 +68,21 @@ export const TIMELINE_IGNORED_KINDS: ReadonlySet<string> = new Set([
   "hook/result",
   "llm/retry",
   "llm/retry-started",
+  // Which model was picked, and the policy a subagent inherits. Both are
+  // configuration recorded on the log; neither is anything a seat reads.
+  "model/selection",
   "permission/preset",
   "plan/mode",
   "request/context",
   "request/header",
   "sandbox/mode",
   "schedule/change",
+  "session-log-deepseek/delivery-accepted",
   "session/end-seed",
   "session/title",
   "session/title-llm-request",
   "subagent/descriptor",
+  "subagent/model-selection-policy",
   "todo/write",
   "web/deepseek-search-llm-request",
 ]);
@@ -100,6 +105,17 @@ export const HOST_TURN_KINDS: ReadonlySet<string> = new Set([
   "tool/code-dispatch",
   "tool/code-dispatch-start",
   "tool/result",
+  // dsh 0.1.2's own Agent Teams. Every one of these is written by a tool the
+  // LEAD's model called — creating a teammate, mailing one, moving a task —
+  // so on a host node's log they say the same thing the rest of this table
+  // says: the anchor took a turn. That the events are about a "team" changes
+  // nothing; upstream's lead is a model, and ours is a person. If a
+  // composition ever mounts both, this throws, which is the correct answer
+  // rather than a merge.
+  "team/member",
+  "team/message/delivered",
+  "team/message/queued",
+  "team/task",
   "turn/end",
   "turn/start",
 ]);

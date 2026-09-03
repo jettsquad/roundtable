@@ -44,11 +44,14 @@ const PLATFORM_MODULES = [
   "react-dom",
   "react-dom/client",
   "@deepseek-ai/cordis",
+  // dsh 0.1.2 trimmed this table: `client-web-react`, `ui-attachment` and
+  // `schema-form` left it (the first two packages are gone entirely), and
+  // `client-store` joined. A module that leaves the table stops being shared
+  // and starts being bundled — which for anything holding React state is a
+  // second copy, so the list is copied and checked rather than assumed.
+  "@deepseek-ai/dsh-client-store",
   "@deepseek-ai/dsh-client-ui-slots",
-  "@deepseek-ai/dsh-client-web-react",
   "@deepseek-ai/dsh-client-ui-primitives",
-  "@deepseek-ai/dsh-client-ui-attachment",
-  "@deepseek-ai/dsh-client-schema-form",
 ];
 
 /**
@@ -200,7 +203,18 @@ export function clientPackages() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const watch = process.argv.includes("--watch");
   const dev = watch || process.argv.includes("--dev");
-  const harness = process.env.DSH_SOURCE ?? join(process.env.HOME ?? "", ".local/share/roundtable/deepseek-harness");
+  // Check against the harness we are actually LINKED to, not whichever one
+  // happens to sit at the conventional path. Those were the same thing until
+  // the 0.1.2 upgrade was tried from a second checkout — and then this check
+  // passed while reading the old copy, which is precisely the silent drift it
+  // was written to catch, happening to the check itself. `link-dsh` records
+  // the binding in `.dsh-link.json`; that record is the anchor.
+  const stampPath = join(root, ".dsh-link.json");
+  const stamp = existsSync(stampPath) ? JSON.parse(await readFile(stampPath, "utf8")) : undefined;
+  const harness =
+    process.env.DSH_SOURCE ??
+    stamp?.harnessRoot ??
+    join(process.env.HOME ?? "", ".local/share/roundtable/deepseek-harness");
   await checkPlatformTable(harness);
   const packages = clientPackages();
   if (packages.length === 0) throw new Error("没有找到带 src/client/index.tsx 的包。");

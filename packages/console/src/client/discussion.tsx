@@ -20,6 +20,7 @@
  * text told you what was said and nothing told you where one answer ended.
  */
 import { useEffect, useRef, useState } from "react";
+import { MARKDOWN_LABELS } from "./markdown-labels.ts";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, type TeamSummary } from "./api.ts";
 import { DraftCard } from "./draft-card.tsx";
@@ -289,7 +290,7 @@ export function Discussion({
               {(team.planTurnIds ?? []).includes(line.turnId) ? (
                 <PlanMessage team={team} turnId={line.turnId} raw={line.text} />
               ) : (
-                <MarkdownText text={line.text} />
+                <MarkdownText text={line.text} labels={MARKDOWN_LABELS} />
               )}
             </div>
             {/* Under the message, not above it. A seat's answer runs to

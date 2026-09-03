@@ -9,11 +9,14 @@
  */
 import type { Context } from "@deepseek-ai/cordis";
 // Type-only, and load-bearing: `ctx.slots` is a declaration merge onto the
-// client Context published by the runtime's client half. Without this import
-// the property does not exist as far as the checker is concerned — which is
-// how the hand-written version got away with never being typechecked at all.
+// client Context published by the renderer. Without this import the property
+// does not exist as far as the checker is concerned — which is how the
+// hand-written version got away with never being typechecked at all.
 // Erased at build, so it crosses no module edge.
-import type {} from "@deepseek-ai/dsh-client-runtime/client";
+//
+// This was `dsh-client-runtime/client` until dsh 0.1.2 split that package
+// four ways and gave the slot registry to the renderer.
+import type {} from "@deepseek-ai/dsh-client-ui-renderer/client";
 // The two slot owners, also type-only. A slot name is a legal argument only
 // once the package that declares it has merged it into `SlotMap`.
 import type {} from "@deepseek-ai/dsh-client-ui-sidebar/client";
@@ -38,6 +41,45 @@ import { TeamView } from "./team-view.tsx";
  */
 export const inject = ["slots", "workspaces", "sessions"];
 
+/**
+ * Does this workspace hold that session?
+ *
+ * `sessionIds` is `readonly SessionId[]`, and `SessionId` is a branded string
+ * dsh 0.1.2 started enforcing. Every id crossing our boundary is a plain
+ * string — it arrives from the panel, from a slot's props, from our own HTTP
+ * replies — so the widening happens once, here, instead of at every call site
+ * as a cast that reads like it is hiding something.
+ */
+function holds(workspace: { readonly sessionIds: readonly string[] }, sessionId: string): boolean {
+  return workspace.sessionIds.includes(sessionId);
+}
+
+/**
+ * Reuse a workspace's blank session, or mint one.
+ *
+ * dsh 0.1.2 moved `connectWorkspace` off `ctx.workspaces` — the read model —
+ * into a navigation service the workspace UI constructs privately and does
+ * not publish. So the rule is reimplemented here from the same public
+ * snapshots it reads: a session already in this workspace, still blank, whose
+ * cwd is the workspace's own folder, is the one to reuse; anything else mints.
+ *
+ * The alternative was to open a session unconditionally, which is the bug this
+ * function exists to avoid: click a team twice, get two blank sittings.
+ */
+async function connectWorkspace(ctx: Context, workspaceId: string): Promise<string> {
+  const workspace = ctx.workspaces.list.getSnapshot().items.find((one) => one.workspaceId === workspaceId);
+  const sessions = ctx.sessions.list.getSnapshot();
+  if (workspace !== undefined) {
+    for (const id of sessions.ids) {
+      const summary = sessions.byId[id];
+      if (summary !== undefined && summary.blank && summary.cwd === workspace.path && holds(workspace, summary.id)) {
+        return summary.id;
+      }
+    }
+  }
+  return await ctx.sessions.create({ workspaceId: workspaceId as never });
+}
+
 export function apply(ctx: Context): void {
   // `inject` waits for the slot to be declared before registering.
   ctx.slots.inject("sidebar.footer.action", () =>
@@ -47,7 +89,7 @@ export function apply(ctx: Context): void {
   // `ctx`. Opening a session is a shell act — only the shell knows how to
   // reuse a workspace's blank session instead of minting a second one.
   setShellSessions({
-    connectWorkspace: (workspaceId: string) => ctx.workspaces.connectWorkspace(workspaceId as never),
+    connectWorkspace: (workspaceId: string) => connectWorkspace(ctx, workspaceId),
     open: (sessionId: string) => {
       ctx.sessions.open(sessionId as never);
     },
@@ -152,7 +194,7 @@ export function apply(ctx: Context): void {
 
   /** The workspace folder one session sits in, or undefined. */
   const folderOfSession = (sessionId: string): string | undefined =>
-    ctx.workspaces.list.getSnapshot().items.find((workspace) => workspace.sessionIds.includes(sessionId))?.path;
+    ctx.workspaces.list.getSnapshot().items.find((workspace) => holds(workspace, sessionId))?.path;
 
   /**
    * Take over the composer on a team's sessions.
@@ -215,7 +257,7 @@ export function apply(ctx: Context): void {
         // for exactly this comparison.
         inject: (sessionId: string) => ({
           folderOf: (): string | undefined =>
-            ctx.workspaces.list.getSnapshot().items.find((workspace) => workspace.sessionIds.includes(sessionId))?.path,
+            ctx.workspaces.list.getSnapshot().items.find((workspace) => holds(workspace, sessionId))?.path,
           // Which session, not only which folder: the tab shows one sitting's
           // discussion, and a folder alone cannot say which.
           sessionId,
