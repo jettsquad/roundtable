@@ -38,6 +38,11 @@ function DirectoryBrowser({ value, onPick, onClose }: BrowserProps): JSX.Element
   // Opens where the field already points, when it points anywhere: reopening
   // at the home directory after you had navigated somewhere makes the second
   // edit as expensive as the first.
+  //
+  // Mount-only on purpose, and `value` is deliberately not a dependency: it is
+  // read once, to decide where to open. Adding it would re-navigate on every
+  // keystroke — the opposite of what this effect is for.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => go(value.trim() === "" ? undefined : value.trim()), []);
 
   return (

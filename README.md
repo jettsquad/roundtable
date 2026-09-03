@@ -1,5 +1,7 @@
 # Squad · 圆桌
 
+中文 | [English](README.en.md)
+
 一张**人主持**的圆桌，跑在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 上。
 
 多个 agent 坐在席位上，由**你**点名谁发言、看什么、什么时候说。

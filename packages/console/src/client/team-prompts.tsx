@@ -172,15 +172,20 @@ export function TeamPromptsPanel({
       .finally(() => setBusy(false));
   };
 
-  /** Copy a library entry into this team, then use it. */
-  const adopt = (blockId: string, use: (prompts: TeamPrompts, blockId: string) => TeamPrompts): void => {
+  /**
+   * Copy a library entry into this team, then place it.
+   *
+   * The callback is `place`, not `use`: React 19 has a `use()` hook, and a
+   * bare `use(...)` call reads as one — to the linter, and to a person.
+   */
+  const adopt = (blockId: string, place: (prompts: TeamPrompts, blockId: string) => TeamPrompts): void => {
     const entry = library.find((block) => block.blockId === blockId);
     if (entry === undefined) return;
     const held = prompts.blocks.some((block) => block.blockId === blockId);
     const withCopy: TeamPrompts = held
       ? prompts
       : { ...prompts, blocks: [...prompts.blocks, { blockId, name: entry.name, text: entry.text }] };
-    push(use(withCopy, blockId));
+    push(place(withCopy, blockId));
   };
 
   const unusedFor = (taken: readonly string[]): readonly PromptBlock[] =>

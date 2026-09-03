@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import globals from "globals";
+import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
@@ -24,6 +25,23 @@ export default tseslint.config(
       // instead.
       "@typescript-eslint/parameter-properties": ["error", { prefer: "class-property" }],
       "no-console": ["error", { allow: ["error", "warn"] }],
+    },
+  },
+  {
+    // The rules of hooks, enforced rather than remembered.
+    //
+    // This project shipped the exact bug they exist to catch: a `useState`
+    // placed after `if (!open) return null` in the team panel, which made the
+    // sidebar button do nothing at all. It type-checked, it built, it passed
+    // every test — the only way to find it was to click the button.
+    files: ["packages/*/src/client/**/*.tsx", "packages/*/src/client/**/*.ts"],
+    plugins: { "react-hooks": reactHooks },
+    rules: {
+      "react-hooks/rules-of-hooks": "error",
+      // Warn, not error: an over-eager dependency array is a correctness
+      // question a person has to answer, and failing the build on it teaches
+      // people to silence it rather than read it.
+      "react-hooks/exhaustive-deps": "warn",
     },
   },
   {
