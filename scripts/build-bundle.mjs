@@ -9,7 +9,7 @@
  *
  * Why ONE package with nine entry points rather than nine packages: dsh's
  * client-modules resolves every Loader row to its PACKAGE and reconciles per
- * package, so nine rows of `@squad/roundtable/*` produce a single browser
+ * package, so nine rows of `@jettsquad/roundtable/*` produce a single browser
  * bundle. And `splitting` puts `@squad/shared` and `@squad/seat-runtime` into
  * shared chunks instead of copying them into nine outputs — a copy would not
  * merely be bigger, it would be nine module states where the design assumes
@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { buildClient } from "./build-client.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PACKAGE = "@squad/roundtable";
+const PACKAGE = "@jettsquad/roundtable";
 const bundleDir = join(root, "bundle");
 const outDir = join(bundleDir, "lib");
 
@@ -83,14 +83,14 @@ async function checkExports() {
  * The bare-name row is not a style choice. dsh decides whether a Loader row
  * can contribute a browser bundle with `exactPackageSpecifier`, which accepts
  * a scoped specifier only when it has exactly two segments — so a row named
- * `@squad/roundtable/console` is classified as permanently not a client row.
+ * `@jettsquad/roundtable/console` is classified as permanently not a client row.
  * The failure is silent and asymmetric: every host plugin loads, the panel
  * and the slash commands simply do not exist, and the server log says
  * nothing. Costing an afternoon once is enough.
  */
 async function checkPatchRows(manifest) {
   const patch = await readFile(join(bundleDir, "cordis.patch.yml"), "utf8");
-  const rows = [...patch.matchAll(/^\s+name:\s*'(@squad\/[^']+)'/gm)].map((match) => match[1]);
+  const rows = [...patch.matchAll(/^\s+name:\s*'(@jettsquad\/[^']+)'/gm)].map((match) => match[1]);
   const unknown = rows.filter((row) => {
     const key = row === PACKAGE ? "." : `.${row.slice(PACKAGE.length)}`;
     return manifest.exports[key] === undefined;
@@ -138,7 +138,11 @@ export async function buildBundle() {
   await cp(join(root, "packages/console/client/client.js"), join(outDir, "client.js"));
 
   const readme = join(root, "bundle/README.md");
-  if (!existsSync(readme)) await writeFile(readme, "# @squad/roundtable\n");
+  if (!existsSync(readme)) await writeFile(readme, `# ${PACKAGE}\n`);
+
+  // The licence is the repository's, copied in rather than duplicated: two
+  // files that must say the same thing eventually do not.
+  await cp(join(root, "LICENSE"), join(bundleDir, "LICENSE"));
 
   const manifest = await checkExports();
   const rows = await checkPatchRows(manifest);
@@ -147,5 +151,5 @@ export async function buildBundle() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const { entries, rows } = await buildBundle();
-  console.log(`✅ @squad/roundtable → bundle/lib（${entries} 个入口，patch ${rows} 行，全部对得上）`);
+  console.log(`✅ ${PACKAGE} → bundle/lib（${entries} 个入口，patch ${rows} 行，全部对得上）`);
 }

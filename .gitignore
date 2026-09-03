@@ -16,3 +16,5 @@ packages/*/client/
 .dsh-link.json
 bundle/lib/
 bundle/*.tgz
+profile/
+bundle/LICENSE

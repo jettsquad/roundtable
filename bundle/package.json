@@ -1,5 +1,5 @@
 {
-  "name": "@squad/roundtable",
+  "name": "@jettsquad/roundtable",
   "version": "0.1.0",
   "description": "Squad —— 一张人主持的圆桌：多个 agent 席位，由人点名发言，跑在 DeepSeek Harness 上。",
   "license": "MIT",
@@ -18,9 +18,10 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "lib",
+    "LICENSE",
+    "README.md",
     "cordis.patch.yml",
-    "README.md"
+    "lib"
   ],
   "dsh": {
     "bundle": {

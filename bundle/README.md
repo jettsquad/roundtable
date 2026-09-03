@@ -1,4 +1,4 @@
-# @squad/roundtable
+# @jettsquad/roundtable
 
 一张**人主持**的圆桌，跑在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 上。
 
@@ -8,7 +8,7 @@
 ## 安装
 
 ```sh
-dsh plugin --profile web add @squad/roundtable
+dsh plugin --profile web add @jettsquad/roundtable
 dsh web
 ```
 
@@ -34,5 +34,5 @@ dsh web
 ## 卸载
 
 ```sh
-dsh plugin --profile web remove @squad/roundtable
+dsh plugin --profile web remove @jettsquad/roundtable
 ```
