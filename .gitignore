@@ -18,3 +18,7 @@ bundle/lib/
 bundle/*.tgz
 profile/
 bundle/LICENSE
+
+# 使用者的方法论与设计文档：个人资产，不进这个（公开的）仓库。
+# 完整历史留在 ~/Squad2-full-history-*.bundle 里。
+docs/
