@@ -29,6 +29,7 @@ import { ListenBar } from "./listen.tsx";
 import { TeamPromptsPanel } from "./team-prompts.tsx";
 import { describeSeat, describeTeam, type SeatStatus } from "../seat-status.ts";
 import { useSitting } from "./use-sitting.ts";
+import { translate, useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 /** One seat's live state, read the same way everywhere it is shown. */
@@ -44,15 +45,15 @@ function statusOf(team: TeamSummary, seat: TeamSummary["seats"][number]): SeatSt
 
 /** One team's consumption, in a line. See `panel.tsx` for why cache is separate. */
 function usageLine(usage: UsageTotals | undefined): string {
-  if (usage === undefined || usage.turns === 0) return "用量：尚未计量";
+  if (usage === undefined || usage.turns === 0) return translate("team.usage.none");
   const parts = [
-    `${usage.turns} 轮`,
-    `入 ${usage.inputTokens.toLocaleString()}`,
-    `出 ${usage.outputTokens.toLocaleString()}`,
-    `缓存 ${(usage.cacheCreationTokens + usage.cacheReadTokens).toLocaleString()}`,
+    translate("team.usage.turns", { n: usage.turns }),
+    translate("team.usage.in", { n: usage.inputTokens.toLocaleString() }),
+    translate("team.usage.out", { n: usage.outputTokens.toLocaleString() }),
+    translate("team.usage.cache", { n: (usage.cacheCreationTokens + usage.cacheReadTokens).toLocaleString() }),
   ];
   if (usage.costUsd !== undefined) parts.push(`$${usage.costUsd.toFixed(4)}`);
-  return `用量：${parts.join(" · ")}`;
+  return translate("team.usage", { parts: parts.join(" · ") });
 }
 
 /**
@@ -78,12 +79,16 @@ function statusLine(team: TeamSummary): string {
       }),
     })),
   );
-  if (live !== undefined) return `工作中：${live}`;
+  if (live !== undefined) return translate("view.state.working", { who: live });
   if (team.progress !== undefined) {
-    return `议程进行中：${team.progress.phase}（第 ${team.progress.phaseIndex + 1}/${team.progress.phaseCount} 阶段）。`;
+    return translate("view.state.agenda", {
+      phase: team.progress.phase,
+      index: team.progress.phaseIndex + 1,
+      total: team.progress.phaseCount,
+    });
   }
-  if (team.busy) return "工作中……";
-  return "空闲：没有成员在执行，等待你的指令。";
+  if (team.busy) return translate("view.state.busy");
+  return translate("view.state.idle");
 }
 
 function Roster({
@@ -95,6 +100,7 @@ function Roster({
   readonly data: SquadSnapshot;
   readonly onChanged: () => void;
 }): JSX.Element {
+  const t = useT();
   const { error, run } = useAction(onChanged);
   return (
     <div className={styles.rosterStrip}>
@@ -112,8 +118,9 @@ function Roster({
               can recognise. */}
           <span className={styles.muted}>
             {seat.connectionId === undefined
-              ? "本机登录"
-              : (data.connections.find((c) => c.connectionId === seat.connectionId)?.displayName ?? "⚠️ 连接已删除")}
+              ? t("agent.localLogin")
+              : (data.connections.find((c) => c.connectionId === seat.connectionId)?.displayName ??
+                t("agent.connection.gone"))}
             {seat.permissionMode === undefined ? "" : ` · ${seat.permissionMode}`}
           </span>
           {/* 1.x showed a state for every seat, not only the speaking one.
@@ -129,13 +136,13 @@ function Roster({
               {statusOf(team, seat).label}
             </span>
           ) : (
-            <span className={styles.badgeIdle}>待命</span>
+            <span className={styles.badgeIdle}>{t("view.seat.idle")}</span>
           )}
           {/* An orphaned seat looks exactly like a healthy one until you edit
               the agent and nothing happens. Named, with the fix next to it. */}
           {seat.orphaned !== true ? null : (
-            <span className={styles.badgeBad} title="这个成员是从一个已经不在 Agent 库里的 Agent 建的，改库不会影响它">
-              ⚠️ 已脱离 Agent 库
+            <span className={styles.badgeBad} title={t("view.seat.orphaned.title")}>
+              {t("view.seat.orphaned")}
               <select
                 className={styles.relink ?? ""}
                 value=""
@@ -145,7 +152,7 @@ function Roster({
                   void run(() => api.relinkSeat({ teamId: team.teamId, seatId: seat.seatId, templateId }));
                 }}
               >
-                <option value="">重新关联到…</option>
+                <option value="">{t("view.seat.relink")}</option>
                 {data.agents.map((agent) => (
                   <option key={agent.templateId} value={agent.templateId}>
                     {agent.displayName}
@@ -184,6 +191,7 @@ function teamForCwd(data: SquadSnapshot, cwd: string | undefined): TeamSummary |
  * cannot be fixed by deleting it — the discussion is inside.
  */
 function TeamHeader({ team, onChanged }: { readonly team: TeamSummary; readonly onChanged: () => void }): JSX.Element {
+  const t = useT();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(team.displayName);
 
@@ -195,7 +203,7 @@ function TeamHeader({ team, onChanged }: { readonly team: TeamSummary; readonly 
         <button
           type="button"
           className={styles.drop}
-          title="改名"
+          title={t("view.rename.title")}
           onClick={() => {
             setName(team.displayName);
             setEditing(true);
@@ -230,10 +238,10 @@ function TeamHeader({ team, onChanged }: { readonly team: TeamSummary; readonly 
         }}
       />
       <Button type="button" onClick={save}>
-        改名
+        {t("view.rename")}
       </Button>
       <Button type="button" onClick={() => setEditing(false)}>
-        取消
+        {t("view.cancel")}
       </Button>
     </div>
   );
@@ -246,6 +254,7 @@ export function TeamView({
   readonly folderOf: () => string | undefined;
   readonly sessionId: string;
 }): JSX.Element {
+  const t = useT();
   const cwd = folderOf();
   const [nonce, setNonce] = useState(0);
   const snapshot = useSnapshot(nonce);
@@ -254,7 +263,7 @@ export function TeamView({
   // new session open onto the old discussion.
   const sittingId = useSitting(cwd ?? "", cwd === undefined || cwd === "" ? undefined : sessionId);
 
-  if (snapshot.state === "loading") return <div className={styles.viewPad}>读取中……</div>;
+  if (snapshot.state === "loading") return <div className={styles.viewPad}>{t("view.loading")}</div>;
   if (snapshot.state === "error") return <div className={styles.viewPad}>{snapshot.detail}</div>;
 
   const team =
@@ -264,9 +273,7 @@ export function TeamView({
   if (team === undefined) {
     return (
       <div className={styles.viewPad}>
-        <div className={styles.hint}>
-          这个会话所在的目录（{cwd ?? "未知"}）还没有团队。到左下角的「团队」面板里建一支，项目文件夹选这里。
-        </div>
+        <div className={styles.hint}>{t("view.noTeam", { cwd: cwd ?? t("view.cwd.unknown") })}</div>
       </div>
     );
   }
@@ -276,8 +283,8 @@ export function TeamView({
       <TeamHeader team={team} onChanged={again} />
       <div className={styles.muted}>{statusLine(team)}</div>
       <div className={styles.muted}>
-        {usageLine(team.usage)} · 记录 {team.recorded} 行
-        {team.seats.some((seat) => seat.isSecretary) ? "" : " · ⚠️ 没有秘书，排不了议程"}
+        {t("view.meta", { usage: usageLine(team.usage), rows: team.recorded })}
+        {team.seats.some((seat) => seat.isSecretary) ? "" : t("view.noSecretary")}
       </div>
 
       <Roster team={team} data={snapshot.data} onChanged={again} />

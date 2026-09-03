@@ -29,11 +29,12 @@ import { speech } from "./speech.ts";
 import { defaultVoiceFor } from "@squad/shared";
 import { toggleQuote } from "./quotes.ts";
 import { useQuotes } from "./use-quotes.ts";
+import { translate, useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 /** The colour a speaker's pill takes, from the roster. */
 function tintOf(team: TeamSummary, speaker: string): string | undefined {
-  if (speaker === "系统") return undefined;
+  if (speaker === translate("msg.system")) return undefined;
   return team.seats.find((seat) => seat.displayName === speaker)?.color;
 }
 
@@ -112,6 +113,7 @@ function SpeakButton({
   readonly text: string;
   readonly voiceId: string;
 }): JSX.Element {
+  const t = useT();
   const [state, setState] = useState(speech.state());
   useEffect(() => speech.subscribe(setState), []);
   const playing = state.turnId === turnId;
@@ -120,11 +122,11 @@ function SpeakButton({
       <button
         type="button"
         className={`${styles.quoteButton} ${playing ? styles.quoted : ""}`}
-        title={speech.ready ? "念这一条（再点一次停）" : "先在上面的「朗读设置」里选一个连接"}
+        title={speech.ready ? t("msg.speak.title") : t("msg.speak.blocked")}
         onClick={() => void speech.play({ turnId, speaker, text, voiceId })}
         disabled={!speech.ready}
       >
-        {playing ? `■ ${state.chunk}/${state.chunks}` : "▶ 念"}
+        {playing ? `■ ${state.chunk}/${state.chunks}` : t("msg.speak")}
       </button>
       {!playing || state.error === undefined ? null : <span className={styles.error}>{state.error}</span>}
     </>
@@ -132,12 +134,13 @@ function SpeakButton({
 }
 
 function CopyButton({ text }: { readonly text: string }): JSX.Element {
+  const t = useT();
   const [state, setState] = useState<"idle" | "done" | "failed">("idle");
   return (
     <button
       type="button"
       className={`${styles.quoteButton} ${state === "failed" ? styles.stalling : ""}`}
-      title="复制这段的原文"
+      title={t("msg.copy.title")}
       onClick={() => {
         // The raw Markdown, not the rendered text: what people paste this
         // into is another Markdown box more often than not, and a copy that
@@ -150,7 +153,7 @@ function CopyButton({ text }: { readonly text: string }): JSX.Element {
         });
       }}
     >
-      {state === "done" ? "已复制 ✓" : state === "failed" ? "复制失败" : "复制"}
+      {state === "done" ? t("msg.copy.done") : state === "failed" ? t("msg.copy.failed") : t("msg.copy")}
     </button>
   );
 }
@@ -163,6 +166,7 @@ function CopyButton({ text }: { readonly text: string }): JSX.Element {
  * that did nothing.
  */
 function ToAgendaButton({ team, turnId }: { readonly team: TeamSummary; readonly turnId: string }): JSX.Element {
+  const t = useT();
   const [state, setState] = useState<"idle" | "running" | "done" | "failed">("idle");
   const [detail, setDetail] = useState<string | undefined>(undefined);
   return (
@@ -170,7 +174,7 @@ function ToAgendaButton({ team, turnId }: { readonly team: TeamSummary; readonly
       <button
         type="button"
         className={`${styles.quoteButton} ${state === "failed" ? styles.stalling : ""}`}
-        title="把这段安排转成结构化议程，交给你确认后才会跑"
+        title={t("msg.toAgenda.title")}
         disabled={state === "running"}
         onClick={() => {
           setState("running");
@@ -184,7 +188,11 @@ function ToAgendaButton({ team, turnId }: { readonly team: TeamSummary; readonly
             });
         }}
       >
-        {state === "running" ? "转换中…" : state === "done" ? "已成草案 ✓" : "转成议程"}
+        {state === "running"
+          ? t("msg.toAgenda.running")
+          : state === "done"
+            ? t("msg.toAgenda.done")
+            : t("msg.toAgenda")}
       </button>
       {detail === undefined ? null : <span className={styles.error}>{detail}</span>}
     </>
@@ -215,6 +223,7 @@ export function Discussion({
   /** How this host lets a folder be chosen; passed through to the plan card. */
   readonly pickerKind?: "native" | "browse" | "none";
 }): JSX.Element {
+  const t = useT();
   const end = useRef<HTMLDivElement>(null);
   const start = useRef<HTMLDivElement>(null);
   const quoted = useQuotes(team.teamId);
@@ -233,11 +242,7 @@ export function Discussion({
   if (count === 0) {
     return (
       <>
-        <div className={styles.hint}>
-          {team.draft === undefined
-            ? "还没有讨论。在下面说一句，团队就开始了。"
-            : "还没有讨论。下面这份议程是建团时一起放好的，确认了它就开始。"}
-        </div>
+        <div className={styles.hint}>{team.draft === undefined ? t("talk.empty") : t("talk.empty.agenda")}</div>
         {team.draft === undefined ? null : <DraftCard team={team} onChanged={onChanged ?? (() => undefined)} />}
         {tail}
       </>
@@ -261,7 +266,7 @@ export function Discussion({
       {/* Said out loud: a discussion that begins mid-sentence with nothing
           saying so reads as the whole of it. */}
       {team.transcriptOmitted === 0 ? null : (
-        <div className={styles.hint}>前面还有 {team.transcriptOmitted} 条，这里只显示最近的。</div>
+        <div className={styles.hint}>{t("talk.omitted", { n: team.transcriptOmitted })}</div>
       )}
       {team.transcript.map((line) => {
         const tint = tintOf(team, line.speaker);
@@ -305,10 +310,10 @@ export function Discussion({
               <button
                 type="button"
                 className={`${styles.quoteButton} ${picked ? styles.quoted : ""}`}
-                title="下一轮特别强调这一段"
+                title={t("msg.quote.title")}
                 onClick={() => toggleQuote(team.teamId, line.turnId)}
               >
-                {picked ? "已引用 ✓" : "引用"}
+                {picked ? t("msg.quote.done") : t("msg.quote")}
               </button>
               <CopyButton text={line.text} />
               {/* Next to 复制, at the END of the message — where you finish
@@ -377,8 +382,8 @@ export function Discussion({
           <button
             type="button"
             className={styles.scrollButton}
-            title="回到最上面"
-            aria-label="回到最上面"
+            title={t("talk.toTop")}
+            aria-label={t("talk.toTop")}
             onClick={() => start.current?.scrollIntoView({ block: "start" })}
           >
             ↑
@@ -386,8 +391,8 @@ export function Discussion({
           <button
             type="button"
             className={styles.scrollButton}
-            title="到最下面"
-            aria-label="到最下面"
+            title={t("talk.toBottom")}
+            aria-label={t("talk.toBottom")}
             onClick={() => end.current?.scrollIntoView({ block: "end" })}
           >
             ↓

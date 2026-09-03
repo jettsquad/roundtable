@@ -212,6 +212,48 @@ export const zh = {
   "dictate.start.title": "说话，转成文字填进输入框（不会自动发送）",
   "dictate.listening": "● 听写中",
   "dictate.speak": "🎤 说",
+
+  // 会话顶部的团队信息条
+  "view.loading": "读取中……",
+  "view.noTeam": "这个会话所在的目录（{cwd}）还没有团队。到左下角的「团队」面板里建一支，项目文件夹选这里。",
+  "view.cwd.unknown": "未知",
+  "view.meta": "{usage} · 记录 {rows} 行",
+  "view.noSecretary": " · ⚠️ 没有秘书，排不了议程",
+  "view.state.working": "工作中：{who}",
+  "view.state.agenda": "议程进行中：{phase}（第 {index}/{total} 阶段）。",
+  "view.state.busy": "工作中……",
+  "view.state.idle": "空闲：没有成员在执行，等待你的指令。",
+  "view.seat.idle": "待命",
+  "view.seat.orphaned": "⚠️ 已脱离 Agent 库",
+  "view.seat.orphaned.title": "这个成员是从一个已经不在 Agent 库里的 Agent 建的，改库不会影响它",
+  "view.seat.relink": "重新关联到…",
+  "view.rename.title": "改名",
+  "view.rename": "改名",
+  "view.cancel": "取消",
+
+  // 每条发言下面的三个按钮
+  "msg.speak.title": "念这一条（再点一次停）",
+  "msg.speak.blocked": "先在上面的「朗读设置」里选一个连接",
+  "msg.speak": "▶ 念",
+  "msg.copy.title": "复制这段的原文",
+  "msg.copy": "复制",
+  "msg.copy.done": "已复制 ✓",
+  "msg.copy.failed": "复制失败",
+  "msg.quote.title": "下一轮特别强调这一段",
+  "msg.quote": "引用",
+  "msg.quote.done": "已引用 ✓",
+  "msg.toAgenda.title": "把这段安排转成结构化议程，交给你确认后才会跑",
+  "msg.toAgenda": "转成议程",
+  "msg.toAgenda.running": "转换中…",
+  "msg.toAgenda.done": "已成草案 ✓",
+  "msg.system": "系统",
+
+  // 讨论区
+  "talk.empty": "还没有讨论。在下面说一句，团队就开始了。",
+  "talk.empty.agenda": "还没有讨论。下面这份议程是建团时一起放好的，确认了它就开始。",
+  "talk.omitted": "前面还有 {n} 条，这里只显示最近的。",
+  "talk.toTop": "回到最上面",
+  "talk.toBottom": "到最下面",
   "agent.web.codeBash":
     "联网：只能用 bash + curl（这条会自动写进它的提示词）。它没有 WebFetch，web_search 认的是 DeepSeek 的 key。",
   "agent.web.sandboxed": "联网：不行。沙箱没有出网通道，提示词里会告诉它拿不到就直说，别凭记忆编。",
@@ -452,6 +494,51 @@ export const en: Record<SquadKey, string> = {
   "dictate.start.title": "Speak; the text lands in the box (nothing is sent automatically)",
   "dictate.listening": "● listening",
   "dictate.speak": "🎤 Speak",
+
+  // The team info bar at the top of a session
+  "view.loading": "Loading…",
+  "view.noTeam":
+    "The folder this session sits in ({cwd}) has no team yet. Create one from the \u201cTeams\u201d panel at the bottom left, choosing this folder as the project folder.",
+  "view.cwd.unknown": "unknown",
+  "view.meta": "{usage} · {rows} recorded",
+  "view.noSecretary": " · ⚠️ no secretary, so no agenda can be planned",
+  "view.state.working": "Working: {who}",
+  "view.state.agenda": "Agenda running: {phase} (phase {index}/{total}).",
+  "view.state.busy": "Working…",
+  "view.state.idle": "Idle: nobody is running; awaiting your instruction.",
+  "view.seat.idle": "standing by",
+  "view.seat.orphaned": "⚠️ detached from the agent library",
+  "view.seat.orphaned.title":
+    "This member was built from an agent that is no longer in the library; library edits do not reach it",
+  "view.seat.relink": "Re-link to…",
+  "view.rename.title": "Rename",
+  "view.rename": "Rename",
+  "view.cancel": "Cancel",
+
+  // The three buttons under each message
+  "msg.speak.title": "Read this one aloud (click again to stop)",
+  "msg.speak.blocked": "First choose a connection under \u201cRead aloud\u201d above",
+  "msg.speak": "▶ Read",
+  "msg.copy.title": "Copy this text",
+  "msg.copy": "Copy",
+  "msg.copy.done": "Copied ✓",
+  "msg.copy.failed": "Copy failed",
+  "msg.quote.title": "Emphasise this passage next round",
+  "msg.quote": "Quote",
+  "msg.quote.done": "Quoted ✓",
+  "msg.toAgenda.title": "Turn this plan into a structured agenda; nothing runs until you confirm it",
+  "msg.toAgenda": "To agenda",
+  "msg.toAgenda.running": "Converting…",
+  "msg.toAgenda.done": "Drafted ✓",
+  "msg.system": "System",
+
+  // Discussion
+  "talk.empty": "No discussion yet. Say something below and the team starts.",
+  "talk.empty.agenda":
+    "No discussion yet. The agenda below was placed here when the team was created; confirming it starts the work.",
+  "talk.omitted": "{n} earlier messages; only the most recent are shown.",
+  "talk.toTop": "Back to top",
+  "talk.toBottom": "To the bottom",
   "agent.web.codeBash":
     "Web: bash + curl only (this is written into its prompt automatically). It has no WebFetch, and web_search wants a DeepSeek key.",
   "agent.web.sandboxed":
