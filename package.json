@@ -16,7 +16,8 @@
     "format": "prettier --write \"packages/**/*.{ts,tsx,css}\" \"scripts/*.mjs\"",
     "smoke": "node scripts/smoke.mjs",
     "build:client": "node scripts/build-client.mjs",
-    "watch:client": "node scripts/build-client.mjs --watch"
+    "watch:client": "node scripts/build-client.mjs --watch",
+    "build:bundle": "node scripts/build-bundle.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

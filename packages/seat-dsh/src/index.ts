@@ -21,9 +21,10 @@ import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "
 import type {} from "@deepseek-ai/dsh-subprocess";
 import { providerName, type SeatConnection } from "@squad/shared";
 import { runCliSeat, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { buildDshArgv } from "./argv.ts";
 import { buildDshPatch, heartbeatRows, COMPAT_API_KEY_ENV } from "./patch.ts";
 import { readDshOutput } from "./stream.ts";
@@ -35,8 +36,18 @@ import { fileURLToPath } from "node:url";
  * Resolved from this module's own URL rather than from `process.cwd()` or a
  * config entry: a seat runs with the TEAM's folder as its cwd, and a path
  * relative to that would point at the user's project.
+ *
+ * Two candidates, because the same module has two forms: `.ts` beside this
+ * source in a checkout, `.js` beside the emitted file in the published
+ * bundle. Picking by what EXISTS rather than by a build-time flag keeps the
+ * two forms from needing to know about each other — and the child is a
+ * separate `dsh` process that will load whichever path we hand it, so the
+ * answer has to be a real file, not a module specifier.
  */
-const HEARTBEAT_MODULE = fileURLToPath(new URL("./heartbeat.ts", import.meta.url));
+const HERE = dirname(fileURLToPath(import.meta.url));
+const HEARTBEAT_MODULE =
+  ["heartbeat.ts", "heartbeat.js"].map((file) => join(HERE, file)).find((path) => existsSync(path)) ??
+  join(HERE, "heartbeat.js");
 
 export const name = "squad-seat-dsh";
 

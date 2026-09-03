@@ -1,0 +1,97 @@
+# Squad 2.0 —— 叠在 dsh-base（或 dsh-web-app）之上的插件层。
+#
+# 这是 BUNDLE 的 patch：装了这个包的 profile 会自动把它作为一层叠进来，
+# 顺序在 profile 自己的 cordis.patch.yml 之前。用户想改这里的任何一行，
+# 在自己 profile 的 patch 里按 id 覆盖即可，不必碰这个包。
+#
+# 行名是**同一个包的子路径**（`@squad/roundtable/table`），不是九个包。
+# client-modules 把每一行解析到包、再按包收敛，所以九行只会产出一份浏览器
+# bundle——这正是单包形态成立的原因。
+#
+# `insert` 新增行；带 id 的裸 patch 是替换已有行的 config，不是新增。
+#
+# 顺序有意义：storage 三行必须排在我们的插件之前。`ctx.storage.domain` 是
+# 惰性解析的 form，在 storage-domain 挂上之前读它会抛 `form-not-mounted`。
+- insert:
+    # ── 存储 ──────────────────────────────────────────────────────────
+    # 不在这里挂。`dsh-web-app` 自带 storage / storage-json / storage-domain
+    # 三行，配置与我们当初写的一模一样（json 后端 + dshHomePath），重复 insert
+    # 会以 `duplicate loader entry id: storage` 硬失败。
+    #
+    # 保留这段说明是因为「为什么需要 storage」这件事没变：dsh 的持久化读路径
+    # 会拒绝任何不在 KNOWN_SESSION_EVENT_TYPES 里、又没标 ignorable 的事件类型，
+    # 而 out-of-repo 插件的事件按设计就在名单之外。所以检查点这类 Squad 自有的
+    # 团队级记录走 storage domain，session 日志只用 dsh 原生词汇。详见技术设计 §5。
+    #
+    # 只叠 dsh-base 的组合（没有 app 层）仍然要自己挂这三行。
+
+    # ── 席位后端 ──────────────────────────────────────────────────────
+    # base 只挂进程内的两个 subagent provider，不挂 CLI 后端的，所以这里显式加上。
+    # 它读宿主自己的 Claude 设置与登录态：provider 刻意不传 settingSources，
+    # 也不创建或修改登录状态，订阅登录因此原样透传。
+    - id: subagent-claude-code
+      name: '@deepseek-ai/dsh-subagent-claude-code'
+
+    # 连接库：席位跑在什么上面。用户级，与团队分开——同一个网关服务所有团队。
+    # 它从不持有密钥：配置里只有凭据的名字，值在 ctx.credentials 那边按次解析。
+    # 必须排在席位后端之前：后端要为每个连接注册一个 provider 实例。
+    - id: squad-connections
+      name: '@squad/roundtable/connections'
+
+    # 带工具围栏的席位后端，注册名 claude-code-fenced。
+    # 与上面那个并存而不是替换它——选哪个是组合的决定，写在这里看得见。
+    #
+    # 它存在的理由：现成的 provider 把工具策略写死了（只禁 AskUserQuestion），
+    # 配置里只有 env 和 disposeGraceMs，加不进去。于是席位可以自己起 subagent
+    # 去干活——1.x 里秘书不知道名册、自己造了一队 agent，就是这么来的。
+    # 这个默认禁掉 Task/Agent，并支持 seam 上的 toolFilter 与 persona。
+    - id: squad-seat-claude-code
+      name: '@squad/roundtable/seat-claude-code'
+
+    # Codex 席位。没有工具围栏，而那是关于 codex 的事实而不是遗漏：
+    # `codex exec` 根本没有可以委派出去的工具。capabilities 里
+    # toolFilter/persona 都声明为 false，于是 seam 会**拒绝**带这两样的
+    # 请求，而不是收下再悄悄不执行。
+    - id: squad-seat-codex
+      name: '@squad/roundtable/seat-codex'
+
+    # DSH 席位：跑 `dsh --profile headless <任务>`，harness 自己的一次性入口。
+    # 作为子进程跑，和另外两个后端一样——席位就是一个什么都不记得的新进程，
+    # 在本进程里跑会让它拿到宿主自己的上下文，那正好是席位的反面。
+    - id: squad-seat-dsh
+      name: '@squad/roundtable/seat-dsh'
+
+    # ── Squad ────────────────────────────────────────────────────────
+    # 桌子：主持人节点 + 席位编排。
+    - id: squad-table
+      name: '@squad/roundtable/table'
+
+    # 上下文装配：决定每个席位这一轮看见什么。
+    # 它注入 teams 并把自己注册到桌子上；依赖只有这一个方向——桌子绝不注入它，
+    # 否则两个服务互相等待，谁都起不来。没有它时桌子发空窗口（阶段 1 的行为）。
+    - id: squad-context
+      name: '@squad/roundtable/context'
+
+    # 秘书：唯一替主持人做判断工作的席位。无状态，只注入 subagents——
+    # 它不持有任何团队状态，材料全部由调用方投喂。
+    - id: squad-secretary
+      name: '@squad/roundtable/secretary'
+
+    # 控制台：把团队暴露成斜杠命令。
+    # 是命令而不是工具——命令由人敲、由代码跑，结果不进模型历史。
+    # 做成工具的话，一个 agent 就能决定叫谁发言，那就是让 LLM 当主持人。
+    - id: squad-console
+      # 裸包名，不是子路径——这是 dsh 的硬约束，不是风格选择。
+      # `exactPackageSpecifier` 对 @scope/name 只接受恰好两段，三段的
+      # `@squad/roundtable/console` 会被判定为「永远不是 client 行」，于是
+      # 宿主插件照常加载、浏览器半边整个不存在。带 client 的那一行必须用
+      # 裸包名，所以包的根导出就指向控制台。
+      name: '@squad/roundtable'
+
+    # Lil X：使用者自己的判断标准库。用户级，不属于任何一张桌子——
+    # inject 里刻意没有 teams。root 是一个目录，纯文本、git 可管、离开 Squad 仍可读。
+    # 开发态放在 DSH_HOME 下以免写坏真实资产；正式默认值应当是用户自己选的目录。
+    - id: squad-reasoning
+      name: '@squad/roundtable/reasoning'
+      config:
+        root: !!js dshHomePath('lil-x')

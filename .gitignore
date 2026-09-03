@@ -14,3 +14,5 @@ packages/*/client/
 # Which harness build this checkout is linked to. Machine state written by
 # link-dsh — a path from one machine tells another machine nothing.
 .dsh-link.json
+bundle/lib/
+bundle/*.tgz

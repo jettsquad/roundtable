@@ -109,8 +109,17 @@ const purityGate = {
 };
 
 /** One package's browser half. */
-export async function buildClient(pkg, { watch = false, dev = false } = {}) {
-  const id = `@squad/${pkg}`;
+/**
+ * @param pkg workspace package under `packages/` whose `src/client` to build.
+ * @param id  the name the bundle registers itself under. Defaults to the
+ *   workspace package, which is right in development, where the profile's row
+ *   IS that package. The published bundle is one package with many entry
+ *   points, so there the id must be the PUBLISHED name — the shell looks the
+ *   bundle up by the package it resolved the row to, and a mismatch fails as
+ *   `loaded without registering "<name>"`, after everything else has already
+ *   worked.
+ */
+export async function buildClient(pkg, { watch = false, dev = false, id = `@squad/${pkg}` } = {}) {
   const options = {
     entryPoints: [join(root, "packages", pkg, "src/client/index.tsx")],
     outfile: join(root, "packages", pkg, "client/client.js"),

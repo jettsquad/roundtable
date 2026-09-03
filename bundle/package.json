@@ -1,0 +1,62 @@
+{
+  "name": "@squad/roundtable",
+  "version": "0.1.0",
+  "description": "Squad —— 一张人主持的圆桌：多个 agent 席位，由人点名发言，跑在 DeepSeek Harness 上。",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./lib/console.js",
+    "./connections": "./lib/connections.js",
+    "./seat-claude-code": "./lib/seat-claude-code.js",
+    "./seat-codex": "./lib/seat-codex.js",
+    "./seat-dsh": "./lib/seat-dsh.js",
+    "./table": "./lib/table.js",
+    "./context": "./lib/context.js",
+    "./secretary": "./lib/secretary.js",
+    "./reasoning": "./lib/reasoning.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-workspace-controller",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-subagent-claude-code": "^0.1.2-alpha.5",
+    "mammoth": "^1.12.1",
+    "pdf-parse": "^2.4.5"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-agent": "*",
+    "@deepseek-ai/dsh-commands": "*",
+    "@deepseek-ai/dsh-credentials": "*",
+    "@deepseek-ai/dsh-host-directory-picker": "*",
+    "@deepseek-ai/dsh-host-webserver": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-storage-domain": "*",
+    "@deepseek-ai/dsh-subagent": "*",
+    "@deepseek-ai/dsh-subprocess": "*",
+    "zod": "*"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  }
+}
