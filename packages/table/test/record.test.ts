@@ -12,6 +12,7 @@
  * A test can only find that class of bug by asking something outside this
  * package whether the bytes are acceptable.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { adoptSessionEvent } from "@deepseek-ai/dsh-session";
 import { sessionMarkEvents, spokenMessage } from "../src/service.ts";
@@ -104,5 +105,49 @@ describe("为什么这里只能复述规则", () => {
     // the kind — and the next person to touch the marker would trust it.
     const zero = { type: "turn/end", seq: 5, time: Date.now(), data: { turn: 0, reason: { kind: "completed" } } };
     expect(() => adoptSessionEvent(zero as never)).not.toThrow();
+  });
+});
+
+/**
+ * The shim that lied.
+ *
+ * `LiveSession` is hand-written — the sessions service is reached through the
+ * untyped `ctx.reflect.get` — so every member of it is an assumption nothing
+ * checks. It declared `events`, dsh 0.1.2 removed that property, and the
+ * upgrade type-checked clean while the mark threw at runtime into a catch
+ * that logged through two optional chains and therefore said nothing. Every
+ * new sitting came out unmarked, which reaches a person as 「点新开一场没反应」.
+ *
+ * Reading the source is the only check available, so that is what this does.
+ */
+describe("markLiveSession 读会话事件的方式", () => {
+  const raw = readFileSync(new URL("../src/service.ts", import.meta.url), "utf8");
+  /**
+   * Comments stripped before matching.
+   *
+   * The first version of this test failed on the prose that explains the very
+   * bug it guards — a comment naming `session.events` read as a use of it.
+   * A test about what the code DOES has no business reading what it says.
+   */
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+  it("用 snapshotEvents()，不用已经不存在的 .events", () => {
+    expect(source).toContain("session.snapshotEvents().some(");
+    expect(source).not.toMatch(/session\.events\b/);
+  });
+
+  it("LiveSession 只声明 dsh 现在真的有的东西", () => {
+    const start = source.indexOf("interface LiveSession");
+    const shim = source.slice(start, source.indexOf("\n}", start));
+    expect(shim).toContain("snapshotEvents()");
+    expect(shim).not.toMatch(/readonly events\b/);
+  });
+
+  it("标记失败会喊出来，而不是只走可能不存在的 logger", () => {
+    // The catch used to be `this.ctx.logger?.warn?.(…)` and nothing else: two
+    // optional chains, so a composition with no logger printed nothing while
+    // a whole feature was broken.
+    const scope = source.slice(source.indexOf("没能给会话留下标记"));
+    expect(scope.slice(0, 400)).toContain("console.warn");
   });
 });

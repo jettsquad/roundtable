@@ -906,7 +906,7 @@ export class TeamsService extends Service {
       // with no `turn/start` is BLANK — hidden from the list and reusable by
       // the next 新建会话. A `user/message` does not count, which is why the
       // first version of this mark did not stop the session from vanishing.
-      const used = session.events.some((event) => event.type === "turn/start");
+      const used = session.snapshotEvents().some((event) => event.type === "turn/start");
       if (used) return;
       // Plain, with no 【speaker】 wrapper. The sidebar titles a session after
       // its first message, so this line IS the name of the session from now
@@ -949,7 +949,22 @@ export class TeamsService extends Service {
         }
       }
     } catch (error) {
-      this.ctx.logger?.warn?.(`没能给会话留下标记：${error instanceof Error ? error.message : String(error)}`);
+      // Loud, and on `console` as well as the logger.
+      //
+      // This catch hid a whole feature. `session.events` stopped existing in
+      // dsh 0.1.2, the read threw, and every new sitting came out unmarked —
+      // a blank session dsh hands back to the next 新建会话 — while the only
+      // trace was `ctx.logger?.warn?.()`, whose two optional chains mean it
+      // prints nothing at all when no logger is mounted. The symptom reached
+      // a person as 「点新开一场没反应」; nothing reached the terminal.
+      //
+      // Still caught, because failing to mark must not fail the sitting: the
+      // session and the record are real, and the mark is what makes it
+      // legible. But silence is not the price of that.
+      const detail = error instanceof Error ? error.message : String(error);
+      const line = `没能给会话留下标记（这一场仍然建好了，只是在侧边栏里不会显示成团队会话）：${detail}`;
+      this.ctx.logger?.warn?.(line);
+      console.warn(`[squad] ${line}`);
     }
   }
 
@@ -2044,10 +2059,25 @@ interface TeamRecord {
 }
 
 /** The little of a dsh session this plugin touches. */
+/**
+ * The part of dsh's Session this file uses.
+ *
+ * Hand-written because the service is reached through `ctx.reflect.get`,
+ * which is untyped — and that is exactly what made this shim dangerous. It
+ * declared `events`, dsh 0.1.2 removed that property, and tsc had nothing to
+ * compare against: the upgrade type-checked clean while `markLiveSession`
+ * threw at runtime into a swallowed catch, leaving every new sitting
+ * unmarked. A structural type of somebody else's object is a claim, and this
+ * one went on being believed after it stopped being true.
+ *
+ * Keep it minimal for that reason: every member here is an assumption that
+ * nothing will check.
+ */
 interface LiveSession {
   readonly header: { readonly cwd?: string };
   readonly id: string;
-  readonly events: readonly { readonly type: string }[];
+  /** 0.1.2 replaced the `events` property with this explicit snapshot. */
+  snapshotEvents(): readonly { readonly type: string }[];
   append(type: string, data: unknown, options?: unknown): void;
 }
 
