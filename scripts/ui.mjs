@@ -12,7 +12,7 @@
  * quietly put an LLM in the host's chair.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +50,58 @@ if (!existsSync(join(dshHome, "profiles", "squad"))) {
   console.error(`profile 还没装到 ${dshHome}。先跑：npm run install-profile`);
   process.exit(1);
 }
+
+/**
+ * One instance per DSH_HOME, enforced rather than remembered.
+ *
+ * Two processes sharing a home share its session logs, and each keeps its own
+ * idea of the next `seq`. They do not collide often — it takes one of them
+ * resuming a session whose tail the other has not flushed yet — but when they
+ * do, the log gets two events at one sequence number. dsh then refuses to
+ * open it, the team is skipped at boot, and what a person sees is 「重启之后
+ * 之前的对话丢了一些」. Two logs were damaged that way before this existed.
+ *
+ * `--port` does NOT protect against this: a second instance on another port
+ * is still a second writer on the same home. That is exactly how it happened
+ * — a verification instance on 9528 running beside a working one on 9527.
+ *
+ * The lock is advisory and self-healing: a stale file from a killed process
+ * is taken over, because refusing to start after a crash would be a worse
+ * failure than the one being prevented.
+ */
+const lockPath = join(dshHome, "squad-ui.lock");
+
+function alive(pid) {
+  try {
+    // Signal 0 tests for existence without delivering anything.
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+if (existsSync(lockPath)) {
+  const holder = Number.parseInt(readFileSync(lockPath, "utf8").trim(), 10);
+  if (Number.isFinite(holder) && holder !== process.pid && alive(holder)) {
+    console.error(
+      `这个 DSH_HOME 已经有一个 Squad 在跑了（进程 ${holder}）。\n` +
+        `  两个进程共用 ${dshHome} 会写坏 session 日志——不同端口也一样，家目录才是共享的那样东西。\n` +
+        `  先停掉它：kill ${holder}\n` +
+        `  或者用另一个家目录：DSH_HOME=~/.dsh-squad-试验 npm run ui`,
+    );
+    process.exit(1);
+  }
+}
+writeFileSync(lockPath, String(process.pid));
+const release = () => {
+  try {
+    if (existsSync(lockPath) && readFileSync(lockPath, "utf8").trim() === String(process.pid)) rmSync(lockPath);
+  } catch {
+    /* a home that vanished under us needs no unlocking */
+  }
+};
+process.on("exit", release);
 
 console.log(`DSH   = ${harnessRoot}${stamp?.commit === undefined ? "" : ` @ ${stamp.commit}`}`);
 console.log(`DSH_HOME = ${dshHome}`);
