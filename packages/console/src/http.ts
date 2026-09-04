@@ -432,6 +432,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
         addedAt: material.addedAt,
         pinned: material.pinned === true,
       })),
+      selection: { quoteIds: team.selection.quoteIds, materialIds: team.selection.materialIds },
       sessionId: team.sessionId,
       ...(team.baseTeamId === undefined ? {} : { baseTeamId: team.baseTeamId }),
     });
@@ -1633,9 +1634,29 @@ export function registerSquadApi(ctx: Context): () => void {
           // whatever the browser last saw rather than what the team actually
           // said — a difference nobody could spot afterwards.
           const quotes = quotesFrom(team.transcript(), body.quoteIds ?? []);
+          // Cleared BEFORE the round, not after it. The round takes minutes,
+          // and a selection still showing as ticked throughout is a selection
+          // a person will reasonably re-use — while it has in fact already
+          // gone out with this message.
+          team.clearSelection();
           const replies = await team.ask(body.instruction.trim(), body.seatIds, quotes, body.materialIds);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ replies: replies.map((reply) => ({ ...reply })) }));
+          return;
+        }
+        if (suffix === "/selection" && req.method === "POST") {
+          // A toggle, not a list write. Two surfaces touch this — the 引用
+          // button in the discussion and the material chips in the composer —
+          // and a whole-list write would let one erase what the other just did.
+          const body = await readJson<{
+            teamId: string;
+            kind: "quote" | "material";
+            id: string;
+            on: boolean;
+          }>(req);
+          teamOf(ctx, body.teamId).select(body.kind, body.id, body.on);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
           return;
         }
         if (suffix === "/stop" && req.method === "POST") {

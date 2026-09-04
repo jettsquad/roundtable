@@ -27,8 +27,6 @@ import { DraftCard } from "./draft-card.tsx";
 import { PlanCard, PlanMessage, PlanRefused } from "./plan-card.tsx";
 import { speech } from "./speech.ts";
 import { defaultVoiceFor } from "@squad/shared";
-import { toggleQuote } from "./quotes.ts";
-import { useQuotes } from "./use-quotes.ts";
 import { translate, useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
@@ -226,7 +224,10 @@ export function Discussion({
   const t = useT();
   const end = useRef<HTMLDivElement>(null);
   const start = useRef<HTMLDivElement>(null);
-  const quoted = useQuotes(team.teamId);
+  // From the record. The 引用 button and the composer's tray are rendered by
+  // different slots with no common ancestor, and the selection is now the
+  // table's state rather than either surface's.
+  const quoted = team.selection.quoteIds;
   const secretaryNames = team.seats.filter((seat) => seat.isSecretary).map((seat) => seat.displayName);
   const count = team.transcript.length;
   useEffect(() => {
@@ -311,7 +312,11 @@ export function Discussion({
                 type="button"
                 className={`${styles.quoteButton} ${picked ? styles.quoted : ""}`}
                 title={t("msg.quote.title")}
-                onClick={() => toggleQuote(team.teamId, line.turnId)}
+                onClick={() =>
+                  void api
+                    .select({ teamId: team.teamId, kind: "quote", id: line.turnId, on: !picked })
+                    .then(() => onChanged?.())
+                }
               >
                 {picked ? t("msg.quote.done") : t("msg.quote")}
               </button>

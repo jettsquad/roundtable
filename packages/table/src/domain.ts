@@ -171,6 +171,30 @@ const teamRecord = z.object({
   /** The secretary turn this draft was converted from, when it came from one. */
   draftFromTurnId: z.string().optional(),
   /**
+   * What the host has ticked for the NEXT message: quoted lines, attached
+   * documents.
+   *
+   * On the record rather than in the browser, and that is the whole point.
+   * Both lived in client memory — quotes in a module store, attachments in a
+   * component's `useState` — so a refresh silently discarded work: you pick
+   * four documents, reload for any reason, and the next question goes out
+   * carrying none of them while the chips look the same as ever.
+   *
+   * It belongs to the SITTING, not to the window: two tabs open on one
+   * discussion are looking at one table, and a document ticked in either is
+   * ticked. Cleared when the message it belongs to is sent.
+   *
+   * Optional, and old rows without it parse unchanged — which is why the
+   * domain version does not move. A version bump is a refusal to open data
+   * written by the previous one.
+   */
+  selection: z
+    .object({
+      quoteIds: z.array(z.string()).optional(),
+      materialIds: z.array(z.string()).optional(),
+    })
+    .optional(),
+  /**
    * Where this team sits in the list, when somebody has said.
    *
    * Absent means 「从没排过」, and that is not the same as first: a list that

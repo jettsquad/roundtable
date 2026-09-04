@@ -24,8 +24,6 @@ import { applyMention, mentionCandidates, mentionDraftAt, parseMentions } from "
 import { describeSeat } from "../seat-status.ts";
 import { useSitting } from "./use-sitting.ts";
 import { DRAFT_ANCHOR } from "./draft-card.tsx";
-import { clearQuotes, toggleQuote } from "./quotes.ts";
-import { useQuotes } from "./use-quotes.ts";
 import { Dictate } from "./dictate.tsx";
 import { useT } from "./locale.ts";
 import styles from "./panel.module.css";
@@ -62,7 +60,10 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
   const [instruction, setInstruction] = useState("");
   // Keyed by team, not by folder: the store is per team and this component is
   // mounted per session.
-  const quoted = useQuotes(current?.teamId ?? "");
+  // From the RECORD, not from a browser store: a refresh used to discard
+  // both selections while the chips looked exactly the same.
+  const quoted = current?.selection.quoteIds ?? [];
+  const attached = current?.selection.materialIds ?? [];
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [importing, setImporting] = useState<string | undefined>(undefined);
@@ -76,7 +77,6 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
   // Which documents ride along with THIS message. Empty by default: importing
   // a file so one seat can summarise it must not cost that file on every
   // later turn of every seat.
-  const [attached, setAttached] = useState<readonly string[]>([]);
   const [elapsed, setElapsed] = useState(0);
   // A wrapper, not the input itself: dsh's `Input` does not forward a ref, and
   // reaching for the element through the row we own is honest about that —
@@ -241,14 +241,9 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
         instruction: sent,
         ...(seatIds.length === 0 ? {} : { seatIds }),
       });
-      // Cleared after a successful send: a quote is about the question you
-      // just asked, and leaving it selected would silently attach it to the
-      // next one too.
-      clearQuotes(current.teamId);
-      // Cleared for the same reason quotes are: an attachment is about the
-      // question you just asked, and leaving it on would silently bill it to
-      // the next one too.
-      setAttached([]);
+      // Not cleared here: `/say` clears the record's selection before the
+      // round starts, and this surface reads the record. Clearing locally as
+      // well would be a second source of truth for the same fact.
       // The answers land in the discussion, which is the ONE place a
       // conversation is shown. Repeating them here is what put the same
       // sentences on the screen twice.
@@ -470,11 +465,14 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
                 }
                 disabled={material.pinned}
                 onClick={() =>
-                  setAttached((current) =>
-                    current.includes(material.materialId)
-                      ? current.filter((one) => one !== material.materialId)
-                      : [...current, material.materialId],
-                  )
+                  void api
+                    .select({
+                      teamId: current.teamId,
+                      kind: "material",
+                      id: material.materialId,
+                      on: !attached.includes(material.materialId),
+                    })
+                    .then(onSent)
                 }
               >
                 {material.pinned ? "📌 " : on ? "✓ " : ""}
@@ -512,13 +510,27 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
                 type="button"
                 className={styles.quoteChip}
                 title="取消引用"
-                onClick={() => toggleQuote(current.teamId, turnId)}
+                onClick={() =>
+                  void api.select({ teamId: current.teamId, kind: "quote", id: turnId, on: false }).then(onSent)
+                }
               >
                 {(line?.speaker ?? "?") + "：" + (line?.text ?? "").slice(0, 14)}… ×
               </button>
             );
           })}
-          <button type="button" className={styles.drop} onClick={() => clearQuotes(current.teamId)}>
+          <button
+            type="button"
+            className={styles.drop}
+            onClick={() => {
+              // One call per quote rather than a clear-all route: the toggle
+              // is the only write this record accepts, and a second verb that
+              // could wipe a selection is a second thing to get wrong.
+              for (const turnId of quoted) {
+                void api.select({ teamId: current.teamId, kind: "quote", id: turnId, on: false });
+              }
+              onSent();
+            }}
+          >
             全部取消
           </button>
         </div>

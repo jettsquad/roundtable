@@ -165,6 +165,9 @@ export const api = {
     quoteIds?: readonly string[];
     materialIds?: readonly string[];
   }): Promise<{ replies: readonly SeatReply[] }> => call("/say", "POST", body),
+  /** Tick or untick one quoted line / one document for the next message. */
+  select: (body: { teamId: string; kind: "quote" | "material"; id: string; on: boolean }): Promise<unknown> =>
+    call("/selection", "POST", body),
   stop: (body: { teamId: string; reason?: string }): Promise<unknown> => call("/stop", "POST", body),
   draftAgenda: (body: { teamId: string; command: string }): Promise<unknown> => call("/agenda/draft", "POST", body),
   resolveAgenda: (body: {

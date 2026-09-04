@@ -212,6 +212,17 @@ export interface Team {
    */
   setMaterialPinned(materialId: string, pinned: boolean): void;
   /**
+   * What is ticked for the next message.
+   *
+   * On the record rather than in the browser: a refresh used to discard it
+   * silently, and the chips looked identical either way.
+   */
+  readonly selection: { readonly quoteIds: readonly string[]; readonly materialIds: readonly string[] };
+  /** Tick or untick one quoted line or one document. */
+  select(kind: "quote" | "material", id: string, on: boolean): void;
+  /** Drop the lot. Called when the message it belongs to goes out. */
+  clearSelection(): void;
+  /**
    * Add a seat. Refused while a round is running — see `addSeat`.
    *
    * `at` puts it back at a given position instead of the end. Seat order is
@@ -585,6 +596,10 @@ export class TeamsService extends Service {
       // distinction: adding a member changes who the team is, and adding a
       // document changes what this conversation is about.
       materials: [...(saved.materials ?? [])],
+      selection: {
+        quoteIds: [...(saved.selection?.quoteIds ?? [])],
+        materialIds: [...(saved.selection?.materialIds ?? [])],
+      },
       confirmed:
         saved.confirmed === undefined
           ? undefined
@@ -635,6 +650,11 @@ export class TeamsService extends Service {
             ...(record.draft.fromTurnId === undefined ? {} : { draftFromTurnId: record.draft.fromTurnId }),
           }),
       ...(record.materials.length === 0 ? {} : { materials: record.materials }),
+      // Written only when something is ticked, so an untouched record keeps
+      // the shape it had before this field existed.
+      ...(record.selection.quoteIds.length === 0 && record.selection.materialIds.length === 0
+        ? {}
+        : { selection: { quoteIds: record.selection.quoteIds, materialIds: record.selection.materialIds } }),
       ...(record.confirmed === undefined
         ? {}
         : {
@@ -737,6 +757,7 @@ export class TeamsService extends Service {
       confirmed: undefined,
       audit: [],
       materials: [],
+      selection: { quoteIds: [], materialIds: [] },
       disposed: false,
     };
     this.teams.set(teamId, record);
@@ -856,6 +877,7 @@ export class TeamsService extends Service {
       // Copying the base's documents in would put someone else's reading
       // material into a discussion that never asked for it.
       materials: [],
+      selection: { quoteIds: [], materialIds: [] },
       disposed: false,
     };
     this.teams.set(sittingId, record);
@@ -1238,6 +1260,33 @@ export class TeamsService extends Service {
         const at = record.materials.findIndex((material) => material.materialId === materialId);
         if (at < 0) throw new Error("没有这份资料。");
         record.materials.splice(at, 1);
+        // Untick it as it goes. A selection naming a document that no longer
+        // exists would be carried into the next round as a silent nothing —
+        // and `materialsForRound` would drop it without saying so.
+        record.selection.materialIds = record.selection.materialIds.filter((id) => id !== materialId);
+        this.persist(record);
+      },
+      get selection() {
+        return { quoteIds: [...record.selection.quoteIds], materialIds: [...record.selection.materialIds] };
+      },
+      /**
+       * Tick or untick one line / one document for the NEXT message.
+       *
+       * A toggle rather than a whole-list write: two surfaces touch this — the
+       * 引用 button lives in the discussion, the material chips in the
+       * composer — and a last-writer-wins list would let one of them erase
+       * what the other just did.
+       */
+      select: (kind, id, on) => {
+        const list = kind === "quote" ? record.selection.quoteIds : record.selection.materialIds;
+        const at = list.indexOf(id);
+        if (on && at < 0) list.push(id);
+        if (!on && at >= 0) list.splice(at, 1);
+        this.persist(record);
+      },
+      clearSelection: () => {
+        record.selection.quoteIds = [];
+        record.selection.materialIds = [];
         this.persist(record);
       },
       addSeat: (seat, options) => this.addSeat(record, seat, options),
@@ -2064,6 +2113,8 @@ interface TeamRecord {
    * see in the next would be a team with two different memories.
    */
   materials: Material[];
+  /** What the host has ticked for the next message. See the schema. */
+  selection: { quoteIds: string[]; materialIds: string[] };
   /** Where it sits in the list, once somebody has arranged one. */
   order?: number | undefined;
   disposed: boolean;

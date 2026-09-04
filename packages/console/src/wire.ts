@@ -116,6 +116,17 @@ export interface TeamSummary {
     /** Carried into every round without being attached. */
     readonly pinned: boolean;
   }[];
+  /**
+   * What the host has ticked for the next message.
+   *
+   * Travels with the snapshot because it lives on the record now: the browser
+   * used to hold it, and a refresh discarded it without changing anything on
+   * screen.
+   */
+  readonly selection: {
+    readonly quoteIds: readonly string[];
+    readonly materialIds: readonly string[];
+  };
   readonly sessionId: string;
   /** The team this is a sitting of, absent when this IS the team. */
   readonly baseTeamId?: string | undefined;
