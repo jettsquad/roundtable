@@ -51,13 +51,27 @@ export interface Material {
  * the text, which is the wrong end: what costs money is the characters that
  * reach the model.
  *
- * 120k characters is roughly 30–60k tokens depending on the language — a
- * large document, and still a minority of a 100k-token window.
+ * 240k characters is roughly 60–120k tokens depending on the language. Raised
+ * from 120k because real documents were being refused at the door — a
+ * national standard, a full report — and a cap that stops the work is not
+ * protecting anything.
+ *
+ * Be clear about what that costs: at the top of this range ONE document no
+ * longer fits inside a 100k-token window, so attaching it is a decision, not
+ * a detail. The per-round chooser is what makes that survivable — a document
+ * travels only in the round you tick it for — and the context bar is where
+ * the price shows up.
  */
-export const MATERIAL_CHAR_LIMIT = 120_000;
+export const MATERIAL_CHAR_LIMIT = 240_000;
 
-/** Total across all of a team's material, for the same reason. */
-export const MATERIAL_TOTAL_CHAR_LIMIT = 300_000;
+/**
+ * Total across all of a sitting's material, for the same reason.
+ *
+ * A shelf, not a payload: nothing here reaches a model until it is attached
+ * to a round, so this bounds what one discussion can accumulate rather than
+ * what one turn costs.
+ */
+export const MATERIAL_TOTAL_CHAR_LIMIT = 600_000;
 
 /** Why a document was refused, in words the person who chose it can act on. */
 export interface MaterialProblem {
