@@ -536,9 +536,16 @@ export class TeamsService extends Service {
         // that claim did not actually cover.
         await withTimeout(this.restore(row), RESTORE_TIMEOUT_MS, `恢复超时（${RESTORE_TIMEOUT_MS / 1000} 秒）`);
       } catch (error) {
-        this.ctx.logger.warn(
-          `团队「${row.displayName}」没能恢复：${error instanceof Error ? error.message : String(error)}`,
-        );
+        // On `console` as well as the logger, and the reason is the same one
+        // that cost an afternoon elsewhere in this file: `ctx.logger.warn`
+        // printed NOTHING in the composition this actually runs in. A team
+        // that fails to restore is skipped — which is right — but skipped
+        // silently it presents as 「重启之后之前的对话丢了一些」, with the
+        // record still on disk and no way for a person to learn why.
+        const detail = error instanceof Error ? error.message : String(error);
+        const line = `团队「${row.displayName}」（${row.teamId}）没能恢复，这一场不会出现在列表里：${detail}`;
+        this.ctx.logger.warn(line);
+        console.warn(`[squad] ${line}`);
       }
     }
   }

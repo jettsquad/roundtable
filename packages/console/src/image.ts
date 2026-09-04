@@ -64,10 +64,29 @@ export function imagePointer(path: string): string {
   ].join("\n");
 }
 
+/**
+ * What keeps pasted screenshots out of the user's repository.
+ *
+ * A `.gitignore` INSIDE the folder, ignoring everything including itself.
+ * The alternative is appending a line to the project's own `.gitignore`, and
+ * that is an edit to a file the person owns and reads — made silently, by a
+ * program they invited to hold a meeting. This way the whole directory is
+ * invisible to git and nothing outside it is touched.
+ *
+ * These are screenshots of whatever was on screen when a question came up.
+ * Treating them as private by default is the only defensible default.
+ */
+const GITIGNORE = ["# 粘贴进讨论的截图。整个目录对 git 不可见——包括这个文件本身。", "*", ""].join("\n");
+
 /** Write the bytes into the team's image folder. Returns the absolute path. */
 export async function saveImage(projectFolder: string, name: string, bytes: Uint8Array): Promise<string> {
   const dir = join(projectFolder, IMAGE_DIR);
   await mkdir(dir, { recursive: true });
+  // Written every time rather than once at creation: a folder that lost its
+  // ignore file — deleted by hand, or never written because an older build
+  // made the folder — would start leaking screenshots into `git status` with
+  // nothing to announce the change.
+  await writeFile(join(dir, ".gitignore"), GITIGNORE);
   const path = join(dir, imageFileName(name));
   await writeFile(path, bytes);
   return path;
