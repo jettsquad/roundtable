@@ -216,6 +216,9 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
     onSent();
   };
 
+  /** How many documents this message will actually carry. */
+  const carried = current?.materials.filter((m) => m.pinned || attached.includes(m.materialId)).length ?? 0;
+
   const send = async (): Promise<void> => {
     setError(undefined);
     setRunning(true);
@@ -444,14 +447,19 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           resends everything. What travels is visible here instead. */}
       {current.materials.length === 0 ? null : (
         <div className={styles.row}>
-          <span className={styles.hint}>{t("composer.carry")}</span>
+          <span className={styles.hint}>
+            {/* Says how many are ACTUALLY carried. The label used to read
+                「本轮带上：」 above a row of chips that were merely available,
+                so a full row read as a full attachment. */}
+            {carried === 0 ? t("composer.carry") : t("composer.carry.some", { n: carried })}
+          </span>
           {current.materials.map((material) => {
             const on = material.pinned || attached.includes(material.materialId);
             return (
               <button
                 key={material.materialId}
                 type="button"
-                className={`${styles.quoteChip} ${on ? styles.quoted : ""}`}
+                className={`${styles.quoteChip} ${on ? styles.quoted : styles.chipIdle}`}
                 title={
                   material.pinned
                     ? "常驻资料，每轮都带（在团队页可以取消常驻）"

@@ -151,3 +151,40 @@ describe("markLiveSession 读会话事件的方式", () => {
     expect(scope.slice(0, 400)).toContain("console.warn");
   });
 });
+
+/**
+ * Material belongs to the SITTING, not to the team.
+ *
+ * It used to be shared: a sitting record took the base team's live array, and
+ * every import pushed into it. Two sessions of one team for two different
+ * problems therefore showed each other's documents, with no way to tell whose
+ * was whose. The roster is shared on purpose — adding a member changes who
+ * the team is — and material is the opposite: it is what THIS conversation is
+ * about.
+ *
+ * Read from the source, because the sharing lived in three literal
+ * expressions rather than in any function this test could call.
+ */
+describe("资料的归属", () => {
+  const raw = readFileSync(new URL("../src/service.ts", import.meta.url), "utf8");
+  const source = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+  it("新的一场不继承上一场的资料", () => {
+    expect(source).not.toMatch(/materials:\s*base\.materials/);
+    expect(source).toMatch(/materials:\s*\[\],/);
+  });
+
+  it("恢复时读自己存的那份，不读母团队的", () => {
+    expect(source).not.toMatch(/materials:\s*base\?\.materials/);
+    expect(source).toContain("materials: [...(saved.materials ?? [])]");
+  });
+
+  it("增删资料只存自己这一条记录", () => {
+    // Anchored on the implementation, not the interface declaration: the
+    // first `addMaterial` in the file is a type member hundreds of lines
+    // earlier, and slicing from there spans half the service.
+    const scope = source.slice(source.indexOf("addMaterial: (material)"), source.indexOf("addSeat:"));
+    expect(scope).not.toContain("persistFamily");
+    expect(scope).toContain("this.persist(record)");
+  });
+});

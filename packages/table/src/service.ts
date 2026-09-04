@@ -572,9 +572,19 @@ export class TeamsService extends Service {
               agendaId: saved.draftAgendaId ?? `ag-${saved.teamId}`,
               revision: saved.draftRevision ?? 1,
             },
-      // The base's own array when this is a sitting: material is the team's,
-      // and copying it would let one session's import be invisible in another.
-      materials: base?.materials ?? [...(saved.materials ?? [])],
+      // Its own, always — including for a sitting.
+      //
+      // This used to take the base's live array, on the reasoning that
+      // material belongs to the TEAM. It does not. A team is a roster; a
+      // sitting is one piece of work, and the documents you hand it are part
+      // of that work. Sharing the array meant a file imported while
+      // discussing one problem appeared in the discussion of another, with
+      // no way to tell the two apart — which is what a person hit.
+      //
+      // The roster still IS shared (`seats`/`input` below), and that is the
+      // distinction: adding a member changes who the team is, and adding a
+      // document changes what this conversation is about.
+      materials: [...(saved.materials ?? [])],
       confirmed:
         saved.confirmed === undefined
           ? undefined
@@ -842,7 +852,10 @@ export class TeamsService extends Service {
       draft: undefined,
       confirmed: undefined,
       audit: [],
-      materials: base.materials,
+      // Empty, not the base's list: a new sitting is a new piece of work.
+      // Copying the base's documents in would put someone else's reading
+      // material into a discussion that never asked for it.
+      materials: [],
       disposed: false,
     };
     this.teams.set(sittingId, record);
@@ -1209,25 +1222,23 @@ export class TeamsService extends Service {
       addMaterial: (material) => {
         const problem = checkMaterial(material, record.materials);
         if (problem !== undefined) throw new Error(problem.detail);
-        // In place: sittings hold the same array, and replacing it would give
-        // the team two lists that drift apart.
+        // This record's own list. Sittings each hold their own now, so there
+        // is no family to keep in step — only this one to save.
         record.materials.push(material);
-        this.persistFamily(record);
+        this.persist(record);
       },
       setMaterialPinned: (materialId, pinned) => {
         const at = record.materials.findIndex((material) => material.materialId === materialId);
         if (at < 0) throw new Error("没有这份资料。");
         const current = record.materials[at] as Material;
-        // In place: sittings share the array, and replacing it would give the
-        // team two lists that drift apart.
         record.materials.splice(at, 1, { ...current, pinned });
-        this.persistFamily(record);
+        this.persist(record);
       },
       removeMaterial: (materialId) => {
         const at = record.materials.findIndex((material) => material.materialId === materialId);
         if (at < 0) throw new Error("没有这份资料。");
         record.materials.splice(at, 1);
-        this.persistFamily(record);
+        this.persist(record);
       },
       addSeat: (seat, options) => this.addSeat(record, seat, options),
       removeSeat: (seatId, options) => this.removeSeat(record, seatId, options),
