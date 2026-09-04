@@ -287,6 +287,19 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
             grow(event.target);
           }}
           onSelect={(event) => setCaret((event.target as HTMLTextAreaElement).selectionStart ?? 0)}
+          onPaste={(event) => {
+            // A screenshot arrives as BYTES, with no name and no path — the
+            // clipboard calls every one of them `image.png`. It is imported
+            // the same way a file is, and the server writes it into the
+            // team's own folder so a seat can open it.
+            //
+            // Only when the clipboard carries files: pasting text must go on
+            // behaving exactly as it always has.
+            const files = event.clipboardData.files;
+            if (files.length === 0) return;
+            event.preventDefault();
+            void importFiles(files);
+          }}
           onKeyDown={(event) => {
             // ⌘↵ / Ctrl+↵ sends, always — including while the name list is
             // open, because at that point you have finished the sentence and
@@ -392,7 +405,7 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
             ref={filePicker}
             type="file"
             multiple
-            accept=".pdf,.docx,.md,.markdown,.txt,.text,.csv,.json,.yaml,.yml"
+            accept=".pdf,.docx,.md,.markdown,.txt,.text,.csv,.json,.yaml,.yml,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg"
             className={styles.hiddenFile ?? ""}
             onChange={(event) => {
               const files = event.target.files;

@@ -55,6 +55,7 @@ import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { agendaEditIsLegal } from "./agenda-verdict.ts";
 import { driftBetween } from "./roster-drift.ts";
 import { extractDocument, MAX_FILE_BYTES } from "./extract.ts";
+import { imagePointer, looksLikeImage, saveImage } from "./image.ts";
 import { planSeatSync, syncSeat, type TemplateFacts } from "./seat-sync.ts";
 import { parseNewTeam } from "./parse.ts";
 // Cyclic with `team-designer.ts`, which imports two helpers from here. Safe
@@ -1423,7 +1424,15 @@ export function registerSquadApi(ctx: Context): () => void {
           if (name === "") throw new Error("没有文件名。");
           const team = teamOf(ctx, teamId);
           const bytes = await readBody(req, MAX_FILE_BYTES);
-          const extracted = await extractDocument(name, new Uint8Array(bytes));
+          // An image has no text to extract, so it takes the other path: the
+          // file is written into the team's own folder and what the seats
+          // read is where to find it.
+          const extracted = looksLikeImage(name)
+            ? {
+                name,
+                text: imagePointer(await saveImage(team.projectFolder, name, new Uint8Array(bytes))),
+              }
+            : await extractDocument(name, new Uint8Array(bytes));
           // Refused here, before anything is stored, by the same rule the
           // panel shows: a document nobody can afford must not be half-added.
           team.addMaterial({
