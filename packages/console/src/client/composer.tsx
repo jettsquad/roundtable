@@ -156,7 +156,11 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
   // The `@` being typed right now, and the names worth offering for it. Both
   // decided against the real roster — a list built from shape alone would
   // offer names for 「联系我 @公司邮箱」.
-  const draft = running ? undefined : mentionDraftAt(instruction, caret);
+  // Offered while a round runs, too. Writing the next question is the natural
+  // thing to do WHILE the answers come in, and a box that refuses to be typed
+  // in takes the thought with it: only SENDING has to wait, and the send
+  // button says so on its face.
+  const draft = mentionDraftAt(instruction, caret);
   const candidates = draft === undefined ? [] : mentionCandidates(draft, seatNames);
   const pick = (name: string): void => {
     if (draft === undefined) return;
@@ -277,7 +281,6 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           value={instruction}
           rows={1}
           placeholder={t("composer.placeholder", { name: current.displayName })}
-          disabled={running}
           ref={box}
           onChange={(event) => {
             setInstruction(event.target.value);
@@ -550,6 +553,11 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
         </div>
       )}
       {worry === undefined ? null : <div className={styles.hint}>{worry}</div>}
+      {/* Why the send button is refusing, said where a person looks after
+          pressing ⌘↵ and getting nothing. The button's own label reads
+          「进行中 62s」, which explains it only if you were looking at the
+          button — and you were looking at the box you just typed into. */}
+      {!running ? null : <div className={styles.hint}>{t("composer.writeWhileRunning")}</div>}
       {blocked.length === 0 ? null : (
         <div className={styles.error}>
           {allBlocked ? t("composer.allBlocked") : t("composer.someBlocked")}
