@@ -749,29 +749,6 @@
   background: #44cc8822;
 }
 
-/**
- * The OFF state of a toggleable chip.
- *
- * `.quoteChip` is green because most chips wearing it are not toggles — they
- * are labels. The material chips ARE toggles, and they inherited that green:
- * selected and unselected were rendered with the identical border and colour,
- * the only difference being a 11px ✓ inside the label. Under a line reading
- * 「本轮带上」, four green chips read as four attached documents. They were
- * not attached, the round carried nothing, and the seats answered that they
- * could not find any files — which is a true answer to a question nobody
- * meant to ask.
- */
-.chipIdle {
-  border-color: var(--dsh-color-border, #34343a);
-  color: var(--dsh-color-text, #e8e8ea);
-  opacity: 0.55;
-  background: none;
-}
-
-.chipIdle:hover {
-  opacity: 0.85;
-}
-
 .quoteChip {
   all: unset;
   cursor: pointer;
@@ -784,6 +761,30 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/**
+ * The OFF state of a toggleable chip.
+ *
+ * AFTER `.quoteChip`, and the order is the whole rule. Both selectors are one
+ * class, so the later one wins — the first version of this sat above
+ * `.quoteChip` and lost its `border-color` and `color` to it, leaving only
+ * `opacity` to carry the distinction. Off looked like a slightly dimmer
+ * green, which is not a state a person reads; it is a state they squint at.
+ *
+ * `.quoteChip` is green because most chips wearing it are labels, not
+ * toggles. The material chips ARE toggles, and inheriting that green is what
+ * let four unselected documents read as four attached ones.
+ */
+.chipIdle {
+  border-color: var(--dsh-color-border, #34343a);
+  color: var(--dsh-color-text, #e8e8ea);
+  opacity: 0.55;
+  background: none;
+}
+
+.chipIdle:hover {
+  opacity: 0.85;
 }
 
 /* ── One message, boxed ────────────────────────────────────────────────
