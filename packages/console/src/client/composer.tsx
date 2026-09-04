@@ -353,13 +353,16 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
         <Button
           type="button"
           variant="primary"
-          disabled={
-            running || mentions.instruction.trim() === "" || current.seats.length === 0 || allBlocked || misnamed
-          }
+          disabled={mentions.instruction.trim() === "" || current.seats.length === 0 || allBlocked || misnamed}
           onClick={() => void send()}
         >
-          {running
-            ? t("composer.running", { seconds: elapsed })
+          {/* While a round runs the same button QUEUES, and says so. It used
+              to be disabled, which meant the next question had to be
+              remembered instead of written. */}
+          {running || current.busy
+            ? named.length === 0
+              ? t("composer.queue")
+              : t("composer.queueSome", { names: named.map((seat) => seat.displayName).join("、") })
             : named.length === 0
               ? t("composer.askAll")
               : t("composer.askSome", { names: named.map((seat) => seat.displayName).join("、") })}
@@ -569,7 +572,56 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           pressing ⌘↵ and getting nothing. The button's own label reads
           「进行中 62s」, which explains it only if you were looking at the
           button — and you were looking at the box you just typed into. */}
-      {!running ? null : <div className={styles.hint}>{t("composer.writeWhileRunning")}</div>}
+      {!running || current.queued !== undefined ? null : (
+        <div className={styles.hint}>{t("composer.writeWhileRunning", { seconds: elapsed })}</div>
+      )}
+      {/* What is waiting, always visible. A message that was accepted and is
+          not on screen is indistinguishable from one that was dropped. */}
+      {current.queued === undefined ? null : (
+        <div className={`${styles.queuedCard} ${current.queued.held === undefined ? "" : styles.queuedHeld}`}>
+          <div className={styles.hint}>
+            {current.queued.held === undefined
+              ? t("composer.queued")
+              : t("composer.queued.held", { reason: current.queued.held })}
+          </div>
+          <div className={styles.queuedText}>{current.queued.instruction}</div>
+          <div className={styles.row}>
+            {current.queued.held === undefined ? (
+              <span className={styles.hint}>{t("composer.queued.replaced")}</span>
+            ) : (
+              <button
+                type="button"
+                className={styles.button}
+                onClick={() => {
+                  const held = current.queued;
+                  if (held === undefined) return;
+                  void api
+                    .unqueue({ teamId: current.teamId })
+                    .then(() =>
+                      api.say({
+                        teamId: current.teamId,
+                        instruction: held.instruction,
+                        ...(held.seatIds === undefined ? {} : { seatIds: held.seatIds }),
+                        ...(held.quoteIds.length === 0 ? {} : { quoteIds: held.quoteIds }),
+                        ...(held.materialIds.length === 0 ? {} : { materialIds: held.materialIds }),
+                      }),
+                    )
+                    .then(onSent);
+                }}
+              >
+                {t("composer.queued.send")}
+              </button>
+            )}
+            <button
+              type="button"
+              className={styles.drop}
+              onClick={() => void api.unqueue({ teamId: current.teamId }).then(onSent)}
+            >
+              {t("composer.queued.drop")}
+            </button>
+          </div>
+        </div>
+      )}
       {blocked.length === 0 ? null : (
         <div className={styles.error}>
           {allBlocked ? t("composer.allBlocked") : t("composer.someBlocked")}

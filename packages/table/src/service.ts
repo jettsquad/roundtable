@@ -29,6 +29,7 @@ import {
   WEB_TOOLS,
   attachmentNote,
   materialsForRound,
+  quotesFrom,
   checkMaterial,
   type Material,
   EMPTY_TOTALS,
@@ -222,6 +223,12 @@ export interface Team {
   select(kind: "quote" | "material", id: string, on: boolean): void;
   /** Drop the lot. Called when the message it belongs to goes out. */
   clearSelection(): void;
+  /** The message waiting for the running round, if any. */
+  readonly queued: QueuedCommand | undefined;
+  /** Hold one message until the round ends. Replaces whatever was waiting. */
+  queue(instruction: string, seatIds?: readonly string[]): void;
+  /** Drop what is waiting. */
+  unqueue(): void;
   /**
    * Add a seat. Refused while a round is running — see `addSeat`.
    *
@@ -600,6 +607,13 @@ export class TeamsService extends Service {
         quoteIds: [...(saved.selection?.quoteIds ?? [])],
         materialIds: [...(saved.selection?.materialIds ?? [])],
       },
+      // Survives a restart, and comes back HELD rather than pending: the
+      // round it was waiting behind died with the process, so the condition
+      // it was waiting for can never arrive.
+      queued:
+        saved.queued === undefined
+          ? undefined
+          : { ...saved.queued, held: saved.queued.held ?? "上一次这个进程停了，这条没有发出去。" },
       confirmed:
         saved.confirmed === undefined
           ? undefined
@@ -655,6 +669,22 @@ export class TeamsService extends Service {
       ...(record.selection.quoteIds.length === 0 && record.selection.materialIds.length === 0
         ? {}
         : { selection: { quoteIds: record.selection.quoteIds, materialIds: record.selection.materialIds } }),
+      ...(record.queued === undefined
+        ? {}
+        : {
+            // Built field by field rather than spread: the record holds
+            // readonly arrays and the schema wants plain ones, and a spread
+            // would carry the readonly types through. Copying also stops a
+            // later write reaching into what was already persisted.
+            queued: {
+              instruction: record.queued.instruction,
+              quoteIds: [...record.queued.quoteIds],
+              materialIds: [...record.queued.materialIds],
+              at: record.queued.at,
+              ...(record.queued.seatIds === undefined ? {} : { seatIds: [...record.queued.seatIds] }),
+              ...(record.queued.held === undefined ? {} : { held: record.queued.held }),
+            },
+          }),
       ...(record.confirmed === undefined
         ? {}
         : {
@@ -758,6 +788,7 @@ export class TeamsService extends Service {
       audit: [],
       materials: [],
       selection: { quoteIds: [], materialIds: [] },
+      queued: undefined,
       disposed: false,
     };
     this.teams.set(teamId, record);
@@ -878,6 +909,7 @@ export class TeamsService extends Service {
       // material into a discussion that never asked for it.
       materials: [],
       selection: { quoteIds: [], materialIds: [] },
+      queued: undefined,
       disposed: false,
     };
     this.teams.set(sittingId, record);
@@ -1289,6 +1321,32 @@ export class TeamsService extends Service {
         record.selection.materialIds = [];
         this.persist(record);
       },
+      get queued() {
+        return record.queued;
+      },
+      /**
+       * Hold one message until the running round ends.
+       *
+       * Depth one: a second call replaces the first. The whole request is
+       * frozen here — including what was ticked — because the selection
+       * belongs to the message, not to the moment it leaves.
+       */
+      queue: (instruction, seatIds) => {
+        record.queued = {
+          instruction,
+          ...(seatIds === undefined || seatIds.length === 0 ? {} : { seatIds: [...seatIds] }),
+          quoteIds: [...record.selection.quoteIds],
+          materialIds: [...record.selection.materialIds],
+          at: Date.now(),
+        };
+        record.selection.quoteIds = [];
+        record.selection.materialIds = [];
+        this.persist(record);
+      },
+      unqueue: () => {
+        record.queued = undefined;
+        this.persist(record);
+      },
       addSeat: (seat, options) => this.addSeat(record, seat, options),
       removeSeat: (seatId, options) => this.removeSeat(record, seatId, options),
       rename: (displayName) => this.rename(record, displayName),
@@ -1380,6 +1438,10 @@ export class TeamsService extends Service {
     // signalled outside the caller's await path — the round is already
     // finished; whatever this starts must not make anyone wait for it.
     this.signalRoundEnded(record);
+    // Whatever was waiting goes out now — unless this round was stopped, in
+    // which case it is held. `aborted` is read after the fact rather than
+    // caught, because a stop breaks the loop rather than throwing.
+    this.drainQueue(record, abort.signal.aborted ? "上一轮被叫停，这条没有发出去。" : undefined);
     return replies;
   }
 
@@ -1604,6 +1666,13 @@ export class TeamsService extends Service {
     }
 
     this.signalRoundEnded(record);
+    // Same rule as a plain round, and the reason an agenda holds the count for
+    // its whole run: a message queued during phase two waits for phase five,
+    // not for phase two. Stopping the agenda holds it rather than sending it.
+    this.drainQueue(
+      record,
+      running.reason === undefined ? undefined : `议程被中止（${running.reason}），这条没有发出去。`,
+    );
     return {
       replies,
       ...(running.reason === undefined ? {} : { stoppedBecause: running.reason }),
@@ -1736,6 +1805,43 @@ export class TeamsService extends Service {
    * failure would be the round disappearing for a reason unrelated to the
    * round. Reported, not propagated.
    */
+  /**
+   * Send what was waiting, now that the round has ended.
+   *
+   * `held` rather than dispatched when the round did not end normally: you
+   * queued it expecting an answer to arrive first, and that expectation is
+   * exactly what a stop or a failure broke. It stays on the record with the
+   * reason, and the panel offers to send or drop it — which is the same
+   * choice you would have had, just later.
+   *
+   * Fire-and-forget, deliberately. The caller is the round that just
+   * finished, and its HTTP request has a person waiting on it; making that
+   * response wait for a SECOND round would turn one slow answer into two.
+   * A failure here reaches the discussion the same way any round's does.
+   */
+  private drainQueue(record: TeamRecord, held: string | undefined): void {
+    const queued = record.queued;
+    if (queued === undefined || queued.held !== undefined) return;
+    if (held !== undefined) {
+      record.queued = { ...queued, held };
+      this.persist(record);
+      return;
+    }
+    record.queued = undefined;
+    this.persist(record);
+    const quotes = quotesFrom(transcriptOf(record.handle.agent), queued.quoteIds);
+    void this.ask(record, queued.instruction, queued.seatIds, quotes, queued.materialIds).catch((error: unknown) => {
+      // Recorded where the person is looking. A queued message that failed in
+      // the background with nothing on screen would be indistinguishable from
+      // one that was never sent.
+      recordSpoken(
+        record.handle.agent,
+        record.input.hostDisplayName,
+        `（排队的这条没跑成：${error instanceof Error ? error.message : String(error)}）`,
+      );
+    });
+  }
+
   private signalRoundEnded(record: TeamRecord): void {
     if (this.assembler === undefined || record.disposed) return;
     try {
@@ -2115,6 +2221,8 @@ interface TeamRecord {
   materials: Material[];
   /** What the host has ticked for the next message. See the schema. */
   selection: { quoteIds: string[]; materialIds: string[] };
+  /** One message waiting for the running round to end. See the schema. */
+  queued: QueuedCommand | undefined;
   /** Where it sits in the list, once somebody has arranged one. */
   order?: number | undefined;
   disposed: boolean;
@@ -2141,6 +2249,17 @@ interface LiveSession {
   /** 0.1.2 replaced the `events` property with this explicit snapshot. */
   snapshotEvents(): readonly { readonly type: string }[];
   append(type: string, data: unknown, options?: unknown): void;
+}
+
+/** One message waiting for the running round to end. */
+interface QueuedCommand {
+  readonly instruction: string;
+  readonly seatIds?: readonly string[] | undefined;
+  readonly quoteIds: readonly string[];
+  readonly materialIds: readonly string[];
+  readonly at: number;
+  /** Why it was not sent automatically. Absent while it is still waiting. */
+  readonly held?: string | undefined;
 }
 
 /** The agenda currently executing, and the handle that stops it. */

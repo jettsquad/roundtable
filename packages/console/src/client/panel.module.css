@@ -939,6 +939,34 @@
   background: rgb(68 204 136 / 6%);
 }
 
+/* The message waiting for the running round.
+   Deliberately quieter than `.draftCard`: a draft agenda is asking you for a
+   decision, and a queued line is only telling you it is there. */
+.queuedCard {
+  margin-top: 8px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  background: #ffffff08;
+}
+
+/* Held, because the round it was waiting behind did not finish. Amber rather
+   than red: nothing broke, a decision is simply owed. */
+.queuedHeld {
+  border-color: #a83;
+  background: #f2a93b12;
+}
+
+/* The queued text itself. Wraps and scrolls rather than stretching the
+   composer off the screen — a long question is exactly the kind you queue. */
+.queuedText {
+  margin: 4px 0;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* An unchecked phase stays readable — it is still part of what the secretary
    proposed, and dimming it to nothing would hide what you are declining. */
 .phaseOff {

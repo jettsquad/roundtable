@@ -195,6 +195,32 @@ const teamRecord = z.object({
     })
     .optional(),
   /**
+   * One message waiting for the current round to finish.
+   *
+   * Depth one, on purpose. A queue of three is a batch order, and by the time
+   * the second went out the first answer would have changed how you wanted to
+   * ask it. Sending again replaces what is waiting, and the panel says so.
+   *
+   * The whole request is frozen here — text, who was named, which quotes and
+   * documents were ticked — because those things belong to the message rather
+   * than to the moment it happens to leave. Ticking a document and then
+   * sending twice must not move it onto the second message.
+   *
+   * `held` is set when the round it was waiting behind did not end normally
+   * (stopped, or failed). It is NOT dispatched then: you queued it expecting
+   * the round to finish, and that expectation is what failed.
+   */
+  queued: z
+    .object({
+      instruction: z.string(),
+      seatIds: z.array(z.string()).optional(),
+      quoteIds: z.array(z.string()),
+      materialIds: z.array(z.string()),
+      at: z.number(),
+      held: z.string().optional(),
+    })
+    .optional(),
+  /**
    * Where this team sits in the list, when somebody has said.
    *
    * Absent means 「从没排过」, and that is not the same as first: a list that

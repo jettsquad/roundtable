@@ -127,6 +127,23 @@ export interface TeamSummary {
     readonly quoteIds: readonly string[];
     readonly materialIds: readonly string[];
   };
+  /**
+   * The message waiting for the running round to end.
+   *
+   * Shown, always. A message that was accepted and is not visible is
+   * indistinguishable from one that was dropped.
+   */
+  readonly queued?:
+    | {
+        readonly instruction: string;
+        readonly seatIds?: readonly string[] | undefined;
+        readonly quoteIds: readonly string[];
+        readonly materialIds: readonly string[];
+        readonly at: number;
+        /** Why it was not sent automatically, when it was not. */
+        readonly held?: string | undefined;
+      }
+    | undefined;
   readonly sessionId: string;
   /** The team this is a sitting of, absent when this IS the team. */
   readonly baseTeamId?: string | undefined;

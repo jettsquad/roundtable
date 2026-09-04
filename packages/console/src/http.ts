@@ -78,6 +78,7 @@ import {
   type AgendaSpec,
   type PromptBlock,
   type TeamPrompts,
+  quotesFrom,
 } from "@squad/shared";
 import {
   draftIdentityMatches,
@@ -266,30 +267,6 @@ function contextOf(ctx: Context, teamId: string, coefficient: number | undefined
   };
 }
 
-/**
- * Resolve quoted line ids against the record.
- *
- * From the RECORD, never from the request body: a quote is a claim about
- * what someone said, and one carried as text from a browser is only what
- * that browser last rendered. Unknown ids are dropped rather than refused —
- * a line can be folded into a checkpoint between the click and the send, and
- * losing the emphasis is better than losing the round.
- */
-function quotesFrom(
-  events: readonly { kind: string; text: string; turnId: string }[],
-  ids: readonly string[],
-): readonly { readonly speaker: string; readonly text: string }[] {
-  if (ids.length === 0) return [];
-  const wanted = new Set(ids);
-  const quotes: { speaker: string; text: string }[] = [];
-  for (const event of events) {
-    if (event.kind !== "user/message" || !wanted.has(event.turnId)) continue;
-    const match = /^【([^】]+)】([\s\S]*)$/.exec(event.text);
-    quotes.push({ speaker: match?.[1] ?? "", text: (match?.[2] ?? event.text).trim() });
-  }
-  return quotes;
-}
-
 /** Build the snapshot the panel renders. Pure read; nothing here starts anything. */
 export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   // The agents the library still offers. A seat bound to anything else is
@@ -433,6 +410,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
         pinned: material.pinned === true,
       })),
       selection: { quoteIds: team.selection.quoteIds, materialIds: team.selection.materialIds },
+      ...(team.queued === undefined ? {} : { queued: team.queued }),
       sessionId: team.sessionId,
       ...(team.baseTeamId === undefined ? {} : { baseTeamId: team.baseTeamId }),
     });
@@ -1633,6 +1611,16 @@ export function registerSquadApi(ctx: Context): () => void {
           // panel could have sent the text, and then a quote would be
           // whatever the browser last saw rather than what the team actually
           // said — a difference nobody could spot afterwards.
+          // Busy? Hold it instead of refusing it. The old behaviour threw
+          // 「上一轮还没结束」 and the box stayed locked for the length of the
+          // round, so the next question had to be remembered rather than
+          // written. The table sends it the moment the round ends.
+          if (team.busy) {
+            team.queue(body.instruction.trim(), body.seatIds);
+            res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+            res.end(JSON.stringify({ queued: true }));
+            return;
+          }
           const quotes = quotesFrom(team.transcript(), body.quoteIds ?? []);
           // Cleared BEFORE the round, not after it. The round takes minutes,
           // and a selection still showing as ticked throughout is a selection
@@ -1642,6 +1630,13 @@ export function registerSquadApi(ctx: Context): () => void {
           const replies = await team.ask(body.instruction.trim(), body.seatIds, quotes, body.materialIds);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ replies: replies.map((reply) => ({ ...reply })) }));
+          return;
+        }
+        if (suffix === "/queued" && req.method === "DELETE") {
+          const body = await readJson<{ teamId: string }>(req);
+          teamOf(ctx, body.teamId).unqueue();
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
           return;
         }
         if (suffix === "/selection" && req.method === "POST") {
