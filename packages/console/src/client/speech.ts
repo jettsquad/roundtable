@@ -15,6 +15,24 @@
 import { speakableText, speechChunks } from "@squad/shared";
 import { api } from "./api.ts";
 
+/** Where the read-aloud choice is remembered. Shared with `ListenBar`. */
+export const CONNECTION_KEY = "squad.listen.connection";
+export const SPEED_KEY = "squad.listen.speed";
+
+/**
+ * Read a remembered value, tolerating storage being unavailable.
+ *
+ * Private mode and blocked site data throw on access rather than returning
+ * null, and a page that cannot remember a preference should still play.
+ */
+export const remembered = (key: string, fallback: string): string => {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 export interface SpeechState {
   /** The turn being spoken, or nothing. */
   readonly turnId: string | undefined;
@@ -55,8 +73,21 @@ class Speaker {
   private chunks = 0;
   private error: string | undefined;
   private audio: Playable | undefined;
-  private connectionId = "";
-  private speed = 1;
+  /**
+   * The synthesis connection, loaded from storage rather than handed in.
+   *
+   * It used to arrive only from `ListenBar`'s effect — and that component
+   * renders in exactly one place, the session's team tab. Read a reply
+   * anywhere else and the player had never been told which connection to
+   * use, so every ▶ was disabled with a tooltip telling you to go and choose
+   * one you had already chosen. The setting was in `localStorage` the whole
+   * time; nothing had read it.
+   *
+   * The player owns its own configuration now. The bar is a control that
+   * CHANGES it, not the only thing that loads it.
+   */
+  private connectionId = remembered(CONNECTION_KEY, "");
+  private speed = Number(remembered(SPEED_KEY, "1")) || 1;
   private readonly listeners = new Set<Listener>();
 
   subscribe(listener: Listener): () => void {
@@ -70,8 +101,14 @@ class Speaker {
   }
 
   configure(connectionId: string, speed: number): void {
+    const changed = connectionId !== this.connectionId;
     this.connectionId = connectionId;
     this.speed = speed;
+    // Announced, because `ready` gates every ▶ on screen and those buttons
+    // subscribe to this player. Without it, choosing a connection left every
+    // already-rendered button disabled until something unrelated re-rendered
+    // it — which reads as "I chose one and it still does not work".
+    if (changed) this.announce();
   }
 
   get ready(): boolean {

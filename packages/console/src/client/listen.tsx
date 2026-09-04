@@ -10,23 +10,10 @@
  * has that team open.
  */
 import { useEffect, useState } from "react";
-import { speech } from "./speech.ts";
+import { CONNECTION_KEY, remembered, speech, SPEED_KEY } from "./speech.ts";
 import type { SquadSnapshot } from "./api.ts";
 import { useT } from "./locale.ts";
 import styles from "./panel.module.css";
-
-const CONNECTION_KEY = "squad.listen.connection";
-const SPEED_KEY = "squad.listen.speed";
-
-const remembered = (key: string, fallback: string): string => {
-  try {
-    return localStorage.getItem(key) ?? fallback;
-  } catch {
-    // Private mode, blocked storage: the control still works, it just does
-    // not remember. Not worth failing a page over.
-    return fallback;
-  }
-};
 
 const remember = (key: string, value: string): void => {
   try {
