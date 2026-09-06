@@ -265,7 +265,8 @@ export const zh = {
   "talk.toBottom": "到最下面",
   "agent.web.codeBash":
     "联网：只能用 bash + curl（这条会自动写进它的提示词）。它没有 WebFetch，web_search 认的是 DeepSeek 的 key。",
-  "agent.web.sandboxed": "联网：不行。沙箱没有出网通道，提示词里会告诉它拿不到就直说，别凭记忆编。",
+  "agent.web.codexOn":
+    "联网：web_search 搜 + bash/curl 取（这条会自动写进它的提示词）。勾上这项 Squad 才会打开 codex 沙箱的出网通道，不勾则明确关掉，不受本机 codex 配置影响。",
   "agent.web.fetch":
     "联网：用 WebFetch / WebSearch，仅 HTTPS（这条会自动写进它的提示词）。bash + curl 仍会被权限拦下。",
   "agent.web.off": "联网：不行。勾上下面这项才行。",
@@ -560,8 +561,8 @@ export const en: Record<SquadKey, string> = {
   "talk.toBottom": "To the bottom",
   "agent.web.codeBash":
     "Web: bash + curl only (this is written into its prompt automatically). It has no WebFetch, and web_search wants a DeepSeek key.",
-  "agent.web.sandboxed":
-    "Web: no. The sandbox has no outbound route; the prompt tells it to say so rather than answer from memory.",
+  "agent.web.codexOn":
+    "Web: web_search to search, bash + curl to fetch (written into its prompt automatically). Ticking this opens the Codex sandbox's outbound route; unticked it is explicitly closed, whatever this machine's codex config says.",
   "agent.web.fetch":
     "Web: WebFetch / WebSearch, HTTPS only (written into its prompt automatically). bash + curl are still refused by permissions.",
   "agent.web.off": "Web: no. Tick the box below to allow it.",

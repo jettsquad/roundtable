@@ -232,7 +232,7 @@ describe("上网方式写进提示词", () => {
     expect(prompt).toContain("允许联网");
   });
 
-  it("codex 被告知没有出网通道，且不许凭记忆编", () => {
+  it("codex 没开联网，被告知没有出网通道，且不许凭记忆编", () => {
     // 实测：codex 唯一一次「成功」是把 example.com 的正文背了出来。
     const prompt = composeSeatPrompt({
       seat: { ...base, backend: "codex" as const },
@@ -241,6 +241,21 @@ describe("上网方式写进提示词", () => {
     });
     expect(prompt).toContain("没有出网通道");
     expect(prompt).toContain("不要凭记忆");
+  });
+
+  it("codex 开了联网，被告知用 curl 而不是「你上不了网」", () => {
+    // 这条是整个改动的要害：沙箱通了但提示词还在说上不了网，agent 就根本
+    // 不会去试——出网通道开着，席位却照样回「我拿不到」。
+    const prompt = composeSeatPrompt({
+      seat: { ...base, backend: "codex" as const, webAccess: true },
+      instruction: "查一下",
+      context: [],
+    });
+    expect(prompt).toContain("curl");
+    expect(prompt).not.toContain("你不能上网");
+    // codex exec 里没有这两个工具，别让它去找。
+    expect(prompt).toContain("web_search");
+    expect(prompt).toContain("没有 WebFetch");
   });
 
   it("这一节不会把本轮指令挤到中间", () => {

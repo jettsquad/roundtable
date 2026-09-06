@@ -72,8 +72,11 @@ export class SquadSeatCodex extends Service {
   }
 
   async [Service.init](): Promise<void> {
-    // The host's own `codex login`, nothing injected.
-    this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider()));
+    // The host's own `codex login`, nothing injected — once closed, once open,
+    // because the web axis has to exist for connectionless seats too.
+    for (const web of [false, true]) {
+      this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, undefined, web)));
+    }
     this.syncConnections();
     this.ctx.effect(() => this.ctx.seatConnections.watch(() => this.syncConnections()));
     this.ctx.effect(() => () => {
@@ -95,10 +98,16 @@ export class SquadSeatCodex extends Service {
     for (const connection of this.ctx.seatConnections.list()) {
       if (connection.backend !== "codex") continue;
       for (const mode of modes) {
-        const key = providerName(BASE, connection.connectionId, mode);
-        wanted.add(key);
-        if (this.perConnection.has(key)) continue;
-        this.perConnection.set(key, this.ctx.subagents.registerProvider(this.provider(connection, mode)));
+        // Times two, for the web axis. The sandbox flag rides on argv and argv
+        // attaches here, so a seat that may reach the network and one that may
+        // not are two registrations — not one provider reading a request field
+        // the seam does not carry.
+        for (const web of [false, true]) {
+          const key = providerName(BASE, connection.connectionId, mode, web);
+          wanted.add(key);
+          if (this.perConnection.has(key)) continue;
+          this.perConnection.set(key, this.ctx.subagents.registerProvider(this.provider(connection, mode, web)));
+        }
       }
     }
     for (const [key, dispose] of [...this.perConnection]) {
@@ -110,7 +119,7 @@ export class SquadSeatCodex extends Service {
     }
   }
 
-  private provider(connection?: SeatConnection, permissionMode?: string): SubagentProvider {
+  private provider(connection?: SeatConnection, permissionMode?: string, webAccess = false): SubagentProvider {
     const config = this.config;
     const ctx = this.ctx;
     const limits = {
@@ -120,9 +129,9 @@ export class SquadSeatCodex extends Service {
     };
     return {
       name:
-        connection === undefined && permissionMode === undefined
+        connection === undefined && permissionMode === undefined && !webAccess
           ? (config.provider ?? DEFAULTS.provider)
-          : providerName(BASE, connection?.connectionId, permissionMode),
+          : providerName(BASE, connection?.connectionId, permissionMode, webAccess),
       // Declared honestly. `codex exec` has no delegation tool to deny and no
       // system-prompt argument, so the seam should REFUSE a request asking
       // for either rather than accept one and ignore it.
@@ -149,6 +158,9 @@ export class SquadSeatCodex extends Service {
               // codex connection's address was stored, shown, and ignored.
               ...(connection?.endpoint === undefined ? {} : { endpoint: connection.endpoint }),
               ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
+              // Opens the sandbox's way out. Closed by default, so a seat
+              // without the checkbox keeps exactly the argv it had before.
+              webAccess,
             }),
           // Resolved per start, so a rotated key reaches this turn.
           env: {

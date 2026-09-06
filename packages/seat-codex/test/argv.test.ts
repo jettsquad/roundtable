@@ -37,6 +37,40 @@ describe("buildCodexArgv", () => {
     expect(buildCodexArgv(base)).toContain("workspace-write");
   });
 
+  it("勾了联网才打开沙箱的出网通道", () => {
+    // codex 的沙箱默认是关的：只给 --sandbox workspace-write，里面的 curl
+    // 连都连不上（实测 0.153.4，curl 直接 exit 7）。加上这个 -c 之后同一条
+    // curl 返回 200。这是「允许联网」对 codex 席位唯一起作用的地方。
+    expect(buildCodexArgv({ ...base, webAccess: true })).toContain("sandbox_workspace_write.network_access=true");
+  });
+
+  it("没勾联网就不开出网通道", () => {
+    for (const argv of [buildCodexArgv(base), buildCodexArgv({ ...base, webAccess: false })]) {
+      expect(argv.join(" ")).not.toContain("network_access");
+    }
+  });
+
+  it("web_search 两个方向都明写，不看宿主的 config.toml 脸色", () => {
+    // 这两个键宿主的 ~/.codex/config.toml 里也能设。宿主要是在那儿把
+    // tools.web_search 打开了，一个没勾联网、提示词还写着「你没有搜索工具」
+    // 的席位就会凭空多出一个搜索工具——所以关的那一侧也要明写成 false，
+    // 让席位的命令行成为唯一答案。
+    expect(buildCodexArgv({ ...base, webAccess: true })).toContain("tools.web_search=true");
+    expect(buildCodexArgv({ ...base, webAccess: false })).toContain("tools.web_search=false");
+    expect(buildCodexArgv(base)).toContain("tools.web_search=false");
+  });
+
+  it("只写给真正读它的那个模式", () => {
+    // read-only 没有可写沙箱给这个键去配，yolo 整个绕开沙箱——两种情况下
+    // 写上去都是一句 CLI 不会照做的话。
+    expect(buildCodexArgv({ ...base, permissionMode: "read-only", webAccess: true }).join(" ")).not.toContain(
+      "network_access",
+    );
+    expect(buildCodexArgv({ ...base, permissionMode: "yolo", webAccess: true }).join(" ")).not.toContain(
+      "network_access",
+    );
+  });
+
   it("提示词是最后一个、且是一个参数", () => {
     // 它是带换行和引号的用户文本。拼成 shell 字符串就是一个以团队讨论
     // 为载荷的命令注入洞。

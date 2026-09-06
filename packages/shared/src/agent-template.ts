@@ -204,10 +204,18 @@ export const WEB_TOOLS: readonly string[] = ["WebFetch", "WebSearch"];
  *                         `web_search` resolves DEEPSEEK_API_KEY, so a seat
  *                         on another provider's key gets 「Authentication
  *                         Fails」.
- *   codex                 Nothing works. `curl` cannot reach the sandbox's
+ *   codex, web off        Nothing works. `curl` cannot reach the sandbox's
  *                         proxy port and the web tool refuses the URL. Its
  *                         one apparent success was example.com, whose text
  *                         it knew by heart — the token test settled it.
+ *   codex, web on         `bash` + `curl` returns the page, and `web_search`
+ *                         answers. What changed is not the CLI but the argv:
+ *                         Squad passes `network_access=true` and
+ *                         `tools.web_search=true` when the seat is allowed
+ *                         the web, and the same `curl` that failed to connect
+ *                         at all comes back 200 (measured 2026-09-07,
+ *                         codex-cli 0.153.4). Still no WebFetch — `codex
+ *                         exec` has no such tool.
  *
  * Injected at TURN TIME rather than written into the agent's own standing
  * instructions. Both would tell the seat the same thing today; only this one
@@ -224,11 +232,21 @@ export function webAccessNote(backend: AgentBackend, webAccess: boolean): readon
     ];
   }
   if (backend === "codex") {
+    if (!webAccess) {
+      return [
+        "## 你不能上网",
+        "这个席位没有开联网：沙箱没有出网通道，`curl` 连不上。",
+        "需要网上的资料时，直接说你拿不到、并说明需要什么，让主持人来取。" +
+          "**不要凭记忆把网页内容写出来当作抓取结果**——那比说拿不到更糟。" +
+          "（主持人可以在 Agent 库里给你勾上「允许联网」。）",
+      ];
+    }
     return [
-      "## 你不能上网",
-      "这个后端的沙箱没有出网通道：`curl` 连不上，web 工具会拒绝打开 URL。",
-      "需要网上的资料时，直接说你拿不到、并说明需要什么，让主持人来取。" +
-        "**不要凭记忆把网页内容写出来当作抓取结果**——那比说拿不到更糟。",
+      "## 你怎么上网",
+      "你有两条通路：`web_search` 工具用来搜，`bash` + `curl` 用来按 URL 取，" +
+        "例如 `curl -sSL --max-time 15 <url>`。",
+      "你没有 WebFetch——那是别的后端的工具，不要去找。",
+      "拿不到的时候直接说拿不到，**不要凭记忆把网页内容写出来当作抓取结果**。",
     ];
   }
   if (!webAccess) {

@@ -46,9 +46,20 @@ export function providerNameFor(connectionId?: string, permissionMode?: string):
  * disagreement is not a type error — it is a round that fails with
  * "no provider registered" naming a string nobody typed.
  */
-export function providerName(base: string, connectionId?: string, permissionMode?: string): string {
+export function providerName(
+  base: string,
+  connectionId?: string,
+  permissionMode?: string,
+  webAccess?: boolean,
+): string {
   const withConnection = connectionId === undefined || connectionId === "" ? base : `${base}/${connectionId}`;
-  return permissionMode === undefined || permissionMode === "" ? withConnection : `${withConnection}#${permissionMode}`;
+  const withMode =
+    permissionMode === undefined || permissionMode === "" ? withConnection : `${withConnection}#${permissionMode}`;
+  // A fourth axis, and only ever added when it is on: leaving the name
+  // untouched for `false` keeps every existing registration and every stored
+  // provider string byte-identical, so this axis cannot break a backend that
+  // does not use it.
+  return webAccess === true ? `${withMode}+web` : withMode;
 }
 
 /** The provider names the non-claude backends ask for. */
@@ -74,10 +85,18 @@ export function providerForSeat(seat: {
   readonly backend: string;
   readonly connectionId?: string | undefined;
   readonly permissionMode?: string | undefined;
+  readonly webAccess?: boolean | undefined;
 }): string {
   const base = PROVIDER_BY_BACKEND[seat.backend] ?? seat.backend;
   // dsh's headless profile has no sandbox or approval flags, so a mode in
   // its provider name would promise something the child never receives.
   const mode = seat.backend === "dsh" ? undefined : seat.permissionMode;
-  return providerName(base, seat.connectionId, mode);
+  // Codex alone selects on the web axis. Its sandbox opens with an argv flag
+  // that has to be present at spawn, and argv attaches at REGISTRATION — so
+  // "may this seat reach the network" can only travel in the provider name.
+  // The other two backends decide it per request (claude-code via
+  // `toolFilter`) or not at all (dsh always has `curl`), and giving them the
+  // suffix would split their registry for a distinction they never read.
+  const web = seat.backend === "codex" ? seat.webAccess === true : false;
+  return providerName(base, seat.connectionId, mode, web);
 }

@@ -242,12 +242,14 @@ describe("checkTeamPlan", () => {
     expect(problems[0]?.field).toBe("seats[0].permissionMode");
   });
 
-  it("catches web access asked of a backend that has no route out", () => {
-    // Measured, not assumed. A seat told to look something up on codex
-    // answers from memory instead.
+  it("accepts web access on codex, which Squad now opens for itself", () => {
+    // It used to be rejected here, because codex's sandbox is shut by default
+    // and a seat told to look something up answered from memory instead.
+    // Squad passes `sandbox_workspace_write.network_access=true` when the seat
+    // is allowed the web, so the combination is no longer a lie — and a plan
+    // rejected for it would now be refusing a team that works.
     const problems = checkTeamPlan(plan({ seats: [seat({ backend: "codex", webAccess: true }), clerk] }));
-    expect(problems[0]?.field).toBe("seats[0].webAccess");
-    expect(problems[0]?.detail).toMatch(/没有出网通道/);
+    expect(problems).toEqual([]);
   });
 
   it("reports every problem at once rather than the first", () => {

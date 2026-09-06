@@ -471,19 +471,24 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
             {draft.backend === "dsh"
               ? t("agent.web.codeBash")
               : draft.backend === "codex"
-                ? t("agent.web.sandboxed")
+                ? draft.webAccess
+                  ? t("agent.web.codexOn")
+                  : t("agent.web.off")
                 : draft.webAccess
                   ? t("agent.web.fetch")
                   : t("agent.web.off")}
           </div>
 
-          {/* Only for Claude Code, and that is a fact about the backends
-              rather than a gap. Measured on all three: `acceptEdits` there
-              auto-approves file edits and nothing else, so WebFetch and even
-              `curl` come back 「requires approval」 — with nobody to approve,
-              in a headless run. dsh reaches the web through bash already, and
-              codex's workspace mode has its own web tool. */}
-          {draft.backend !== "claude-code" ? null : (
+          {/* Claude Code and Codex, for two different reasons, and NOT dsh.
+              Measured on all three: Claude Code's `acceptEdits` auto-approves
+              file edits and nothing else, so WebFetch and `curl` come back
+              「requires approval」 — with nobody to approve, in a headless
+              run — and the checkbox pre-approves them. Codex's sandbox is
+              shut by default and the checkbox is what puts
+              `network_access=true` on its command line. dsh reaches the web
+              through bash whatever this says, so offering it there would be
+              a switch that changes nothing. */}
+          {draft.backend !== "claude-code" && draft.backend !== "codex" ? null : (
             <label className={styles.check}>
               <input
                 type="checkbox"

@@ -49,6 +49,21 @@ export interface CodexArgvInput {
    * effect: verified by watching the CLI reach the configured host.
    */
   readonly endpoint?: string | undefined;
+  /**
+   * Whether this seat may reach the network.
+   *
+   * Codex's sandbox is closed by default: with `--sandbox workspace-write`
+   * and nothing else, `curl` inside it fails to connect at all. That default
+   * is why every seat on this backend used to be told, every round, that it
+   * had no way out — see `webAccessNote`.
+   *
+   * Squad passes the switch itself rather than relying on the host's
+   * `~/.codex/config.toml`. Both routes open the same sandbox, but a machine
+   * setting is invisible from here: the checkbox would mean「上网」on one
+   * laptop and nothing on another, which is the class of setting-that-looks-
+   * like-it-works this project keeps designing against.
+   */
+  readonly webAccess?: boolean | undefined;
 }
 
 /** The provider id one custom endpoint is declared under. */
@@ -98,6 +113,21 @@ function permissionArgs(mode: CodexPermissionMode): readonly string[] {
 export function buildCodexArgv(input: CodexArgvInput): readonly string[] {
   const argv = ["exec", "--cd", input.cwd, "--json", "--skip-git-repo-check"];
   argv.push(...permissionArgs(input.permissionMode ?? "workspace"));
+  // Both halves of "may this seat reach the web", written on EVERY run —
+  // including the off case, which is the point. These same two keys can be set
+  // in the host's `~/.codex/config.toml`, and a host that had turned
+  // `tools.web_search` on there would hand a search tool to a seat whose
+  // checkbox is unticked and whose prompt says it has none. Stating both ways
+  // round makes the seat's argv the whole answer, whatever the machine says.
+  const web = input.webAccess === true;
+  // `read-only` has no writable sandbox for the key to configure and `yolo`
+  // bypasses the sandbox altogether, so the network key is scoped to the mode
+  // that actually reads it. The search tool is not sandbox-bound and applies
+  // to all three.
+  if (web && (input.permissionMode ?? "workspace") === "workspace") {
+    argv.push("-c", "sandbox_workspace_write.network_access=true");
+  }
+  argv.push("-c", `tools.web_search=${web}`);
   if (input.endpoint !== undefined && input.endpoint.trim() !== "") argv.push(...providerArgs(input.endpoint.trim()));
   if (input.reasoningEffort !== undefined) argv.push("-c", `model_reasoning_effort="${input.reasoningEffort}"`);
   if (input.model !== undefined && input.model.trim() !== "") argv.push("--model", input.model.trim());

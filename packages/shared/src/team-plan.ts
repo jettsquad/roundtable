@@ -233,15 +233,6 @@ export function checkTeamPlan(plan: TeamPlan): readonly TeamPlanProblem[] {
           `报错来自 CLI 而不是这里。可选：${modes.join("、")}。`,
       });
     }
-    // Measured, not assumed: see `webAccessNote`. A seat asked to look
-    // something up on a backend with no route out answers from memory, and
-    // says so afterwards or not at all.
-    if (seat.webAccess === true && seat.backend === "codex") {
-      problems.push({
-        field: `seats[${index}].webAccess`,
-        detail: `「${seat.displayName}」勾了联网，但 codex 的沙箱没有出网通道——需要查资料的职能请换 claude-code 或 dsh。`,
-      });
-    }
   });
 
   const keys = plan.seats.map((seat) => seat.key);

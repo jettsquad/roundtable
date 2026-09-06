@@ -90,3 +90,32 @@ describe("三个后端的 provider 名字，注册方和请求方必须一模一
     expect(names.size).toBe(3);
   });
 });
+
+describe("the web axis", () => {
+  it("只有 codex 用它选 provider", () => {
+    // codex 的出网开关在 argv 上，而 argv 是注册时绑死的，所以「这个席位能不能
+    // 上网」只能靠 provider 名字传过去。另外两个后端不读这个轴：claude-code
+    // 走请求里的 toolFilter，dsh 本来就有 curl——给它们加后缀只会把注册表
+    // 一分为二去表达一个它们从不查看的区别。
+    expect(providerForSeat({ backend: "codex", permissionMode: "workspace", webAccess: true })).toBe(
+      "codex#workspace+web",
+    );
+    expect(providerForSeat({ backend: "claude-code", permissionMode: "workspace", webAccess: true })).toBe(
+      providerForSeat({ backend: "claude-code", permissionMode: "workspace" }),
+    );
+    expect(providerForSeat({ backend: "dsh", webAccess: true })).toBe(providerForSeat({ backend: "dsh" }));
+  });
+
+  it("关着的时候名字一个字都不变", () => {
+    // 存量席位存下来的 provider 字符串必须还能对上，否则这个改动会让每个
+    // 已有的 codex 席位在下一轮报「no provider registered」。
+    for (const web of [undefined, false]) {
+      expect(providerForSeat({ backend: "codex", permissionMode: "workspace", webAccess: web })).toBe("codex#workspace");
+    }
+    expect(providerName("codex", "c1", "workspace")).toBe("codex/c1#workspace");
+  });
+
+  it("四个轴叠在一起", () => {
+    expect(providerName("codex", "c1", "workspace", true)).toBe("codex/c1#workspace+web");
+  });
+});
