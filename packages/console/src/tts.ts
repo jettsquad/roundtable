@@ -12,7 +12,7 @@
  * gets an XML access error for audio that was successfully synthesised and
  * already paid for. Hex costs one decode and depends on nothing.
  */
-import { credentialFrom } from "@squad/shared";
+import { credentialFrom, languageBoostFor } from "@squad/shared";
 import type { Context } from "@deepseek-ai/cordis";
 
 /** What the host needs to say one chunk. */
@@ -73,6 +73,12 @@ export async function speak(ctx: Context, request: SpeakRequest): Promise<Buffer
       text: request.text,
       voice_setting: { voice_id: request.voiceId, speed: clamp(request.speed ?? 1, 0.5, 2) },
       audio_setting: { format: "mp3" },
+      // Named rather than left to auto-detect. `German` is one of the forty
+      // values MiniMax can choose on its own, and a Chinese sentence with a
+      // formula in it gave the detector a run of bare Latin letters to guess
+      // from — which is how variable names came to be read in German. Saying
+      // which language this voice speaks takes that guess away.
+      language_boost: languageBoostFor(request.voiceId),
     }),
   });
   if (!response.ok) throw new Error(`语音接口回了 HTTP ${response.status}。`);

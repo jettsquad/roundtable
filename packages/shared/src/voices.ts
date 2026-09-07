@@ -120,6 +120,30 @@ export const voicesFor = (language: VoiceOption["language"]): readonly VoiceOpti
 export const voicesOf = (language: VoiceOption["language"], kind: VoiceOption["kind"]): readonly VoiceOption[] =>
   MINIMAX_VOICES.filter((voice) => voice.language === language && voice.kind === kind);
 
+/**
+ * The `language_boost` one voice should be synthesised under.
+ *
+ * Sent on every request, and the reason is a bug rather than a refinement:
+ * with nothing sent, MiniMax auto-detects per request, and `German` is one of
+ * the forty values it can land on. A Chinese sentence carrying a formula gave
+ * it a run of isolated Latin letters to guess from, and it guessed German —
+ * variable names were being read in German out loud.
+ *
+ * Naming the language takes German out of the running entirely. It follows
+ * the VOICE rather than the text because the voice is what the reply's
+ * language was chosen for; a formula inside that reply is handled by
+ * `spokenMath`, which turns it into English words before it is ever sent.
+ *
+ * An id this list does not know is matched on MiniMax's own naming, which
+ * prefixes its English catalogue — a typed-in voice should not silently fall
+ * back to the wrong language.
+ */
+export const languageBoostFor = (voiceId: string): "Chinese" | "English" => {
+  const known = MINIMAX_VOICES.find((voice) => voice.voiceId === voiceId);
+  if (known !== undefined) return known.language === "en" ? "English" : "Chinese";
+  return /^english/i.test(voiceId.trim()) ? "English" : "Chinese";
+};
+
 /** What a voice is called, for a screen. Unknown ids show as themselves. */
 export const voiceLabel = (voiceId: string): string =>
   MINIMAX_VOICES.find((voice) => voice.voiceId === voiceId)?.label ?? voiceId;

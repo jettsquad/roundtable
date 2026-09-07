@@ -19,6 +19,115 @@
 export const SPEECH_CHUNK_CHARS = 600;
 
 /**
+ * Greek letters, as the names an English speaker says.
+ *
+ * Both directions matter: a reply may carry the glyph (α) or the LaTeX name
+ * (\alpha), and the two must land on the same word.
+ */
+const GREEK: Readonly<Record<string, string>> = {
+  α: "alpha",
+  β: "beta",
+  γ: "gamma",
+  δ: "delta",
+  ε: "epsilon",
+  ζ: "zeta",
+  η: "eta",
+  θ: "theta",
+  ι: "iota",
+  κ: "kappa",
+  λ: "lambda",
+  μ: "mu",
+  ν: "nu",
+  ξ: "xi",
+  π: "pi",
+  ρ: "rho",
+  σ: "sigma",
+  τ: "tau",
+  υ: "upsilon",
+  φ: "phi",
+  χ: "chi",
+  ψ: "psi",
+  ω: "omega",
+  Γ: "Gamma",
+  Δ: "Delta",
+  Θ: "Theta",
+  Λ: "Lambda",
+  Ξ: "Xi",
+  Π: "Pi",
+  Σ: "Sigma",
+  Φ: "Phi",
+  Ψ: "Psi",
+  Ω: "Omega",
+};
+
+/** Operators and relations, as words rather than glyphs. */
+const OPERATORS: readonly (readonly [RegExp, string])[] = [
+  [/\\(?:times|cdot)\b/g, " times "],
+  [/\\div\b/g, " divided by "],
+  [/\\pm\b/g, " plus or minus "],
+  [/\\leq\b|\\le\b|≤/g, " less than or equal to "],
+  [/\\geq\b|\\ge\b|≥/g, " greater than or equal to "],
+  [/\\neq\b|\\ne\b|≠/g, " not equal to "],
+  [/\\approx\b|≈/g, " approximately "],
+  [/\\infty\b|∞/g, " infinity "],
+  [/\\rightarrow\b|\\to\b|→/g, " goes to "],
+  [/×/g, " times "],
+  [/÷/g, " divided by "],
+  [/±/g, " plus or minus "],
+];
+
+/**
+ * One formula, as English words.
+ *
+ * The reason this exists at all: a formula that reaches the synthesiser as
+ * `$v_{\max}$` is READ as its characters — dollar, backslash, braces — and
+ * the letters between them arrive as isolated Latin glyphs in a Chinese
+ * sentence, which is what the language detector was guessing German from.
+ * Turning the whole thing into words removes both problems at once: there is
+ * nothing left to mispronounce, and what remains is unambiguously English.
+ *
+ * Deliberately not a LaTeX engine. It covers what appears in a discussion —
+ * fractions, subscripts, powers, roots, the common operators — and anything
+ * it does not know loses its backslash and is read as the word it already
+ * is, which for `\gamma` or `\sum` is the right answer anyway.
+ */
+export function spokenMath(latex: string): string {
+  let out = latex;
+
+  // Fractions first: the braces are the argument boundaries, and every rule
+  // below would eat them.
+  for (let i = 0; i < 3 && /\\[dt]?frac/.test(out); i += 1) {
+    out = out.replace(/\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, " ($1) over ($2) ");
+  }
+  out = out.replace(/\\sqrt\s*\{([^{}]*)\}/g, " square root of ($1) ");
+
+  // Powers, with names for the two that have them.
+  out = out.replace(/\^\s*\{?\s*2\s*\}?/g, " squared ");
+  out = out.replace(/\^\s*\{?\s*3\s*\}?/g, " cubed ");
+  out = out.replace(/\^\s*\{([^{}]*)\}/g, " to the power of $1 ");
+  out = out.replace(/\^\s*(\w+)/g, " to the power of $1 ");
+  // Subscripts. "sub" is what a person says when reading one aloud.
+  out = out.replace(/_\s*\{([^{}]*)\}/g, " sub $1 ");
+  out = out.replace(/_\s*(\w+)/g, " sub $1 ");
+
+  for (const [pattern, word] of OPERATORS) out = out.replace(pattern, word);
+
+  // Named things that survive as their own word once the backslash is gone:
+  // \sum, \int, \gamma, \sigma all read correctly as text.
+  out = out.replace(/\\(?:left|right|,|;|!|quad|qquad)/g, " ");
+  out = out.replace(/\\([A-Za-z]+)/g, " $1 ");
+
+  out = out.replace(/[{}]/g, " ");
+  out = out.replace(/\s*=\s*/g, " equals ");
+  out = out.replace(/\s*\+\s*/g, " plus ");
+  // Only a binary minus. A leading one is 「negative」 and reads fine as the
+  // glyph, and hyphenated words must not be torn apart.
+  out = out.replace(/(\w)\s*-\s*(?=[\w\\(])/g, "$1 minus ");
+
+  return out.replace(/\s{2,}/g, " ").trim();
+}
+
+/**
  * One reply, as text to be spoken.
  *
  * Order matters: fenced code goes first, before anything else can mangle the
@@ -33,6 +142,24 @@ export function speakableText(markdown: string): string {
   // Inline code keeps its content — it is usually one identifier, and saying
   // 「反引号 seatId 反引号」 would be worse than saying `seatId`.
   text = text.replace(/`([^`\n]+)`/g, "$1");
+
+  // Formulas, before anything below can take their braces and underscores
+  // apart. Display first: `$$…$$` has to match before `$…$` can, or the
+  // opening pair is read as one empty inline formula.
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, body: string) => ` ${spokenMath(body)} `);
+  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (_, body: string) => ` ${spokenMath(body)} `);
+  text = text.replace(/\\\(([\s\S]+?)\\\)/g, (_, body: string) => ` ${spokenMath(body)} `);
+  // Inline `$…$`, but not a price: `$5` and `100$` carry no closing pair with
+  // maths in it, and treating them as formulas would eat the sentence between
+  // two unrelated dollar signs.
+  text = text.replace(/\$([^$\n]+?)\$/g, (whole: string, body: string) =>
+    /[\\^_{}=+/]|[A-Za-z]/.test(body) ? ` ${spokenMath(body)} ` : whole,
+  );
+
+  // Greek glyphs outside any formula — plenty of replies write σ inline
+  // without marking it up, and an unnamed glyph is exactly the isolated
+  // character the language detector was guessing from.
+  text = text.replace(/[α-ωΑ-Ω]/g, (glyph: string) => GREEK[glyph] ?? glyph);
 
   // Tables: announced with their size rather than read cell by cell. Reading
   // a table aloud produces a stream of words with no structure at all, which

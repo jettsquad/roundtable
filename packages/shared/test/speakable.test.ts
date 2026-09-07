@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { credentialFrom, speakableText, speechChunks } from "../src/speakable.ts";
-import { defaultVoiceFor, voiceLabel } from "../src/voices.ts";
+import { defaultVoiceFor, languageBoostFor, voiceLabel } from "../src/voices.ts";
 
 describe("speakableText", () => {
   it("names a code block instead of reading it", () => {
@@ -91,5 +91,62 @@ describe("defaultVoiceFor", () => {
   it("不认识的音色 id 按原样显示，不冒充成别的", () => {
     expect(voiceLabel("some-cloned-voice")).toBe("some-cloned-voice");
     expect(voiceLabel("Chinese (Mandarin)_Gentleman")).toBe("温润男声");
+  });
+});
+
+describe("公式念成英文词", () => {
+  it("下标、根号、希腊字母都变成词", () => {
+    // 不转的话送进合成器的是「美元 v 下划线 左花括号……」，而中间那串孤立的
+    // 拉丁字母正是语言检测猜成德语的依据。
+    const out = speakableText("由此可得 $v_{max} = \\sqrt{2gh}$。");
+    expect(out).toContain("v sub max");
+    expect(out).toContain("equals");
+    expect(out).toContain("square root of");
+    expect(out).not.toContain("$");
+    expect(out).not.toContain("\\");
+    expect(out).not.toContain("{");
+  });
+
+  it("行间公式和分式", () => {
+    const out = speakableText("误差满足 $$\\frac{\\Delta x}{x} \\leq \\epsilon^2$$ 这个界。");
+    expect(out).toContain("over");
+    expect(out).toContain("less than or equal to");
+    expect(out).toContain("squared");
+    expect(out).toContain("Delta");
+  });
+
+  it("裸的希腊字母也要命名", () => {
+    // 没有 $ 包起来的 σ 一样是孤立字形，一样会被检测器拿去猜。
+    const out = speakableText("设 α 为学习率，σ 为标准差。");
+    expect(out).toContain("alpha");
+    expect(out).toContain("sigma");
+    expect(out).not.toContain("α");
+    expect(out).not.toContain("σ");
+  });
+
+  it("价格不是公式", () => {
+    // 两个不相干的美元号之间整句被当成公式吃掉，是这条规则最容易犯的错。
+    const out = speakableText("这本书卖 $30，比原价 $45 便宜。");
+    expect(out).toContain("$30");
+    expect(out).toContain("$45");
+    expect(out).toContain("比原价");
+  });
+
+  it("中文散文原样保留", () => {
+    const out = speakableText("这一段没有公式，应该一个字都不动。");
+    expect(out).toBe("这一段没有公式，应该一个字都不动。");
+  });
+});
+
+describe("languageBoostFor", () => {
+  it("按音色定，德语不在候选里", () => {
+    expect(languageBoostFor("Chinese (Mandarin)_Gentleman")).toBe("Chinese");
+    expect(languageBoostFor("English_Trustworthy_Man")).toBe("English");
+  });
+
+  it("表里没有的 id 按 MiniMax 自己的命名判断", () => {
+    // 手填的音色不该悄悄落到错的语言上。
+    expect(languageBoostFor("English_Some_New_Voice")).toBe("English");
+    expect(languageBoostFor("Chinese (Mandarin)_Whatever")).toBe("Chinese");
   });
 });
