@@ -241,7 +241,10 @@ export const zh = {
   "view.cancel": "取消",
 
   // 每条发言下面的三个按钮
-  "msg.speak.title": "念这一条（再点一次停）",
+  "msg.speak.title": "念这一条",
+  "msg.speak.pause.title": "暂停，位置留着",
+  "msg.speak.resume.title": "从暂停的地方接着念",
+  "msg.speak.stop.title": "停下并回到开头——再念要从头合成一遍",
   "msg.speak.blocked": "先在上面的「朗读设置」里选一个连接",
   "msg.speak": "▶ 念",
   "msg.copy.title": "复制这段的原文",
@@ -536,7 +539,10 @@ export const en: Record<SquadKey, string> = {
   "view.cancel": "Cancel",
 
   // The three buttons under each message
-  "msg.speak.title": "Read this one aloud (click again to stop)",
+  "msg.speak.title": "Read this one aloud",
+  "msg.speak.pause.title": "Pause, keeping the place",
+  "msg.speak.resume.title": "Carry on from where it paused",
+  "msg.speak.stop.title": "Stop and go back to the start \u2014 reading again re-synthesises the whole reply",
   "msg.speak.blocked": "First choose a connection under \u201cRead aloud\u201d above",
   "msg.speak": "▶ Read",
   "msg.copy.title": "Copy this text",

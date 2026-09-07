@@ -39,6 +39,8 @@ export interface SpeechState {
   /** 1-based, for a button that has to show progress on a long reply. */
   readonly chunk: number;
   readonly chunks: number;
+  /** Held at the current position, not ended. `turnId` stays set. */
+  readonly paused: boolean;
   readonly error: string | undefined;
 }
 
@@ -74,6 +76,17 @@ class Speaker {
   private error: string | undefined;
   private audio: Playable | undefined;
   /**
+   * Held rather than ended.
+   *
+   * Stopping used to be the only way out of a reading, and it discards the
+   * position: coming back meant hearing the whole reply again from the top
+   * — and paying to synthesise it again. This flag is what makes the
+   * difference between the two, and the chunk loop needs no knowledge of it:
+   * it is parked on the current chunk's `onended`, which a paused element
+   * does not fire.
+   */
+  private paused = false;
+  /**
    * The synthesis connection, loaded from storage rather than handed in.
    *
    * It used to arrive only from `ListenBar`'s effect — and that component
@@ -97,7 +110,7 @@ class Speaker {
   }
 
   state(): SpeechState {
-    return { turnId: this.turnId, chunk: this.chunk, chunks: this.chunks, error: this.error };
+    return { turnId: this.turnId, chunk: this.chunk, chunks: this.chunks, paused: this.paused, error: this.error };
   }
 
   configure(connectionId: string, speed: number): void {
@@ -119,9 +132,47 @@ class Speaker {
     this.turnId = undefined;
     this.chunk = 0;
     this.chunks = 0;
+    this.paused = false;
     this.audio?.pause();
     this.audio = undefined;
     this.announce();
+  }
+
+  /**
+   * Hold at the current position.
+   *
+   * The element keeps its place and the chunk loop stays parked on an
+   * `onended` that will not fire, so nothing further is synthesised while
+   * held — pausing a long reply stops spending on it, exactly as stopping
+   * did.
+   */
+  pause(): void {
+    if (this.turnId === undefined || this.paused) return;
+    this.paused = true;
+    this.audio?.pause();
+    this.announce();
+  }
+
+  /**
+   * Carry on from where it was held.
+   *
+   * `audio` is undefined between chunks — while the next one is still being
+   * synthesised — and that is not a failure to resume: `say` checks the flag
+   * before starting its element, so the chunk that arrives during a pause
+   * waits, and this call is what releases it.
+   */
+  resume(): void {
+    if (this.turnId === undefined || !this.paused) return;
+    this.paused = false;
+    this.announce();
+    void this.audio?.play().catch(() => {
+      /* a rejected resume leaves the reply held rather than ending it */
+    });
+  }
+
+  togglePause(): void {
+    if (this.paused) this.resume();
+    else this.pause();
   }
 
   /**
@@ -137,6 +188,10 @@ class Speaker {
     readonly text: string;
     readonly voiceId: string;
   }): Promise<void> {
+    // Still a stop, not a pause. `VoicePreview` shares this player and its
+    // button says 「停」 for a one-line sample, where holding the position is
+    // meaningless. The reply reader wants the other behaviour and asks for it
+    // by name — `togglePause` — rather than having it inferred here.
     if (this.turnId === item.turnId) {
       this.stop();
       return;
@@ -179,9 +234,16 @@ class Speaker {
         // A failed element is not a failed feature: let the next chunk try
         // rather than ending the whole reply.
         audio.onerror = () => resolve();
-        void audio.play().catch(() => resolve());
+        // Not while held. A chunk whose synthesis finished DURING a pause
+        // would otherwise start talking on its own — the one moment where
+        // pausing has no element to pause. `resume` starts this one instead.
+        if (!this.paused) void audio.play().catch(() => resolve());
       });
       objectUrl.revokeObjectURL(url);
+      // Dropped as soon as it has finished. `resume` plays whatever `audio`
+      // holds, and an ended element still held here would replay the chunk
+      // just heard instead of continuing.
+      if (this.audio === audio) this.audio = undefined;
       return true;
     } catch (problem) {
       // Kept and shown. MiniMax refuses with reasons — an exhausted quota, a

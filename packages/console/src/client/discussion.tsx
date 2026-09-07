@@ -115,17 +115,44 @@ function SpeakButton({
   const [state, setState] = useState(speech.state());
   useEffect(() => speech.subscribe(setState), []);
   const playing = state.turnId === turnId;
+  const held = playing && state.paused;
   return (
     <>
+      {/* Two controls while a reply is being read, because holding it and
+          ending it are different intentions and only one of them is cheap to
+          undo. Stopping discards the position AND the synthesis paid for so
+          far; pausing keeps both. One button that did the destructive one was
+          the whole complaint. */}
       <button
         type="button"
         className={`${styles.quoteButton} ${playing ? styles.quoted : ""}`}
-        title={speech.ready ? t("msg.speak.title") : t("msg.speak.blocked")}
-        onClick={() => void speech.play({ turnId, speaker, text, voiceId })}
+        title={
+          !speech.ready
+            ? t("msg.speak.blocked")
+            : !playing
+              ? t("msg.speak.title")
+              : held
+                ? t("msg.speak.resume.title")
+                : t("msg.speak.pause.title")
+        }
+        onClick={() => {
+          if (!playing) void speech.play({ turnId, speaker, text, voiceId });
+          else speech.togglePause();
+        }}
         disabled={!speech.ready}
       >
-        {playing ? `■ ${state.chunk}/${state.chunks}` : t("msg.speak")}
+        {!playing ? t("msg.speak") : `${held ? "▶" : "⏸"} ${state.chunk}/${state.chunks}`}
       </button>
+      {!playing ? null : (
+        <button
+          type="button"
+          className={styles.quoteButton}
+          title={t("msg.speak.stop.title")}
+          onClick={() => speech.stop()}
+        >
+          ■
+        </button>
+      )}
       {!playing || state.error === undefined ? null : <span className={styles.error}>{state.error}</span>}
     </>
   );
