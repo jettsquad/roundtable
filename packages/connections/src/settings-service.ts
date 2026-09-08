@@ -71,6 +71,23 @@ export class UserSettingsService extends Service {
     });
   }
 
+  /** Which connection distils criteria. Absent means the host's own login. */
+  distilConnectionId(): string | undefined {
+    const stored = this.table().get(SETTINGS_KEY)?.distilConnectionId?.trim();
+    return stored === undefined || stored === "" ? undefined : stored;
+  }
+
+  /** Empty means "go back to the host's own login", not "no model". */
+  async setDistilConnectionId(connectionId: string): Promise<void> {
+    const trimmed = connectionId.trim();
+    const existing = this.table().get(SETTINGS_KEY);
+    await this.table().put(SETTINGS_KEY, {
+      ...existing,
+      ...(trimmed === "" ? { distilConnectionId: undefined } : { distilConnectionId: trimmed }),
+      updatedAt: Date.now(),
+    });
+  }
+
   private table() {
     if (this.domain === undefined) throw new Error("用户设置尚未启动（storage domain 未打开）。");
     return this.domain.table("settings");

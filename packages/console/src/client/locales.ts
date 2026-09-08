@@ -79,6 +79,10 @@ export const zh = {
   "me.name.placeholder": "主持人",
   "me.name.save": "保存",
   "me.name.note": "新建团队时会用这个名字。已经存在的团队保持原样——改名不会重写已经记录下来的发言。",
+  "me.distil.head": "谁来蒸馏你的判据",
+  "me.distil.ownLogin": "本机登录（宿主 CLI 的登录态和默认模型）",
+  "me.distil.note":
+    "判据库是你的，跨团队跨项目。写它的模型该在这里选，而不是跟着某个席位的配置走。改完下一次蒸馏就生效。",
   "criteria.anywhere": "任何场合",
   "criteria.adopt": "采纳",
   "criteria.reject": "否掉",
@@ -375,6 +379,10 @@ export const en: Record<SquadKey, string> = {
   "me.name.save": "Save",
   "me.name.note":
     "Used for teams you create from now on. Existing teams keep the name they were made with \u2014 renaming never rewrites what is already on the record.",
+  "me.distil.head": "What distils your criteria",
+  "me.distil.ownLogin": "Host login (the CLI's own session and default model)",
+  "me.distil.note":
+    "The criteria library is yours and outlives every team, so the model that writes it belongs here rather than inherited from a seat. Takes effect on the next distillation.",
   "criteria.anywhere": "anywhere",
   "criteria.adopt": "Adopt",
   "criteria.reject": "Reject",

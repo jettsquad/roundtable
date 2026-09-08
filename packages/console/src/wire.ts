@@ -337,6 +337,8 @@ export interface SquadSnapshot {
    * absent name looks like.
    */
   readonly hostDisplayName: string;
+  /** Which connection distils criteria. Empty means the host's own login. */
+  readonly distilConnectionId: string;
   /**
    * Lil X's judgement library.
    *

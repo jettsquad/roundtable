@@ -27,6 +27,16 @@ const userSettings = z.object({
    * reads to a model as a missing field rather than as a person.
    */
   hostDisplayName: z.string().optional(),
+  /**
+   * Which connection runs the distillation.
+   *
+   * Absent means the host's own login, which is what it did before there was
+   * anywhere to say otherwise — `Config.provider` existed, nothing set it, and
+   * the model that wrote your judgement library was whatever a seat happened
+   * to be configured with. A criteria library is user-level; the model that
+   * writes it should be chosen here rather than inherited from a roster.
+   */
+  distilConnectionId: z.string().optional(),
   updatedAt: z.number(),
 });
 

@@ -22,7 +22,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
-import { SEAT_PROVIDER, stripReasoning, type AgendaSpec } from "@squad/shared";
+import { SEAT_PROVIDER, providerForSeat, stripReasoning, type AgendaSpec } from "@squad/shared";
 import { decideActivation, type ActivationDecision } from "./activation.ts";
 import { checkAbstractness, type AbstractnessReport } from "./decontextualise.ts";
 import { exportToPool, importAsCandidates, type ExportResult, type PoolEntry } from "./pool.ts";
@@ -94,7 +94,18 @@ export interface CaptureResult {
 export type Verdict = "accept" | "reject";
 
 export class ReasoningService extends Service {
-  static readonly inject = ["subagents"];
+  /**
+   * User-level services only, and still no `teams`.
+   *
+   * The original list was `subagents` alone, with `Config.provider` left for
+   * a profile to set — and no profile set it, so the model that wrote a
+   * person's judgement library was whichever one a SEAT happened to be
+   * configured with. Reading the choice from `userSettings` puts it where the
+   * library already lives; `seatConnections` turns that id into the provider
+   * name the seam selects on. Both are user-level, which is the line that
+   * matters here: a table still cannot reach this service.
+   */
+  static readonly inject = ["subagents", "seatConnections", "userSettings"];
 
   private readonly store: ReasoningStore;
   private readonly config: Config;
@@ -442,6 +453,24 @@ export class ReasoningService extends Service {
     );
   }
 
+  /**
+   * The provider the distilling and selecting calls run on.
+   *
+   * Resolved per call rather than at construction, so choosing a connection
+   * takes effect on the next distillation instead of at the next restart.
+   * An id naming a connection that has since been deleted falls back to the
+   * host's own login rather than throwing: losing a connection should cost
+   * the model choice, not the ability to record what just happened.
+   */
+  private distilProvider(): string {
+    if (this.config.provider !== undefined && this.config.provider !== "") return this.config.provider;
+    const connectionId = this.ctx.userSettings.distilConnectionId();
+    if (connectionId === undefined) return SEAT_PROVIDER;
+    const connection = this.ctx.seatConnections.get(connectionId);
+    if (connection === undefined) return SEAT_PROVIDER;
+    return providerForSeat({ backend: connection.backend, connectionId });
+  }
+
   private async runTask(parent: Agent, label: string, prompt: string): Promise<string> {
     const request: SubagentStartRequest = {
       label,
@@ -449,7 +478,7 @@ export class ReasoningService extends Service {
       parent,
       signal: new AbortController().signal,
     };
-    const started = await this.ctx.subagents.start(this.config.provider ?? SEAT_PROVIDER, request);
+    const started = await this.ctx.subagents.start(this.distilProvider(), request);
     const result = await started.result;
     if (result.stopReason !== "completed") {
       throw new Error(`提炼任务未完成（${result.stopReason}），不采用。`);

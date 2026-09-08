@@ -509,7 +509,12 @@ export function TeamPanel(): JSX.Element | null {
         ) : page === "criteria" ? (
           <CriteriaPage criteria={snapshot.data.criteria} onChanged={again} />
         ) : page === "me" ? (
-          <MePage hostDisplayName={snapshot.data.hostDisplayName} onChanged={again} />
+          <MePage
+            hostDisplayName={snapshot.data.hostDisplayName}
+            distilConnectionId={snapshot.data.distilConnectionId}
+            connections={snapshot.data.connections}
+            onChanged={again}
+          />
         ) : (
           <Connections connections={snapshot.data.connections} onChanged={again} />
         )}

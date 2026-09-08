@@ -10,14 +10,19 @@
  */
 import { useEffect, useState } from "react";
 import { api, useAction } from "./api.ts";
+import type { SquadSnapshot } from "./api.ts";
 import { useT } from "./locale.ts";
 import styles from "./panel.module.css";
 
 export function MePage({
   hostDisplayName,
+  distilConnectionId,
+  connections,
   onChanged,
 }: {
   readonly hostDisplayName: string;
+  readonly distilConnectionId: string;
+  readonly connections: SquadSnapshot["connections"];
   readonly onChanged: () => void;
 }): JSX.Element {
   const t = useT();
@@ -54,6 +59,25 @@ export function MePage({
       {/* Said where the change is made, because it is the one thing about this
           field that surprises people: renaming does not rewrite history. */}
       <div className={styles.hint}>{t("me.name.note")}</div>
+
+      <div className={styles.subhead}>{t("me.distil.head")}</div>
+      <select
+        className={styles.select}
+        value={distilConnectionId}
+        onChange={(event) => void run(() => api.saveSettings({ distilConnectionId: event.target.value }))}
+      >
+        <option value="">{t("me.distil.ownLogin")}</option>
+        {connections.map((connection) => (
+          <option key={connection.connectionId} value={connection.connectionId}>
+            {connection.displayName}
+          </option>
+        ))}
+      </select>
+      {/* Why this is here at all: the criteria library is yours and outlives
+          every team, so the model that writes it should not be inherited from
+          whichever seat happened to be configured first. */}
+      <div className={styles.hint}>{t("me.distil.note")}</div>
+
       {error === undefined ? null : <div className={styles.error}>{error}</div>}
     </div>
   );
