@@ -176,7 +176,10 @@ export class ReasoningService extends Service {
       // at one point in the framework is usually not confined to it, and a
       // step restriction is the narrowest possible filter.
       trigger: existing?.trigger ?? {
-        action: [signal.situation.action],
+        // The distillation's chosen actions when it gave any. Copying the
+        // instance's single action is how a criterion ends up filed under the
+        // one kind of decision that produced it and never fires anywhere else.
+        action: (distilled.triggerActions ?? [signal.situation.action]) as Criterion["trigger"]["action"],
         features: (distilled.triggerFeatures ?? signal.situation.features) as typeof signal.situation.features,
       },
       claim: distilled.relation === "reinforce" && existing !== undefined ? existing.claim : distilled.claim,
@@ -431,7 +434,9 @@ export class ReasoningService extends Service {
    * do it by accident.
    */
   async brief(situation: Situation, parent?: Agent): Promise<string> {
-    return formatForSystemChannel(await this.locate(situation, parent));
+    // The features travel with the criteria: 「用了哪条」 without 「为什么」 is
+    // half the account, and the situation's features ARE the why.
+    return formatForSystemChannel(await this.locate(situation, parent), situation.features);
   }
 
   /**

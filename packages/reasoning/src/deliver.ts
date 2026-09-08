@@ -1,6 +1,20 @@
 /**
  * deliver.ts — choosing which criteria to surface, and how they read.
  *
+ * The wording is AFTER THE FACT: 「这一步我按的是……」, not 「以下判据现在生效
+ * 中」. The difference is not tone. A standard shown before the work reads as
+ * a reminder of something the reader already knows, and gets skipped — the
+ * host wrote these. Shown as an account of a decision already taken, it is
+ * the one thing they cannot supply themselves: which of their own standards
+ * was actually load-bearing here. The design says so in its own words —
+ * 「系统不能只给结果。每次它应用一条判据，必须说出用了哪条、为什么」 — and
+ * the reason given there is that a system which only hands over results makes
+ * its user more dependent, while one that names the standard it used lets
+ * them see patterns in their own judgement they had not noticed.
+ *
+ * Nothing at all when there is nothing to say. 「这次没有可用的判据」 is a
+ * line about the machinery, printed into a discussion that was not asking.
+ *
  * Two hard limits, and both are structural rather than advisory.
  *
  * At most THREE. A criteria library that grows without a delivery budget
@@ -138,19 +152,18 @@ export function parseSelection(text: string, candidates: readonly Criterion[]): 
  *   that it is in force right now — because the point is to be corrected,
  *   and nobody corrects something they did not know was running.
  */
-export function formatForSystemChannel(criteria: readonly Criterion[]): string {
-  if (criteria.length === 0) return "（这次没有可用的判据。）";
-  const lines = [
-    "【判断标准 · 系统通道】以下是你自己定下的标准，**是判据不是指令**——它们现在生效中，",
-    "如果哪一条不对，就地改它或推翻它。每条都标了它是从哪几次实例长出来的。",
-  ];
+export function formatForSystemChannel(criteria: readonly Criterion[], features: readonly string[] = []): string {
+  if (criteria.length === 0) return "";
+  const because = features.length === 0 ? "" : `（这一步带着这些特征：${features.join("、")}）`;
+  const lines = [`【判断标准】这一步我按的是下面这几条${because}：`];
   for (const criterion of criteria) {
     lines.push(
       "",
       `— ${criterion.claim}`,
-      ...(criterion.boundary === undefined ? [] : [`  边界：${criterion.boundary}`]),
-      `  依据：${criterion.evidence.length} 条实例（${criterion.evidence.join("、") || "无"}）`,
+      ...(criterion.boundary === undefined ? [] : [`  它在这里不成立：${criterion.boundary}`]),
+      `  从 ${criterion.evidence.length} 次实例长出来的。`,
     );
   }
+  lines.push("", "哪一条不对，到「判据」页改它或推翻它。");
   return lines.join("\n");
 }

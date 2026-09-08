@@ -24,7 +24,11 @@ export const name = "squad-context";
  * (see domain.ts). The arrow never runs the other way — the table must not
  * inject this service, or neither could start.
  */
-export const inject = ["teams", "storageDomain"];
+// `reasoning` so a fold can be judged by the host's own standards. It is a
+// user-level service, so this does not give the table a path to one: the
+// criteria are read here and travel into the SECRETARY's prompt, never into
+// a discussion seat's.
+export const inject = ["teams", "storageDomain", "reasoning"];
 
 export function apply(ctx: Context): void {
   ctx.plugin(TeamContextService);

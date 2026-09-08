@@ -24,7 +24,7 @@
  * it. Without a counter-example channel an abstract grows more absolute with
  * every confirmation, until it is a slogan with no conditions attached.
  */
-import { ACTION_KINDS, FEATURE_FLAGS, isFeatureFlag, type Situation } from "@squad/shared";
+import { ACTION_KINDS, FEATURE_FLAGS, isActionKind, isFeatureFlag, type Situation } from "@squad/shared";
 import type { Criterion } from "./criterion.ts";
 
 export type Relation = "new" | "reinforce" | "revise" | "counter-example";
@@ -49,6 +49,21 @@ export interface Distillation {
    * already names this failure — "never recalled → the trigger is wrong".
    */
   readonly triggerFeatures?: readonly string[] | undefined;
+  /**
+   * Which kinds of decision this should fire on.
+   *
+   * Chosen by the distillation for the same reason the features are, and
+   * against the same observed failure: an occurrence carries ONE action kind,
+   * and copying it makes the trigger as narrow as the single case behind it.
+   * The library already holds a criterion filed under `adjudicate` alone that
+   * has never once been recalled — a standard about not flattening
+   * disagreement is not confined to the moment of adjudicating.
+   *
+   * More than one is normal. This is a coarse filter with a selection step
+   * behind it, so being roughly right in several places beats being exactly
+   * right in one.
+   */
+  readonly triggerActions?: readonly string[] | undefined;
 }
 
 export interface DistilInput {
@@ -92,12 +107,15 @@ export function buildDistilPrompt(input: DistilInput): string {
       "该用他说话的那种语言留下来。",
     "",
     "另外给出**触发条件**：这条判据以后应该在什么处境下被捞出来。",
+    "- triggerActions 填这条判据该在哪几类决策上生效，可以多填几类。",
+    "  **不要只填这次碰巧发生的那一类**——一条「分歧不许压成共识」的判据，",
+    "  不只在裁决的时候成立，评估外部方案、在几个选项里选的时候一样成立。",
     "- triggerFeatures 只填**必要**的特征，不要把这次碰巧带有的特征全填上。",
     "  触发条件是**粗过滤**——捞出来之后还有一步精选去读适用边界，所以宁可宽一点。",
     "  填全了会让这条判据只在与这一次一模一样的处境下才触发，等于永远捞不出来。",
     "",
     "只回复一个 JSON 对象，不要有别的文字：",
-    '{"relation": "new"|"reinforce"|"revise"|"counter-example", "criterionId"?: string, "claim": string, "boundary"?: string, "triggerFeatures": string[]}',
+    '{"relation": "new"|"reinforce"|"revise"|"counter-example", "criterionId"?: string, "claim": string, "boundary"?: string, "triggerActions": string[], "triggerFeatures": string[]}',
     "relation 不是 new 时，criterionId 必填，且必须是下面列出的 id 之一。",
     "",
     `这次的处境：动作类型=${input.situation.action}，特征=${input.situation.features.join("、") || "（无）"}${
@@ -161,11 +179,26 @@ export function parseDistillation(text: string, candidates: readonly Criterion[]
     triggerFeatures = rawFeatures as readonly string[];
   }
 
+  // Same treatment as the features: an unknown action name is refused, not
+  // dropped. A silently discarded action narrows the trigger without saying
+  // so, which is the failure this field was added to prevent.
+  const rawActions = raw["triggerActions"];
+  let triggerActions: readonly string[] | undefined;
+  if (Array.isArray(rawActions)) {
+    for (const action of rawActions) {
+      if (typeof action !== "string" || !isActionKind(action)) {
+        throw new Error(`提炼给出的触发动作「${String(action)}」不在闭合列表里。`);
+      }
+    }
+    if (rawActions.length > 0) triggerActions = rawActions as readonly string[];
+  }
+
   return {
     relation: relation as Relation,
     ...(criterionId === undefined ? {} : { criterionId }),
     claim: claim.trim(),
     ...(boundary === undefined ? {} : { boundary }),
     ...(triggerFeatures === undefined ? {} : { triggerFeatures }),
+    ...(triggerActions === undefined ? {} : { triggerActions }),
   };
 }

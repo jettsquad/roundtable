@@ -44,7 +44,7 @@ export interface RecordCheckpointInput {
 }
 
 export class TeamContextService extends Service {
-  static readonly inject = ["teams", "storageDomain", "secretary"];
+  static readonly inject = ["teams", "storageDomain", "secretary", "reasoning"];
 
   private domain: Domain<typeof SQUAD_TEAMS_DOMAIN> | undefined;
   /** Teams whose fold is running. A second would cover the same ground. */
@@ -283,8 +283,20 @@ export class TeamContextService extends Service {
       const plan = planFold(this.sinceLastCheckpoint(teamId), this.liveCheckpoint(teamId)?.text);
       if (plan === undefined) throw new Error(`团队 ${teamId} 没有可折叠的记录。`);
 
+      // The host's own standards for this kind of work, fetched here because
+      // this service may reach the criteria library and the secretary may
+      // not. Folding is where they earn their keep: it decides what survives
+      // into the only history later agents will ever see.
+      //
+      // A failure here must not stop a fold. Losing the criteria costs a
+      // less-well-judged summary; losing the fold costs the discussion.
+      const criteria = await this.ctx.reasoning
+        .brief({ action: "produce-document", features: ["invisible-result"] }, team.host)
+        .catch(() => "");
+
       const text = await this.ctx.secretary.writeCheckpoint({
         parent: team.host,
+        ...(criteria === "" ? {} : { criteria }),
         // The designated secretary's standing instructions AND the provider
         // it runs on. The persona was passed from the start; the provider was
         // not, so the secretary's model, connection and permission mode were

@@ -50,6 +50,19 @@ export interface CheckpointPromptInput {
    * than no index at all, because an agent follows it and finds nothing.
    */
   readonly artifactPaths?: readonly string[] | undefined;
+  /**
+   * The host's own standards that bear on writing this, already selected.
+   *
+   * Passed in rather than fetched: the criteria library is user-level and
+   * this file knows nothing about it, which is also what keeps it off the
+   * path to a discussion seat.
+   *
+   * A checkpoint is where they matter most. Folding decides what survives
+   * into the only history later agents will see, and 「不要把分歧写成共识」
+   * is exactly the kind of standard that is easy to state and easy to lose
+   * under summarising pressure.
+   */
+  readonly criteria?: string | undefined;
 }
 
 const INSTRUCTIONS = `你在为一个 AI 协作团队写「上下文检查点」。它不是给人看的汇报，而是后续 agent 唯一能看到的历史。
@@ -79,6 +92,12 @@ export const buildCheckpointPrompt = (input: CheckpointPromptInput): string => {
   return [
     INSTRUCTIONS,
     input.previousCheckpoint === undefined ? "" : CONTINUATION_INSTRUCTIONS,
+    // Before the material, after the instructions: they qualify HOW to write
+    // this, and a standard placed after the transcript reads as a comment on
+    // the transcript.
+    input.criteria === undefined || input.criteria.trim() === ""
+      ? ""
+      : `主持人自己定下的判断标准，写这份检查点时按它们来：\n${input.criteria}`,
     `团队目标：${input.hostGoal}`,
     input.previousCheckpoint === undefined ? "" : `上一份检查点：\n${input.previousCheckpoint}`,
     `需要纳入的讨论内容：\n${transcript || "（无新增讨论）"}`,

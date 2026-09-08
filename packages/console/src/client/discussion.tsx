@@ -158,6 +158,51 @@ function SpeakButton({
   );
 }
 
+/**
+ * 「记下来」 — this utterance carries a standard of mine.
+ *
+ * Says what it read, not just that it worked. The window it takes is a
+ * judgement (the replies since your last message, or only the seats you
+ * named), and a capture that silently read the wrong thing produces a
+ * criterion you cannot account for later.
+ */
+function MarkButton({ team, turnId }: { readonly team: TeamSummary; readonly turnId: string }): JSX.Element {
+  const t = useT();
+  const [state, setState] = useState<"idle" | "busy" | "done" | "failed">("idle");
+  const [note, setNote] = useState<string>();
+  return (
+    <>
+      <button
+        type="button"
+        className={styles.quoteButton}
+        disabled={state === "busy"}
+        title={t("msg.mark.title")}
+        onClick={() => {
+          setState("busy");
+          setNote(undefined);
+          void api
+            .markCriterion({ teamId: team.teamId, turnId })
+            .then((result) => {
+              setState("done");
+              setNote(
+                result.from.length === 0
+                  ? t("msg.mark.doneAlone")
+                  : t("msg.mark.done", { names: result.from.join("、") }),
+              );
+            })
+            .catch((error: unknown) => {
+              setState("failed");
+              setNote(error instanceof Error ? error.message : String(error));
+            });
+        }}
+      >
+        {state === "busy" ? t("msg.mark.busy") : state === "done" ? t("msg.mark.ok") : t("msg.mark")}
+      </button>
+      {note === undefined ? null : <span className={state === "failed" ? styles.error : styles.muted}>{note}</span>}
+    </>
+  );
+}
+
 function CopyButton({ text }: { readonly text: string }): JSX.Element {
   const t = useT();
   const [state, setState] = useState<"idle" | "done" | "failed">("idle");
@@ -366,6 +411,12 @@ export function Discussion({
                   let a member schedule the team while the confirmation said
                   the secretary had. */}
               {!secretaryNames.includes(line.speaker) ? null : <ToAgendaButton team={team} turnId={line.turnId} />}
+              {/* Only on your OWN lines, and that is the whole rule. A
+                  criterion is your standard; a seat's reply is its opinion,
+                  and marking one would file somebody else's view as something
+                  you judge by. What gets read alongside it is the replies
+                  since your previous message — see `captureWindow`. */}
+              {!host ? null : <MarkButton team={team} turnId={line.turnId} />}
             </div>
             {/* The act this whole thing exists for, offered where the plan
                 is. It used to be a slash command typed in another session,

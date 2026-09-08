@@ -21,7 +21,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Domain } from "@deepseek-ai/dsh-storage-domain";
 import { SQUAD_TABLE_DOMAIN, type TeamPersisted } from "./domain.ts";
@@ -43,7 +43,13 @@ import {
   type SeatUsage,
   type UsageTotals,
 } from "@squad/shared";
-import { EMPTY_TEAM_PROMPTS, blocksForSeat, type TeamPrompts } from "@squad/shared";
+import {
+  EMPTY_TEAM_PROMPTS,
+  blocksForSeat,
+  projectMemoryFile,
+  projectMemoryNote,
+  type TeamPrompts,
+} from "@squad/shared";
 import { activityFor, activityKey, type SeatActivity } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
 import { baseForFolder, recordForSession, restoreOrder, unclaimed } from "./sitting.ts";
@@ -1893,6 +1899,35 @@ export class TeamsService extends Service {
     return providerForSeat(seat);
   }
 
+  /**
+   * Whether this seat's backend has its project file yet, and what to say.
+   *
+   * Checked per turn rather than remembered, because the folder is the
+   * person's and they may delete it, and a remembered "already done" would
+   * leave the next seat reading a file that is not there.
+   *
+   * A backend with no such convention, or a folder that cannot be read at
+   * all, produces nothing: this is a convenience, and it must never be the
+   * reason a round fails.
+   */
+  private async projectMemoryNoteFor(
+    record: TeamRecord,
+    seat: SeatSpec,
+  ): Promise<{ readonly forSeat: string; readonly notice: string } | undefined> {
+    const file = projectMemoryFile(seat.backend);
+    const folder = record.input.projectFolder;
+    if (file === undefined || folder === undefined || folder.trim() === "") return undefined;
+    try {
+      await stat(join(folder, file));
+      return undefined;
+    } catch {
+      return {
+        forSeat: projectMemoryNote(file).join("\n"),
+        notice: `${seat.displayName} 发现这个项目还没有 ${file}，这一轮会先把它建起来。之后要改，请你自己改。`,
+      };
+    }
+  }
+
   private async runSeat(
     record: TeamRecord,
     host: Agent,
@@ -1930,10 +1965,19 @@ export class TeamsService extends Service {
         };
       }
       record.speaking.set(seat.seatId, instruction);
+      // Announced, not done quietly. Creating a file in the person's project
+      // folder is an automatic action with an invisible result, and the one
+      // criterion this library already holds says such a thing must say what
+      // it did. Said ONCE — the check is re-run every turn, but the file
+      // exists after the first one, so the notice cannot repeat.
+      const memoryNote = await this.projectMemoryNoteFor(record, seat);
+      if (memoryNote !== undefined) {
+        recordSpoken(host, "系统", memoryNote.notice);
+      }
       const lines = window.lines ?? [];
       const prompt = composeSeatPrompt({
         seat,
-        instruction,
+        instruction: memoryNote === undefined ? instruction : `${memoryNote.forSeat}\n\n${instruction}`,
         context: lines,
         // The live roster, read at turn time: a member added mid-discussion
         // should be someone the next round can hand work to.

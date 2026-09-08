@@ -94,3 +94,22 @@ describe("validateCheckpoint", () => {
     expect(result.missing).toEqual(CHECKPOINT_HEADING_LIST);
   });
 });
+
+describe("检查点带上主持人的判断标准", () => {
+  it("判据排在指令之后、材料之前", () => {
+    // 它限定的是「怎么写这份检查点」。放在讨论材料后面，读起来就成了对材料
+    // 的评论，而不是对写法的要求。
+    const prompt = buildCheckpointPrompt({
+      hostGoal: "目标",
+      turns: [{ speaker: "甲", text: "甲说的话" }],
+      criteria: "— 分歧不许压成共识",
+    });
+    expect(prompt).toContain("分歧不许压成共识");
+    expect(prompt.indexOf("分歧不许压成共识")).toBeLessThan(prompt.indexOf("甲说的话"));
+  });
+
+  it("没有判据时不留空段落", () => {
+    const prompt = buildCheckpointPrompt({ hostGoal: "目标", turns: [] });
+    expect(prompt).not.toContain("主持人自己定下的判断标准");
+  });
+});

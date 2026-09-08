@@ -106,28 +106,37 @@ describe("parseSelection", () => {
 });
 
 describe("formatForSystemChannel", () => {
-  it("marks them as criteria rather than instructions", () => {
-    expect(formatForSystemChannel([make("c1")])).toContain("是判据不是指令");
+  it("说的是「这一步我按的是」，不是「以下判据生效中」", () => {
+    // 事前提醒会被跳过——这些标准是主持人自己写的，他知道。事后声明说的是
+    // 他唯一给不了自己的那件事：这一次真正起作用的是哪一条。
+    const text = formatForSystemChannel([make("c1")]);
+    expect(text).toContain("这一步我按的是");
+    expect(text).not.toContain("现在生效中");
   });
 
-  it("says they are in force, because the point is to be corrected", () => {
-    expect(formatForSystemChannel([make("c1")])).toContain("现在生效中");
+  it("说得出为什么是这几条", () => {
+    // 「用了哪条」只是一半，「为什么」是另一半，而处境特征就是那个为什么。
+    const text = formatForSystemChannel([make("c1")], ["automatic", "invisible-result"]);
+    expect(text).toContain("automatic");
+    expect(text).toContain("invisible-result");
   });
 
   it("shows what each one grew from", () => {
     // A wrong abstraction should be obvious at a glance rather than taken on
     // the system's word.
     const text = formatForSystemChannel([make("c1", { evidence: ["i-a", "i-b"] })]);
-    expect(text).toContain("2 条实例（i-a、i-b）");
+    expect(text).toContain("2 次实例");
   });
 
   it("shows the boundary when one has grown", () => {
     const text = formatForSystemChannel([make("c1", { boundary: "平凡可逆时不适用" })]);
-    expect(text).toContain("边界：平凡可逆时不适用");
+    expect(text).toContain("平凡可逆时不适用");
   });
 
-  it("says so plainly when nothing applies", () => {
-    expect(formatForSystemChannel([])).toContain("没有可用的判据");
+  it("没有可说的就一个字都不说", () => {
+    // 「这次没有可用的判据」是一句关于机器自身的话，印进一场没有在问它的
+    // 讨论里，只是噪音。
+    expect(formatForSystemChannel([])).toBe("");
   });
 });
 

@@ -84,6 +84,10 @@ export const api = {
     call("/connections", "POST", body),
   removeConnection: (body: { connectionId: string }): Promise<unknown> => call("/connections", "DELETE", body),
   saveAgent: (body: AgentRequest): Promise<unknown> => call("/agents", "POST", body),
+  markCriterion: (body: {
+    teamId: string;
+    turnId: string;
+  }): Promise<{ claim: string; applied: boolean; from: readonly string[] }> => call("/criteria/mark", "POST", body),
   saveSettings: (body: { hostDisplayName?: string; distilConnectionId?: string }): Promise<unknown> =>
     call("/settings", "POST", body),
   saveBlock: (body: PromptBlock): Promise<unknown> => call("/blocks", "POST", body),

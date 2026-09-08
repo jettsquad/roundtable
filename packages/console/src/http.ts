@@ -54,6 +54,7 @@ import type {
 import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { agendaEditIsLegal } from "./agenda-verdict.ts";
 import { driftBetween } from "./roster-drift.ts";
+import { parseMentions } from "./mention.ts";
 import { extractDocument, MAX_FILE_BYTES } from "./extract.ts";
 import { imagePointer, looksLikeImage, saveImage } from "./image.ts";
 import { planSeatSync, syncSeat, type TemplateFacts } from "./seat-sync.ts";
@@ -82,6 +83,7 @@ import {
   quotesFrom,
 } from "@squad/shared";
 import {
+  captureWindow,
   draftIdentityMatches,
   shortHash,
   connectionMismatch,
@@ -541,6 +543,47 @@ export async function assistFor(
  * member schedule the team while the confirmation dialog said the secretary
  * had.
  */
+/**
+ * Mark one of the host's own utterances as carrying a standard.
+ *
+ * The occurrence is built from the record rather than from the browser: the
+ * page could send any text at all, and an instance is the evidence a criterion
+ * rests on. What the transcript says was said is the only version of it that
+ * should ever reach the library.
+ *
+ * The situation is `adjudicate` with no features, and that is a floor rather
+ * than a claim: a marked utterance carries no agenda phase to read one from.
+ * It matters less than it looks — the distillation chooses the trigger
+ * itself now, so this value seeds the candidate lookup and is then replaced.
+ */
+export async function captureMarkedTurn(
+  ctx: Context,
+  request: { readonly teamId: string; readonly turnId: string },
+): Promise<{ readonly claim: string; readonly applied: boolean; readonly from: readonly string[] }> {
+  const team = teamOf(ctx, request.teamId);
+  const host = ctx.userSettings.hostDisplayName();
+  const transcript = transcriptTail(team.transcript()).transcript;
+  const marked = transcript.find((line) => line.turnId === request.turnId);
+  if (marked === undefined) throw new Error("找不到这条发言。");
+  const mentions = parseMentions(
+    marked.text,
+    team.seats.map((seat) => seat.displayName),
+  );
+  const window = captureWindow(transcript, team.hostDisplayName, request.turnId, mentions.named);
+  if (window === undefined) {
+    throw new Error(`「记下来」只挂在${host}自己的发言上——判据是你的标准，不是别人的观点。`);
+  }
+  const captured = await ctx.reasoning.capture({
+    kind: "explicit-mark",
+    situation: { action: "adjudicate", features: [] },
+    proposed: window.proposed,
+    verdict: window.verdict,
+    project: team.projectFolder,
+    parent: team.host,
+  });
+  return { claim: captured.proposal.claim, applied: captured.applied, from: window.from };
+}
+
 export async function agendaFromReplyFor(
   ctx: Context,
   request: { readonly teamId: string; readonly turnId: string },
@@ -620,9 +663,49 @@ export function resolveAgenda(ctx: Context, request: AgendaVerdictRequest): void
   if (problems.length > 0) {
     throw new Error(problems.map((problem) => `「${problem.phase}」：${problem.detail}`).join("\n"));
   }
+  // An EDITED draft is a veto with both halves already on the table: the
+  // secretary proposed one plan, the host confirmed a different one, and the
+  // difference is the standard. Captured only when it actually differs —
+  // confirming a draft unchanged is agreement, and recording agreement as an
+  // overruling would fill the library with criteria nobody ever held.
+  //
+  // Fire-and-forget, and deliberately so. Distilling costs a model call; a
+  // round must not wait on it, and a library that failed to record must not
+  // be able to stop work the host has already confirmed.
+  if (request.agenda !== undefined && standing !== undefined && agendaText(request.agenda) !== agendaText(standing)) {
+    void ctx.reasoning
+      .capture({
+        kind: "veto",
+        situation: { action: "adjudicate", features: [] },
+        proposed: agendaText(standing),
+        verdict: agendaText(request.agenda),
+        project: team.projectFolder,
+        parent: team.host,
+      })
+      .catch((error: unknown) => {
+        ctx.logger.warn(`判据采集失败：${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+
   void team.runAgenda(held).catch((error: Error) => {
     ctx.logger.warn(`议程失败：${error.message}`);
   });
+}
+
+/**
+ * An agenda as the distillation reads it.
+ *
+ * Prose rather than JSON. What differs between a proposed plan and a
+ * confirmed one is usually an instruction reworded or a phase reordered, and
+ * a diff of serialised objects buries that under punctuation the model then
+ * has to see past.
+ */
+function agendaText(agenda: AgendaSpec): string {
+  return agenda.phases
+    .map(
+      (phase, index) => `${index + 1}. ${phase.title}\n   ${phase.tasks.map((task) => task.instruction).join("\n   ")}`,
+    )
+    .join("\n");
 }
 
 /** The draft this team is holding, if any. */
@@ -1298,6 +1381,13 @@ export function registerSquadApi(ctx: Context): () => void {
             await ctx.userSettings.setDistilConnectionId(body.distilConnectionId);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true, hostDisplayName: ctx.userSettings.hostDisplayName() }));
+          return;
+        }
+        if (suffix === "/criteria/mark" && req.method === "POST") {
+          const body = await readJson<{ teamId: string; turnId: string }>(req);
+          const marked = await captureMarkedTurn(ctx, body);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(marked));
           return;
         }
         if (suffix === "/criteria" && req.method === "POST") {
