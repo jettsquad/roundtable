@@ -39,6 +39,21 @@ describe("buildDistilPrompt", () => {
     });
     expect(prompt).toContain("已有边界：平凡可逆时不适用");
   });
+
+  it("tells the model to write in the case's language, not the prompt's", () => {
+    // 提示词整篇是中文，模型跟着指令的语言走是默认行为——一个英文案例
+    // 因此可能产出中文判据，反之亦然。判据是这个人的标准，该留在他说话
+    // 的那种语言里，所以这条约束必须明写。
+    const prompt = buildDistilPrompt({
+      situation: { action: "design-mechanism", features: ["automatic"] },
+      proposed: "silently auto-fold",
+      verdict: "must announce",
+      candidates: [],
+    });
+    expect(prompt).toContain("用这次案例本身的语言写");
+    // 并且要说清「指令的语言不算数」，否则模型仍可能默认跟随中文。
+    expect(prompt).toContain("不决定判据的语言");
+  });
 });
 
 describe("parseDistillation", () => {

@@ -330,6 +330,14 @@ export interface TeamSummary {
 export interface SquadSnapshot {
   readonly teams: readonly TeamSummary[];
   /**
+   * What seats call the person at the table.
+   *
+   * User-level, and always a usable string: the service substitutes the
+   * default rather than returning nothing, so no screen has to decide what an
+   * absent name looks like.
+   */
+  readonly hostDisplayName: string;
+  /**
    * Lil X's judgement library.
    *
    * The counts used to be the whole of it, which made the header badge a

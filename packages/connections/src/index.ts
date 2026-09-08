@@ -18,6 +18,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { AgentTemplatesService } from "./agent-service.ts";
 import { PromptBlocksService } from "./block-service.ts";
 import { SeatConnectionsService } from "./service.ts";
+import { UserSettingsService } from "./settings-service.ts";
 
 export const name = "squad-connections";
 
@@ -27,6 +28,7 @@ export function apply(ctx: Context): void {
   ctx.plugin(SeatConnectionsService);
   ctx.plugin(AgentTemplatesService);
   ctx.plugin(PromptBlocksService);
+  ctx.plugin(UserSettingsService);
 }
 
 export { SeatConnectionsService } from "./service.ts";
@@ -39,6 +41,10 @@ export type { LibraryBlock } from "./block-service.ts";
 export { SQUAD_CONNECTIONS_DOMAIN } from "./domain.ts";
 export type { ConnectionRecord } from "./domain.ts";
 export { SQUAD_AGENTS_DOMAIN } from "./agent-domain.ts";
+export { UserSettingsService } from "./settings-service.ts";
+
 export { SQUAD_BLOCKS_DOMAIN } from "./block-domain.ts";
 export type { PromptBlockRecord } from "./block-domain.ts";
 export type { AgentTemplateRecord } from "./agent-domain.ts";
+export { SQUAD_SETTINGS_DOMAIN, SETTINGS_KEY } from "./settings-domain.ts";
+export type { UserSettingsRecord } from "./settings-domain.ts";

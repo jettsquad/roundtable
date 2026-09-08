@@ -34,6 +34,7 @@ export * from "./agenda-identity.ts";
 export * from "./team-plan.ts";
 export * from "./model-json.ts";
 export * from "./prompt-blocks.ts";
+export * from "./host-name.ts";
 export * from "./speakable.ts";
 export * from "./voices.ts";
 export { quotesFrom, type Quote, type TranscriptLine } from "./quotes.ts";

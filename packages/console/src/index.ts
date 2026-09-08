@@ -63,6 +63,9 @@ export const inject = [
   // entry here does not fail at boot: every screen in the panel dies at once
   // with 「cannot get property "promptBlocks" without inject」.
   "promptBlocks",
+  // What the person is called. Read at team creation, so a missing entry here
+  // would fail at the moment a team is made rather than at boot.
+  "userSettings",
   // The configuration test asks these directly: is a provider registered for
   // this agent's backend, is that backend's CLI on PATH, and — the only check
   // that separates "configured" from "works" — can the seat actually answer,
@@ -90,6 +93,7 @@ export class SquadConsole extends Service {
     "seatConnections",
     "agentTemplates",
     "promptBlocks",
+    "userSettings",
     "agents",
     "subagents",
     "subprocess",

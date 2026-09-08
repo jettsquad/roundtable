@@ -8,6 +8,14 @@
  * secretary moves this one out of it. What the design means by 秘书判断 is
  * that a judgement model drafts and the human rules; that holds either way.
  *
+ * The prompt is Chinese; the OUTPUT is not necessarily. It says so explicitly,
+ * because without that line the model followed the instruction's language and
+ * a library built from English occurrences came out in Chinese — or, as
+ * actually happened, an English case produced an English criterion sitting
+ * beside Chinese ones with no rule saying which was right. The language of a
+ * criterion is not a UI setting: it belongs to the person whose standard it
+ * is, and the case they said it in is the best evidence of that.
+ *
  * Four relations, and the fourth is the one that matters. A counter-example
  * is the largest gradient the system can receive: it means either the
  * criterion is wrong, or its boundary is narrower than written. The second is
@@ -78,6 +86,10 @@ export function buildDistilPrompt(input: DistilInput): string {
     "- 写**标准**，不要写**结论**。「他选了 Postgres」是结论；「他要求给出迁移成本估算才接受选型」是标准。",
     "  这个区别是整件事的生死线：结论没法迁移到别的处境，标准可以。",
     "- 去掉项目名、人名、具体文件名。抽象要能给别人用。",
+    "- **用这次案例本身的语言写**：上面「机器提议 / 人的裁定 / 人给的理由」是什么语言，" +
+      "claim 和 boundary 就用什么语言。这段指令是中文的，但它只是在指挥你，不决定判据的语言。" +
+      "案例几种语言混着的时候，看「人的裁定」和「人给的理由」——判据是这个人的标准，" +
+      "该用他说话的那种语言留下来。",
     "",
     "另外给出**触发条件**：这条判据以后应该在什么处境下被捞出来。",
     "- triggerFeatures 只填**必要**的特征，不要把这次碰巧带有的特征全填上。",

@@ -427,6 +427,9 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
   const healthById = new Map(health.map((entry) => [entry.criterionId, entry]));
   return {
     teams,
+    // What the person is called, so the screen that edits it does not need a
+    // second round trip to know what it is editing.
+    hostDisplayName: ctx.userSettings.hostDisplayName(),
     criteria: {
       active: active.length,
       pending: pending.length,
@@ -685,7 +688,10 @@ export async function createTeamWithMembers(
   const team = await ctx.teams.create({
     displayName: input.displayName.trim(),
     projectFolder: input.projectFolder.trim(),
-    hostDisplayName: "主持人",
+    // The person's own name, not a constant. Copied into the team at creation
+    // so a rename later cannot rewrite what already-recorded rounds say a
+    // participant was called.
+    hostDisplayName: ctx.userSettings.hostDisplayName(),
     seats,
   });
   return team.teamId;
@@ -696,7 +702,7 @@ export async function createTeamFrom(ctx: Context, raw: string): Promise<string>
   const team = await ctx.teams.create({
     displayName: input.displayName,
     projectFolder: input.projectFolder,
-    hostDisplayName: "主持人",
+    hostDisplayName: ctx.userSettings.hostDisplayName(),
     seats: input.seats.map((seat) => ({
       seatId: seat.seatId,
       displayName: seat.displayName,
@@ -1277,6 +1283,13 @@ export function registerSquadApi(ctx: Context): () => void {
           const report = await checkAgent(ctx, body.templateId);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify(report));
+          return;
+        }
+        if (suffix === "/settings" && req.method === "POST") {
+          const body = await readJson<{ hostDisplayName?: string }>(req);
+          await ctx.userSettings.setHostDisplayName(body.hostDisplayName ?? "");
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true, hostDisplayName: ctx.userSettings.hostDisplayName() }));
           return;
         }
         if (suffix === "/criteria" && req.method === "POST") {

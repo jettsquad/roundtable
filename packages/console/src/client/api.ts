@@ -84,6 +84,7 @@ export const api = {
     call("/connections", "POST", body),
   removeConnection: (body: { connectionId: string }): Promise<unknown> => call("/connections", "DELETE", body),
   saveAgent: (body: AgentRequest): Promise<unknown> => call("/agents", "POST", body),
+  saveSettings: (body: { hostDisplayName: string }): Promise<unknown> => call("/settings", "POST", body),
   saveBlock: (body: PromptBlock): Promise<unknown> => call("/blocks", "POST", body),
   removeBlock: (body: { blockId: string }): Promise<unknown> => call("/blocks", "DELETE", body),
   reorderBlocks: (body: { blockIds: readonly string[] }): Promise<unknown> => call("/blocks/order", "POST", body),

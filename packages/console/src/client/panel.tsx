@@ -16,6 +16,7 @@ import { AgentsPage } from "./agents.tsx";
 import { Connections } from "./connections.tsx";
 import { Discussion } from "./discussion.tsx";
 import { CriteriaPage } from "./criteria.tsx";
+import { MePage } from "./me.tsx";
 import { CreateForm } from "./create.tsx";
 import { SeatEditor } from "./seats.tsx";
 import { TeamPromptsPanel } from "./team-prompts.tsx";
@@ -330,7 +331,7 @@ function teamTint(name: string): string {
   return TEAM_TINTS[hash % TEAM_TINTS.length] ?? TEAM_TINTS[0];
 }
 
-type Page = "teams" | "agents" | "blocks" | "connections" | "criteria";
+type Page = "teams" | "agents" | "blocks" | "connections" | "criteria" | "me";
 
 /**
  * The tabs, as dictionary KEYS rather than text.
@@ -345,6 +346,7 @@ const TABS: readonly { readonly id: Page; readonly label: SquadKey }[] = [
   { id: "blocks", label: "panel.tab.blocks" },
   { id: "connections", label: "panel.tab.connections" },
   { id: "criteria", label: "panel.tab.criteria" },
+  { id: "me", label: "panel.tab.me" },
 ];
 
 export function TeamPanel(): JSX.Element | null {
@@ -396,13 +398,13 @@ export function TeamPanel(): JSX.Element | null {
 
   const counts =
     snapshot.state === "ready"
-      ? {
+      ? ({
           teams: teams.length,
           agents: snapshot.data.agents.length,
           blocks: snapshot.data.blocks.length,
           connections: snapshot.data.connections.length,
           criteria: snapshot.data.criteria.live.length + snapshot.data.criteria.proposals.length,
-        }
+        } as Partial<Record<Page, number>>)
       : undefined;
 
   return (
@@ -423,7 +425,10 @@ export function TeamPanel(): JSX.Element | null {
                 onClick={() => setPage(tab.id)}
               >
                 {t(tab.label)}
-                {counts === undefined ? "" : t("panel.count", { n: counts[tab.id] })}
+                {/* Only where a number means something. 「我」 holds settings,
+                    not a collection, and 「我 (1)」 would be counting the
+                    person. */}
+                {counts === undefined || counts[tab.id] === undefined ? "" : t("panel.count", { n: counts[tab.id] })}
               </button>
             ))}
           </div>
@@ -503,6 +508,8 @@ export function TeamPanel(): JSX.Element | null {
           <BlocksPage blocks={snapshot.data.blocks} onChanged={again} />
         ) : page === "criteria" ? (
           <CriteriaPage criteria={snapshot.data.criteria} onChanged={again} />
+        ) : page === "me" ? (
+          <MePage hostDisplayName={snapshot.data.hostDisplayName} onChanged={again} />
         ) : (
           <Connections connections={snapshot.data.connections} onChanged={again} />
         )}
