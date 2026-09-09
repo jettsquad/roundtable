@@ -127,3 +127,25 @@ describe("自定义端点", () => {
     expect(buildCodexArgv({ ...base, endpoint: "   " }).join(" ")).not.toContain("model_providers");
   });
 });
+
+describe("续接已有 thread", () => {
+  it("resume 是子命令，不是标志", () => {
+    // `codex exec resume <id>`——和 Claude 那边 `--resume <id>` 的形状不同，
+    // 位置错了 CLI 会当成 prompt 收下。
+    const argv = buildCodexArgv({ ...base, resumeSessionId: "01a08-thread" });
+    expect(argv.slice(0, 3)).toEqual(["exec", "resume", "01a08-thread"]);
+    expect(argv).toContain("--json");
+    expect(argv).toContain("--skip-git-repo-check");
+  });
+
+  it("不续接时形状一个字不变", () => {
+    // 存量行为必须逐字保持：没有会话 id 的席位走的还是原来那条路。
+    expect(buildCodexArgv(base).slice(0, 2)).toEqual(["exec", "--cd"]);
+    expect(buildCodexArgv({ ...base, resumeSessionId: "" }).slice(0, 2)).toEqual(["exec", "--cd"]);
+  });
+
+  it("续接时提示词仍然是最后一个参数", () => {
+    const argv = buildCodexArgv({ ...base, resumeSessionId: "t1" });
+    expect(argv[argv.length - 1]).toBe(base.prompt);
+  });
+});

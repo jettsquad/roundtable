@@ -40,6 +40,19 @@ export const usageOfResult = (result: unknown): SeatUsage | undefined =>
     ? ((result as SeatUsageCarrier).squadUsage ?? undefined)
     : undefined;
 
+/**
+ * The CLI conversation id one turn ran under, when the backend reported one.
+ *
+ * Read the same way the usage is, and for the same reason: the seam declares
+ * neither field, and both ride back as extra properties on a result object dsh
+ * returns unchanged.
+ */
+export const sessionIdOfResult = (result: unknown): string | undefined => {
+  if (typeof result !== "object" || result === null || !("squadSessionId" in result)) return undefined;
+  const id = (result as { readonly squadSessionId?: unknown }).squadSessionId;
+  return typeof id === "string" && id !== "" ? id : undefined;
+};
+
 /** Everything the counters can be added up over. */
 export interface UsageTotals extends SeatUsage {
   /** Turns that reported accounting. Turns that reported none are not counted. */

@@ -31,11 +31,25 @@ export interface StreamOutcome {
    * from zeroes reads as "cheap" instead of "unmeasured".
    */
   readonly usage?: SeatUsage | undefined;
+  /**
+   * The CLI's own id for this conversation, when it said one.
+   *
+   * Kept so the NEXT turn can `--resume` it. That is the whole of the saving:
+   * a resumed conversation re-reads its ~92k standing prefix from cache
+   * instead of creating it again, measured at 65,897 → 62 tokens of cache
+   * creation on this machine.
+   *
+   * Read from any event that carries it rather than only from the result
+   * envelope: a run killed by the watchdog has an id worth keeping — the next
+   * turn can still continue it — and it announced that id at startup.
+   */
+  readonly sessionId?: string | undefined;
 }
 
 interface StreamEvent {
   readonly type?: unknown;
   readonly subtype?: unknown;
+  readonly session_id?: unknown;
   readonly is_error?: unknown;
   readonly result?: unknown;
   readonly message?: { readonly content?: unknown } | undefined;
@@ -101,6 +115,13 @@ const textOfBlocks = (content: unknown): string => {
 export function readStream(output: string): StreamOutcome {
   const events = parseLines(output);
   const envelope = [...events].reverse().find((event) => event.type === "result");
+  // The first one wins: the id is announced at startup and repeated, and a
+  // later event carrying a different one would mean the CLI started a second
+  // conversation — which is not something to record as this turn's.
+  const sessionId = events.map((event) => event.session_id).find((id) => typeof id === "string" && id !== "") as
+    string | undefined;
+  const withSession = <T extends { readonly text: string; readonly failed: boolean }>(outcome: T): T =>
+    (sessionId === undefined ? outcome : { ...outcome, sessionId }) as T;
 
   const streamed = events
     .filter((event) => event.type === "assistant")
@@ -116,13 +137,13 @@ export function readStream(output: string): StreamOutcome {
     // reached its result — killed by the watchdog, or dying mid-retry. The
     // answer is whatever assistant text arrived, and nothing if none did.
     // The raw log is not an answer; it is a transcript of the machinery.
-    if (events.length > 0) return { text: streamed, failed: true };
+    if (events.length > 0) return withSession({ text: streamed, failed: true });
 
     // No events at all: not a stream-json run — an older CLI, or a failure
     // before the format started. Whatever came out is all there is, and an
     // empty answer is a failure rather than a silent success.
     const plain = output.trim();
-    return { text: plain, failed: plain === "" };
+    return { text: plain, failed: plain === "" }; // no events, so no id was ever announced
   }
 
   const failed = envelope.is_error === true || envelope.subtype !== "success";
@@ -135,5 +156,6 @@ export function readStream(output: string): StreamOutcome {
     // Carried even on a failed run: a turn that burned tokens and then errored
     // still cost what it cost, and dropping it would make failures look free.
     ...(usage === undefined ? {} : { usage }),
+    ...(sessionId === undefined ? {} : { sessionId }),
   };
 }

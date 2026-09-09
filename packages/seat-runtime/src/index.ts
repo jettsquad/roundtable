@@ -34,6 +34,13 @@ export type { SilenceLimits, SilenceReason } from "./silence.ts";
 export { activityFor, activityKey, beginActivity, endActivity, reportActivity, resetActivity } from "./activity.ts";
 export type { SeatActivity } from "./activity.ts";
 export { SEAT_ALIVE_PREFIX, isAliveLine, withoutHeartbeats } from "./alive.ts";
+export {
+  forgetSeatSession,
+  forgetSeatSessions,
+  rememberSeatSession,
+  resetSeatSessions,
+  seatSessionId,
+} from "./sessions.ts";
 
 /** What a backend's parser makes of one run's output. */
 export interface SeatOutcome {
@@ -42,6 +49,14 @@ export interface SeatOutcome {
   /** What the backend's own parser knows about the failure, when it knows anything. */
   readonly detail?: string | undefined;
   readonly usage?: SeatUsage | undefined;
+  /**
+   * The CLI's own id for this conversation, when the backend reports one.
+   *
+   * Travels back to the caller so the NEXT turn of this seat can continue the
+   * same conversation instead of opening a new one — which is where the
+   * standing prefix stops being paid for a second time.
+   */
+  readonly sessionId?: string | undefined;
 }
 
 export interface SeatRunSpec {
@@ -239,6 +254,9 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
         // unchanged, so an extra property survives to the caller. Verified in
         // the harness source before relying on it.
         ...(parsed.usage === undefined ? {} : { squadUsage: parsed.usage }),
+        // Same mechanism as the usage above, and the same caveat: dsh returns
+        // our object unchanged, so an extra property reaches the caller.
+        ...(parsed.sessionId === undefined ? {} : { squadSessionId: parsed.sessionId }),
       } as SubagentResult;
     } finally {
       watch.stop();

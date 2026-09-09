@@ -50,6 +50,19 @@ export interface ArgvInput {
    * its own filter and forgetting.
    */
   readonly alwaysDeny?: readonly string[] | undefined;
+  /**
+   * Continue this conversation instead of starting one.
+   *
+   * The saving is the standing prefix. A fresh `claude -p` re-creates its
+   * ~92k of system prompt, tool definitions and CLAUDE.md every time — 65,897
+   * tokens of cache CREATION, measured, with only 26,552 served from cache.
+   * Resumed, the same call creates 62 and reads 92,449.
+   *
+   * An id the CLI no longer knows makes the run fail, so the caller must be
+   * able to drop it and start over rather than reporting a dead seat. See
+   * the table's `resumeIdFor`.
+   */
+  readonly resumeSessionId?: string | undefined;
 }
 
 /** Delegation tools, denied to every seat unless the composition says otherwise. */
@@ -76,6 +89,13 @@ export function buildArgv(input: ArgvInput): readonly string[] {
     // an idle clock kills a seat that is working.
     "--include-partial-messages",
   ];
+
+  // Before the permission flags, and before the prompt: the CLI reads it as a
+  // top-level option, and everything after it still applies to the resumed
+  // conversation.
+  if (input.resumeSessionId !== undefined && input.resumeSessionId !== "") {
+    argv.push("--resume", input.resumeSessionId);
+  }
 
   const mode = input.permissionMode ?? "acceptEdits";
   if (mode === "bypassPermissions") argv.push("--dangerously-skip-permissions");

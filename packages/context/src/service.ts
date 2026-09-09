@@ -20,6 +20,7 @@ import { mergeCheckpoints } from "./merge.ts";
 import { planFold } from "./plan.ts";
 import { renderTimeline } from "./timeline.ts";
 import { CHECKPOINT_KIND, selectContextEvents, type SelectableEvent } from "./window.ts";
+import { forgetSeatSessions } from "@squad/seat-runtime";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -313,7 +314,18 @@ export class TeamContextService extends Service {
         // and finds nothing.
         artifactPaths: this.artifactsOf(teamId),
       });
-      return await this.record({ teamId, text, coversUpTo: plan.coversUpTo });
+      const recorded = await this.record({ teamId, text, coversUpTo: plan.coversUpTo });
+      // Every seat's CLI conversation is discarded here, and this is the one
+      // place it has to happen. The checkpoint REPLACES the history Squad
+      // hands out; a CLI still holding its own copy would answer the next turn
+      // from the raw discussion this fold exists to compress — the summary and
+      // the thing it summarised, both in one prompt, growing every round.
+      //
+      // There is no way to tell a CLI to forget. Discarding the conversation
+      // is the only mechanism, and the cost is one un-resumed turn per seat at
+      // exactly the moment their history was going to change anyway.
+      forgetSeatSessions(team.host.session.id);
+      return recorded;
     } finally {
       this.folding.delete(teamId);
     }

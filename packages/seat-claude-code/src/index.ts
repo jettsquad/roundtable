@@ -28,7 +28,7 @@ import type {} from "@deepseek-ai/dsh-subprocess";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCliSeat, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
+import { runCliSeat, seatSessionId, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { CLAUDE_PERMISSION_MODES, providerNameFor } from "@squad/shared";
 import { DELEGATION_TOOLS, buildArgv, type PermissionMode } from "./argv.ts";
 import { readStream } from "./stream.ts";
@@ -195,6 +195,14 @@ export class FencedClaudeCodeSeats extends Service {
           argv: ({ prompt }) =>
             buildArgv({
               prompt,
+              // Continue this seat's own conversation when it has one. The
+              // table remembers the id after each turn and drops it when a
+              // resumed run fails, so an id that reaches here is one that
+              // worked last time.
+              ...(() => {
+                const resume = seatSessionId(request.parent.session.id, request.label);
+                return resume === undefined ? {} : { resumeSessionId: resume };
+              })(),
               ...(request.toolFilter === undefined ? {} : { toolFilter: request.toolFilter }),
               ...(request.persona === undefined ? {} : { persona: request.persona }),
               // The registration's mode wins over the plugin default: it is

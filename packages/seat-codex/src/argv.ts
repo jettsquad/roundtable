@@ -64,6 +64,20 @@ export interface CodexArgvInput {
    * like-it-works this project keeps designing against.
    */
   readonly webAccess?: boolean | undefined;
+  /**
+   * Continue this thread instead of starting one.
+   *
+   * A SUBCOMMAND here, not a flag: `codex exec resume <id> <prompt>`. That is
+   * the one structural difference from the Claude backend, where the same
+   * thing is `--resume <id>` alongside everything else.
+   *
+   * Worth less than it is there, and the numbers say why: a fresh codex thread
+   * costs about 17.6k of standing prefix against Claude's 93k, because there
+   * is no CLAUDE.md-sized file being re-read. Resuming still helps — 15,744 of
+   * 15,896 input tokens came back from cache on the second turn — but the
+   * saving is roughly a quarter of the other backend's.
+   */
+  readonly resumeSessionId?: string | undefined;
 }
 
 /** The provider id one custom endpoint is declared under. */
@@ -111,7 +125,12 @@ function permissionArgs(mode: CodexPermissionMode): readonly string[] {
 }
 
 export function buildCodexArgv(input: CodexArgvInput): readonly string[] {
-  const argv = ["exec", "--cd", input.cwd, "--json", "--skip-git-repo-check"];
+  const resuming = input.resumeSessionId !== undefined && input.resumeSessionId !== "";
+  // `resume` is a subcommand of `exec` and takes the id as its first
+  // argument; the options that follow are the same ones a fresh run takes.
+  const argv = resuming
+    ? ["exec", "resume", input.resumeSessionId as string, "--cd", input.cwd, "--json", "--skip-git-repo-check"]
+    : ["exec", "--cd", input.cwd, "--json", "--skip-git-repo-check"];
   argv.push(...permissionArgs(input.permissionMode ?? "workspace"));
   // Both halves of "may this seat reach the web", written on EVERY run —
   // including the off case, which is the point. These same two keys can be set

@@ -32,6 +32,15 @@ export interface CodexOutcome {
    * cost nothing are different facts.
    */
   readonly usage?: SeatUsage | undefined;
+  /**
+   * The CLI's own id for this conversation, announced on `thread.started`.
+   *
+   * Kept so the next turn can run `codex exec resume <id>` instead of opening
+   * a fresh one. Measured on this machine: a resumed thread came back with
+   * 15,744 of 15,896 input tokens served from cache, against a fresh thread
+   * that cached 12,928 of 17,619 and paid for the rest again.
+   */
+  readonly sessionId?: string | undefined;
 }
 
 interface CodexEvent {
@@ -46,6 +55,7 @@ interface CodexEvent {
     | undefined;
   readonly message?: unknown;
   readonly error?: unknown;
+  readonly thread_id?: unknown;
 }
 
 const count = (value: unknown): number | undefined =>
@@ -107,6 +117,11 @@ export function readCodexStream(raw: string): CodexOutcome {
           ? failure.error
           : "codex 报告了一个失败，但没有给出原因。";
 
+  // `thread.started` is the first line of the stream and carries it. Taken
+  // from any event that has one, so a run that failed later still hands back
+  // an id the next turn can continue.
+  const thread = events.map((event) => event.thread_id).find((id) => typeof id === "string" && id !== "");
+
   return {
     text,
     // No answer is a failure even without an error event: a seat that returns
@@ -115,5 +130,6 @@ export function readCodexStream(raw: string): CodexOutcome {
     failed: failure !== undefined || text.trim() === "",
     ...(detail === undefined ? {} : { detail }),
     ...(usage === undefined ? {} : { usage }),
+    ...(typeof thread === "string" ? { sessionId: thread } : {}),
   };
 }

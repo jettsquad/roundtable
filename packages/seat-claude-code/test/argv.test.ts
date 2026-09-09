@@ -80,3 +80,24 @@ describe("the rest of the command line", () => {
     expect(buildArgv({ prompt: "x", persona: "   " })).not.toContain("--append-system-prompt");
   });
 });
+
+describe("续接已有会话", () => {
+  it("--resume 带上 id", () => {
+    // 省的是常驻前缀：新会话每次重建约 65,897 token 的缓存，续接后是 62。
+    const argv = buildArgv({ prompt: "P", resumeSessionId: "sess-1" });
+    expect(argv).toContain("--resume");
+    expect(argv[argv.indexOf("--resume") + 1]).toBe("sess-1");
+  });
+
+  it("不续接时不出现这个标志", () => {
+    expect(buildArgv({ prompt: "P" })).not.toContain("--resume");
+    expect(buildArgv({ prompt: "P", resumeSessionId: "" })).not.toContain("--resume");
+  });
+
+  it("续接不影响权限模式和工具围栏", () => {
+    const argv = buildArgv({ prompt: "P", resumeSessionId: "s", permissionMode: "plan" });
+    expect(argv).toContain("--permission-mode");
+    expect(argv).toContain("plan");
+    expect(argv).toContain("--disallowed-tools");
+  });
+});

@@ -25,7 +25,7 @@ import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "
 // Imported for the `Context.subprocess` declaration merging it carries.
 import type {} from "@deepseek-ai/dsh-subprocess";
 import { CODEX_PERMISSION_MODES, modelArgumentFor, providerName, type SeatConnection } from "@squad/shared";
-import { runCliSeat, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
+import { runCliSeat, seatSessionId, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { buildCodexArgv, isCodexMode } from "./argv.ts";
 import { readCodexStream } from "./stream.ts";
 
@@ -149,6 +149,13 @@ export class SquadSeatCodex extends Service {
             buildCodexArgv({
               prompt,
               cwd,
+              // Same as the Claude backend, and worth less here: a fresh codex
+              // thread carries about 17.6k of standing prefix against
+              // Claude's 93k, so resuming saves roughly a quarter as much.
+              ...(() => {
+                const resume = seatSessionId(request.parent.session.id, request.label);
+                return resume === undefined ? {} : { resumeSessionId: resume };
+              })(),
               permissionMode: mode,
               // The model rides on the command line for this backend — Codex
               // has no model environment variable — and only when it can

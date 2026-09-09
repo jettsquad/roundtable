@@ -38,6 +38,7 @@ import {
   addUsage,
   resolveArtifactPath,
   stripReasoning,
+  sessionIdOfResult,
   usageOfResult,
   type AgendaSpec,
   type SeatUsage,
@@ -50,7 +51,13 @@ import {
   projectMemoryNote,
   type TeamPrompts,
 } from "@squad/shared";
-import { activityFor, activityKey, type SeatActivity } from "@squad/seat-runtime";
+import {
+  activityFor,
+  activityKey,
+  forgetSeatSession,
+  rememberSeatSession,
+  type SeatActivity,
+} from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
 import { baseForFolder, recordForSession, restoreOrder, unclaimed } from "./sitting.ts";
 import { appendAudit, type AuditEntry, type AuditKind } from "./audit.ts";
@@ -2017,6 +2024,20 @@ export class TeamsService extends Service {
       // a round that quietly drops a member reads exactly like a round where
       // that member had nothing to say.
       const failed = result.stopReason !== "completed";
+      // The conversation this turn ran in, so the next one can continue it
+      // instead of paying for the standing prefix again.
+      //
+      // A FAILED turn drops it instead. The commonest way a resume fails is an
+      // id the CLI no longer knows, and keeping it would make every later turn
+      // of this seat fail identically — with an error naming a uuid the person
+      // has never seen. Forgetting costs one un-resumed turn; keeping costs
+      // the seat.
+      const cliSession = sessionIdOfResult(result);
+      if (failed) {
+        forgetSeatSession(host.session.id, seat.displayName);
+      } else if (cliSession !== undefined) {
+        rememberSeatSession(host.session.id, seat.displayName, cliSession);
+      }
       recordSpoken(host, seat.displayName, text);
       // Counted before the reply is returned, and counted on failures too:
       // a turn that burned tokens and then errored still cost what it cost.
