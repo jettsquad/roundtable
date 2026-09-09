@@ -19,7 +19,7 @@ import { SQUAD_TEAMS_DOMAIN, type CheckpointRecord } from "./domain.ts";
 import { mergeCheckpoints } from "./merge.ts";
 import { planFold } from "./plan.ts";
 import { renderTimeline } from "./timeline.ts";
-import { CHECKPOINT_KIND, selectContextEvents, type SelectableEvent } from "./window.ts";
+import { CHECKPOINT_KIND, selectContextEvents, tailForSeat, type SelectableEvent } from "./window.ts";
 import { forgetSeatSessions } from "@squad/seat-runtime";
 
 declare module "@deepseek-ai/cordis" {
@@ -79,7 +79,7 @@ export class TeamContextService extends Service {
       await domain.close();
     });
     const release = this.ctx.teams.useAssembler({
-      windowFor: (teamId, seatId) => this.windowFor(teamId, seatId),
+      windowFor: (teamId, seatId, continuingAs) => this.windowFor(teamId, seatId, continuingAs),
       roundEnded: (teamId) => this.onRoundEnded(teamId),
       artifactWritten: (teamId, path) => this.onArtifactWritten(teamId, path),
     });
@@ -89,13 +89,19 @@ export class TeamContextService extends Service {
   /**
    * The lines this seat is shown this round.
    *
-   * `seatId` is accepted and currently unused: every seat sees the same
-   * window. It is in the signature because per-seat windows are the point of
-   * `contextMode: independent`, and changing a service's shape later is a
-   * worse cost than carrying an honest parameter now.
+   * `seatId` stays unused — every seat is selected the same way. The parameter
+   * that DOES change the answer is `continuingAs`: the display name of a seat
+   * that is continuing its own CLI conversation, and therefore already holds
+   * everything up to its last reply. Given one, only the tail travels.
+   *
+   * The caller decides, not this service, because only the caller knows
+   * whether a conversation actually survived — an id that failed to resume was
+   * dropped, and that seat must be handed the whole window again.
    */
-  async windowFor(teamId: string, _seatId: string): Promise<readonly string[]> {
-    return renderTimeline(selectContextEvents(this.mergedStream(teamId)));
+  async windowFor(teamId: string, _seatId: string, continuingAs?: string): Promise<readonly string[]> {
+    const selected = selectContextEvents(this.mergedStream(teamId));
+    const events = continuingAs === undefined || continuingAs === "" ? selected : tailForSeat(selected, continuingAs);
+    return renderTimeline(events);
   }
 
   /** Store a checkpoint the secretary wrote. */

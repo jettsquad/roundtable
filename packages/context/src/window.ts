@@ -108,6 +108,44 @@ const carriedWindow = (priorRoundEvents: readonly SelectableEvent[]): readonly S
 };
 
 /**
+ * The tail of a window: only what this seat has not already been handed.
+ *
+ * The saving this exists for: a seat that continues its own CLI conversation
+ * already HOLDS everything up to its last reply, and sending it again puts the
+ * same text in the prompt twice — once in the conversation the CLI remembers,
+ * once in the window Squad assembles. The duplication grows every round.
+ *
+ * Cut at the seat's own last SPEECH, found by the `【名字】` prefix the record
+ * writes, because that is the last moment this seat is known to have seen
+ * everything before it. Whatever came after — the other seats' replies, the
+ * host's new question — is exactly what it has not been told.
+ *
+ * SAFE ONLY BECAUSE OF THE FOLD RULE. A checkpoint replaces history, and a
+ * CLI holding its own copy cannot be told to forget; the table therefore
+ * discards every seat's conversation when a fold happens, so a seat with a
+ * live conversation is by construction a seat whose history has not been
+ * rewritten since it last spoke. If that rule ever changes, this becomes
+ * wrong — the seat would keep answering from the raw discussion a fold had
+ * already compressed.
+ *
+ * Returns the WHOLE window when the seat has never spoken, which is the first
+ * turn: there is no conversation to continue and nothing to trim against.
+ */
+export const tailForSeat = (events: readonly SelectableEvent[], displayName: string): readonly SelectableEvent[] => {
+  // `text`, not `message`: the transcript stores 「【名字】说的话」 in `text`,
+  // and `message` is the timeline layer's own field. Reading the wrong one
+  // matches nothing, and a tail that matches nothing silently degrades into
+  // sending the whole window — the exact duplication this removes.
+  const spoke = (event: SelectableEvent): boolean =>
+    typeof event.text === "string" && event.text.startsWith(`【${displayName}】`);
+  let last = -1;
+  for (const [index, event] of events.entries()) {
+    if (spoke(event)) last = index;
+  }
+  return last < 0 ? events : events.slice(last + 1);
+};
+
+/**
  * Assemble what this turn sees: the previous round, plus any quoted replies
  * the host chose, in transcript order, each appearing once.
  *

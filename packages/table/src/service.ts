@@ -56,6 +56,7 @@ import {
   activityKey,
   forgetSeatSession,
   rememberSeatSession,
+  seatSessionId,
   type SeatActivity,
 } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
@@ -424,7 +425,12 @@ export interface TranscriptEvent {
  */
 export interface TeamAssembler {
   /** The lines this seat is shown this round. */
-  windowFor(teamId: string, seatId: string): Promise<readonly string[]>;
+  /**
+   * @param continuingAs the display name of a seat that is continuing its own
+   *   CLI conversation, and so already holds everything up to its last reply.
+   *   Absent means hand it the whole window.
+   */
+  windowFor(teamId: string, seatId: string, continuingAs?: string): Promise<readonly string[]>;
   /**
    * A round just finished and this team is idle.
    *
@@ -1424,7 +1430,7 @@ export class TeamsService extends Service {
     this.refreshAuthModes(record);
     const windows = new Map<string, WindowAttempt>();
     for (const seat of seats) {
-      windows.set(seat.seatId, await this.contextFor(record.teamId, seat.seatId));
+      windows.set(seat.seatId, await this.windowForSeat(record, host, seat));
     }
 
     // Decided once for the whole round, so every seat in it sees the same
@@ -1475,10 +1481,27 @@ export class TeamsService extends Service {
    * and lands in the record as that seat failing, which is both true and
    * findable.
    */
-  private async contextFor(teamId: string, seatId: string): Promise<WindowAttempt> {
+  /**
+   * The window this seat should get, trimmed when it is continuing.
+   *
+   * A seat with a live CLI conversation already holds everything up to its own
+   * last reply; sending it again would put the same text in the prompt twice —
+   * once in the conversation the CLI remembers, once in the window assembled
+   * here — and the overlap grows every round.
+   *
+   * The check is on the conversation, not on the seat: an id dropped after a
+   * failed resume means the next turn opens a fresh conversation, and a fresh
+   * conversation must be handed everything.
+   */
+  private async windowForSeat(record: TeamRecord, host: Agent, seat: SeatSpec): Promise<WindowAttempt> {
+    const continuing = seatSessionId(host.session.id, seat.displayName) !== undefined;
+    return this.contextFor(record.teamId, seat.seatId, continuing ? seat.displayName : undefined);
+  }
+
+  private async contextFor(teamId: string, seatId: string, continuingAs?: string): Promise<WindowAttempt> {
     if (this.assembler === undefined) return { lines: [] };
     try {
-      return { lines: await this.assembler.windowFor(teamId, seatId) };
+      return { lines: await this.assembler.windowFor(teamId, seatId, continuingAs) };
     } catch (error) {
       return { error: error instanceof Error ? error : new Error(String(error)) };
     }
@@ -1582,7 +1605,13 @@ export class TeamsService extends Service {
         const opening = new Map<string, WindowAttempt>();
         for (const run of runs) {
           if (run.window === "phase-start" && !opening.has(run.task.seatId)) {
-            opening.set(run.task.seatId, await this.contextFor(record.teamId, run.task.seatId));
+            const seat = record.seats.find((candidate) => candidate.seatId === run.task.seatId);
+            opening.set(
+              run.task.seatId,
+              seat === undefined
+                ? await this.contextFor(record.teamId, run.task.seatId)
+                : await this.windowForSeat(record, host, seat),
+            );
           }
         }
 
@@ -1612,7 +1641,7 @@ export class TeamsService extends Service {
           const window =
             run.window === "phase-start"
               ? (opening.get(seat.seatId) ?? { lines: [] })
-              : await this.contextFor(record.teamId, seat.seatId);
+              : await this.windowForSeat(record, host, seat);
 
           recordSpoken(host, record.input.hostDisplayName, `（${phase.title}）${run.task.instruction}`);
           const reply = await this.runSeat(record, host, seat, run.task.instruction, window, running.abort.signal);
