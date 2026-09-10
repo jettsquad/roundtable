@@ -30,3 +30,29 @@ describe("readDshOutput", () => {
     expect(readDshOutput("答复").usage).toBeUndefined();
   });
 });
+
+describe("readDshOutput 的用量", () => {
+  it("从 stderr 读出来，放进 usage", () => {
+    const out = readDshOutput(
+      "这是答复。",
+      '[squad-usage] {"inputTokens":1200,"outputTokens":80,"cacheReadTokens":300,"cacheCreationTokens":40}',
+    );
+    expect(out.usage).toEqual({
+      inputTokens: 1200,
+      outputTokens: 80,
+      cacheReadTokens: 300,
+      cacheCreationTokens: 40,
+    });
+  });
+
+  it("没有 stderr 时 usage 是 undefined，不是零", () => {
+    expect(readDshOutput("这是答复。").usage).toBeUndefined();
+  });
+
+  it("失败的一轮也要带上已经花掉的", () => {
+    // 烧了 token 然后报错，仍然花了它花掉的那些。丢掉会让失败看起来免费。
+    const out = readDshOutput("", '[squad-usage] {"inputTokens":500,"outputTokens":0}');
+    expect(out.failed).toBe(true);
+    expect(out.usage?.inputTokens).toBe(500);
+  });
+});

@@ -36,6 +36,21 @@ export const name = "squad-seat-heartbeat";
 const PREFIX = "[squad-alive]";
 
 /**
+ * The prefix a usage line carries.
+ *
+ * A second channel on the same stream, and it exists because the headless app
+ * THROWS THIS AWAY: its chunk switch has `case "usage": return;`, so the
+ * harness measures every call and then prints nothing. The parent had no
+ * accounting for dsh seats at all — a team with one in it reported a total
+ * that was quietly short, with nothing saying so.
+ *
+ * Its own copy of `@squad/seat-runtime`'s literal for the same reason
+ * `PREFIX` is: this module runs in another process, and importing the runtime
+ * there would drag the whole subagent machinery in for one string.
+ */
+const USAGE_PREFIX = "[squad-usage]";
+
+/**
  * The shortest gap between two lines.
  *
  * A real model emits `assistant/chunk` tens of times a second, and stderr is
@@ -68,6 +83,15 @@ const ALWAYS: ReadonlySet<string> = new Set([
  */
 export function apply(ctx: Context): void {
   let lastAt = 0;
+  // RUNNING TOTALS, re-printed whole every time.
+  //
+  // A turn that calls tools makes several model calls and reports usage once
+  // per call, so a line per event would have to be summed by the reader — and
+  // the reader sees only the TAIL of a capped stderr buffer, so a summing
+  // reader would silently undercount exactly the long turns that cost most.
+  // Printing the total means the last line is the answer, and the last line is
+  // the one truncation keeps.
+  const total = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
   const write = (type: string): void => {
     const now = Date.now();
     if (now - lastAt < MIN_GAP_MS && !ALWAYS.has(type)) return;
@@ -87,7 +111,42 @@ export function apply(ctx: Context): void {
           ? String((event as { type: unknown }).type)
           : "?";
       write(type);
+      addUsage(event, total);
     },
     { global: true },
   );
+}
+
+/** One number off an unknown shape, ignoring anything that is not one. */
+const numberAt = (source: unknown, key: string): number => {
+  if (typeof source !== "object" || source === null || !(key in source)) return 0;
+  const value = (source as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+};
+
+/**
+ * Add one `usage` chunk to the running total and print it.
+ *
+ * Reads defensively rather than by type: this file is loaded by a DIFFERENT
+ * process, against whatever harness version happens to be installed there, and
+ * a shape mismatch must cost the accounting rather than the turn.
+ *
+ * `cacheWriteTokens` lands in `cacheCreationTokens` — the two names describe
+ * the same thing on either side of this boundary, and translating here is
+ * cheaper than teaching the parent two vocabularies.
+ */
+function addUsage(event: unknown, total: Record<string, number>): void {
+  if (typeof event !== "object" || event === null) return;
+  const data = (event as { data?: unknown }).data;
+  const chunk = typeof data === "object" && data !== null ? (data as { chunk?: unknown }).chunk : undefined;
+  if (typeof chunk !== "object" || chunk === null) return;
+  if ((chunk as { type?: unknown }).type !== "usage") return;
+  const usage = (chunk as { usage?: unknown }).usage;
+  if (typeof usage !== "object" || usage === null) return;
+
+  total["inputTokens"] = (total["inputTokens"] ?? 0) + numberAt(usage, "inputTokens");
+  total["outputTokens"] = (total["outputTokens"] ?? 0) + numberAt(usage, "outputTokens");
+  total["cacheReadTokens"] = (total["cacheReadTokens"] ?? 0) + numberAt(usage, "cacheReadTokens");
+  total["cacheCreationTokens"] = (total["cacheCreationTokens"] ?? 0) + numberAt(usage, "cacheWriteTokens");
+  process.stderr.write(`${USAGE_PREFIX} ${JSON.stringify(total)}\n`);
 }

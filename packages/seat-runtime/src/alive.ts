@@ -31,8 +31,22 @@
  */
 export const SEAT_ALIVE_PREFIX = "[squad-alive]";
 
+/**
+ * What a usage line starts with.
+ *
+ * The second thing the child writes on this stream, and machinery in exactly
+ * the same way: `dsh --profile headless` discards the harness's own usage
+ * chunks (`case "usage": return;`), so a plugin in the child re-reports them
+ * here. Like the heartbeat, it must never reach a person as the reason a seat
+ * failed.
+ */
+export const SEAT_USAGE_PREFIX = "[squad-usage]";
+
 /** Whether one line is a heartbeat rather than something a person should read. */
 export const isAliveLine = (line: string): boolean => line.trimStart().startsWith(SEAT_ALIVE_PREFIX);
+
+/** Whether one line is an accounting report rather than something to read. */
+export const isUsageLine = (line: string): boolean => line.trimStart().startsWith(SEAT_USAGE_PREFIX);
 
 /**
  * Strip heartbeats from collected stderr.
@@ -43,6 +57,29 @@ export const isAliveLine = (line: string): boolean => line.trimStart().startsWit
 export function withoutHeartbeats(text: string): string {
   return text
     .split("\n")
-    .filter((line) => !isAliveLine(line))
+    .filter((line) => !isAliveLine(line) && !isUsageLine(line))
     .join("\n");
+}
+
+/**
+ * The last accounting report a child wrote, if it wrote any.
+ *
+ * The LAST one, because each line carries the running total rather than one
+ * call's share — see the child plugin. Taking the last means a truncated
+ * stream still yields the complete figure, and a turn that died halfway still
+ * reports what it had actually spent by then.
+ */
+export function usageFromStderr(text: string): Record<string, number> | undefined {
+  const lines = text.split("\n").filter(isUsageLine);
+  const last = lines[lines.length - 1];
+  if (last === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(last.trimStart().slice(SEAT_USAGE_PREFIX.length));
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    return parsed as Record<string, number>;
+  } catch {
+    // A half-written line is what a killed process leaves behind. Losing the
+    // accounting is the right cost; failing the turn over it is not.
+    return undefined;
+  }
 }

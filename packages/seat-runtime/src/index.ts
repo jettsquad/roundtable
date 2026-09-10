@@ -33,7 +33,14 @@ export { silenceVerdict, watchSilence, silenceMessage, SEAT_SILENCE_LIMITS } fro
 export type { SilenceLimits, SilenceReason } from "./silence.ts";
 export { activityFor, activityKey, beginActivity, endActivity, reportActivity, resetActivity } from "./activity.ts";
 export type { SeatActivity } from "./activity.ts";
-export { SEAT_ALIVE_PREFIX, isAliveLine, withoutHeartbeats } from "./alive.ts";
+export {
+  SEAT_ALIVE_PREFIX,
+  SEAT_USAGE_PREFIX,
+  isAliveLine,
+  isUsageLine,
+  usageFromStderr,
+  withoutHeartbeats,
+} from "./alive.ts";
 export {
   forgetSeatSession,
   forgetSeatSessions,
@@ -70,7 +77,14 @@ export interface SeatRunSpec {
   readonly argv: (input: { readonly prompt: string; readonly cwd: string }) => readonly string[];
   /** Environment contributed on top of the host's, resolved per start. */
   readonly env: Record<string, string>;
-  readonly parse: (raw: string) => SeatOutcome;
+  /**
+   * @param raw everything the child wrote to stdout.
+   * @param stderr everything it wrote to stderr, heartbeats and all. Only the
+   *   dsh backend reads it: its headless profile prints a plain answer with no
+   *   accounting, so the usage it reports comes back on that stream instead —
+   *   see `usageFromStderr`.
+   */
+  readonly parse: (raw: string, stderr?: string) => SeatOutcome;
   readonly limits: SilenceLimits;
   readonly disposeGraceMs: number;
   /**
@@ -225,7 +239,11 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
     try {
       const outcome = await child.done;
       output = await readAll(child);
-      const parsed = spec.parse(output);
+      // The WHOLE stream, not the tail `failureText` uses: a backend reporting
+      // its accounting here needs every line it wrote, and the tail is cut to
+      // eight for a human to read.
+      const errText = (await child.collected.stderr?.readFrom(0))?.text ?? "";
+      const parsed = spec.parse(output, errText);
       // A non-zero exit with text still carries the text: a failure that
       // explains itself is worth more than one that does not. `exitCode` is
       // null when a signal killed it — comparing against 0 alone would read a
