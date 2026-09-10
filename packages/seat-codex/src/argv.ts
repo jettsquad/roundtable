@@ -117,19 +117,38 @@ function providerArgs(endpoint: string): readonly string[] {
  * `yolo` bypasses both axes — the docs limit it to externally hardened
  * environments, and it is offered because a person may have one, not because
  * it is a reasonable default.
+ *
+ * The SANDBOX travels as `-c sandbox_mode=…` rather than as `--sandbox`,
+ * because the two entry points do not take the same flags: `codex exec` has
+ * `--sandbox`, `codex exec resume` does not, and passing it there fails the
+ * whole run with 「unexpected argument」. `-c` is accepted by both, and it is
+ * not a downgrade — measured on a resumed thread, `-c
+ * sandbox_workspace_write.network_access=true` let a `curl` through that
+ * came back `exit 7` without it. One spelling for both paths beats two that
+ * can drift.
  */
 function permissionArgs(mode: CodexPermissionMode): readonly string[] {
-  if (mode === "read-only") return ["--sandbox", "read-only", "-c", "approval_policy=never"];
+  if (mode === "read-only") return ["-c", 'sandbox_mode="read-only"', "-c", "approval_policy=never"];
   if (mode === "yolo") return ["--dangerously-bypass-approvals-and-sandbox"];
-  return ["--sandbox", "workspace-write", "-c", "approval_policy=on-request"];
+  return ["-c", 'sandbox_mode="workspace-write"', "-c", "approval_policy=on-request"];
 }
 
 export function buildCodexArgv(input: CodexArgvInput): readonly string[] {
   const resuming = input.resumeSessionId !== undefined && input.resumeSessionId !== "";
-  // `resume` is a subcommand of `exec` and takes the id as its first
-  // argument; the options that follow are the same ones a fresh run takes.
+  // `resume` is a subcommand of `exec` and takes the id as its first argument.
+  //
+  // NO `--cd` on that path: `codex exec resume` does not accept it, and the
+  // run dies with 「unexpected argument '--cd'」 before the model is reached.
+  // Nothing is lost — the child is SPAWNED in the team's folder (see
+  // `runCliSeat`), so its working directory is already right, and a resumed
+  // thread carries the directory it was started in.
+  //
+  // This is what a seat looked like with the flag still there: every other
+  // turn failed. The failure dropped the stored session id, the next turn
+  // opened a fresh thread and worked, that turn stored an id again — and the
+  // turn after it failed the same way.
   const argv = resuming
-    ? ["exec", "resume", input.resumeSessionId as string, "--cd", input.cwd, "--json", "--skip-git-repo-check"]
+    ? ["exec", "resume", input.resumeSessionId as string, "--json", "--skip-git-repo-check"]
     : ["exec", "--cd", input.cwd, "--json", "--skip-git-repo-check"];
   argv.push(...permissionArgs(input.permissionMode ?? "workspace"));
   // Both halves of "may this seat reach the web", written on EVERY run —

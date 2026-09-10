@@ -26,15 +26,24 @@ describe("buildCodexArgv", () => {
   });
 
   it("三种模式各不相同", () => {
-    expect(buildCodexArgv({ ...base, permissionMode: "read-only" })).toContain("read-only");
-    expect(buildCodexArgv({ ...base, permissionMode: "workspace" })).toContain("workspace-write");
+    expect(buildCodexArgv({ ...base, permissionMode: "read-only" })).toContain('sandbox_mode="read-only"');
+    expect(buildCodexArgv({ ...base, permissionMode: "workspace" })).toContain('sandbox_mode="workspace-write"');
     expect(buildCodexArgv({ ...base, permissionMode: "yolo" })).toContain("--dangerously-bypass-approvals-and-sandbox");
     // yolo 绕开两个轴，所以不该再带 sandbox。
-    expect(buildCodexArgv({ ...base, permissionMode: "yolo" })).not.toContain("--sandbox");
+    expect(buildCodexArgv({ ...base, permissionMode: "yolo" }).join(" ")).not.toContain("sandbox_mode");
+  });
+
+  it("沙箱走 -c，不走 --sandbox", () => {
+    // 两个入口吃的参数不一样：`codex exec` 有 --sandbox，`codex exec resume`
+    // 没有，传过去整个 run 以「unexpected argument」失败。-c 两边都认。
+    for (const argv of [buildCodexArgv(base), buildCodexArgv({ ...base, resumeSessionId: "t1" })]) {
+      expect(argv).not.toContain("--sandbox");
+      expect(argv).toContain('sandbox_mode="workspace-write"');
+    }
   });
 
   it("不给模式就是 workspace", () => {
-    expect(buildCodexArgv(base)).toContain("workspace-write");
+    expect(buildCodexArgv(base)).toContain('sandbox_mode="workspace-write"');
   });
 
   it("勾了联网才打开沙箱的出网通道", () => {
@@ -136,6 +145,53 @@ describe("续接已有 thread", () => {
     expect(argv.slice(0, 3)).toEqual(["exec", "resume", "01a08-thread"]);
     expect(argv).toContain("--json");
     expect(argv).toContain("--skip-git-repo-check");
+  });
+
+  it("续接时不带 --cd —— resume 不认它", () => {
+    // 这条是补的：漏了它，每隔一轮就有一个席位以「unexpected argument '--cd'」
+    // 失败。失败会丢掉存下的会话 id，下一轮开新线程就正常，那一轮又存下 id，
+    // 再下一轮又挂——症状是「发一次报错、再发一次就好」，来回反复。
+    //
+    // 不带也不丢东西：子进程本来就是在团队文件夹里起的，而 resume 的线程
+    // 记着自己当初的目录。
+    const argv = buildCodexArgv({ ...base, resumeSessionId: "t1" });
+    expect(argv).not.toContain("--cd");
+    expect(buildCodexArgv(base)).toContain("--cd");
+  });
+
+  it("续接时只用 resume 认得的参数", () => {
+    // `codex exec resume --help` 列出来的那些。多一个就是整轮失败。
+    const allowed = new Set([
+      "-c",
+      "--last",
+      "--all",
+      "--enable",
+      "--disable",
+      "-i",
+      "--image",
+      "--strict-config",
+      "-m",
+      "--model",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--dangerously-bypass-hook-trust",
+      "--thread-source",
+      "--skip-git-repo-check",
+      "--ephemeral",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--output-schema",
+      "--json",
+      "-o",
+      "--output-last-message",
+    ]);
+    for (const mode of ["read-only", "workspace", "yolo"] as const) {
+      const argv = buildCodexArgv({ ...base, resumeSessionId: "t1", permissionMode: mode, webAccess: true });
+      // 前三个是 exec / resume / <id>，最后一个是提示词。
+      for (const token of argv.slice(3, -1)) {
+        if (token.startsWith("-"))
+          expect({ mode, token, allowed: allowed.has(token) }).toEqual({ mode, token, allowed: true });
+      }
+    }
   });
 
   it("不续接时形状一个字不变", () => {
