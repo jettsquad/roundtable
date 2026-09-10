@@ -108,6 +108,19 @@ export class ReasoningStore {
     await rm(join(this.root, PROPOSALS_DIR, `${id}.md`), { force: true });
   }
 
+  /**
+   * Remove a criterion from the live library.
+   *
+   * Only ever called as the second half of moving one back to `proposals/` —
+   * a criterion the human wants to re-decide. Nothing else deletes from here:
+   * withdrawing a judgement is `status: retired`, which keeps the file and the
+   * reasons in it readable, and losing that text would take the evidence with
+   * it.
+   */
+  async dropCriterion(id: string): Promise<void> {
+    await rm(join(this.root, CRITERIA_DIR, `${id}.md`), { force: true });
+  }
+
   /** One criterion's usage, or a zeroed record when it has none yet. */
   async usage(criterionId: string): Promise<UsageRecord> {
     const path = join(this.root, USAGE_DIR, `${criterionId}.md`);

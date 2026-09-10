@@ -83,6 +83,10 @@ export const zh = {
   "me.distil.ownLogin": "本机登录（宿主 CLI 的登录态和默认模型）",
   "me.distil.note":
     "判据库是你的，跨团队跨项目。写它的模型该在这里选，而不是跟着某个席位的配置走。改完下一次蒸馏就生效。",
+  "criteria.reopen": "退回待裁定",
+  "criteria.reopen.title": "放回待裁定队列，重新裁一次——措辞不合适了，或者当初采纳得太快",
+  "criteria.retire": "停用",
+  "criteria.retire.title": "不再被捞出来，但文件留着——主张、边界、证据都还读得到",
   "criteria.anywhere": "任何场合",
   "criteria.adopt": "采纳",
   "criteria.reject": "否掉",
@@ -389,6 +393,12 @@ export const en: Record<SquadKey, string> = {
   "me.distil.ownLogin": "Host login (the CLI's own session and default model)",
   "me.distil.note":
     "The criteria library is yours and outlives every team, so the model that writes it belongs here rather than inherited from a seat. Takes effect on the next distillation.",
+  "criteria.reopen": "Re-decide",
+  "criteria.reopen.title":
+    "Put it back in the queue and rule on it again \u2014 the wording stopped fitting, or it was adopted too fast",
+  "criteria.retire": "Retire",
+  "criteria.retire.title":
+    "Stops being fetched, but the file stays \u2014 claim, boundary and evidence all still readable",
   "criteria.anywhere": "anywhere",
   "criteria.adopt": "Adopt",
   "criteria.reject": "Reject",

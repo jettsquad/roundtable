@@ -84,6 +84,8 @@ export const api = {
     call("/connections", "POST", body),
   removeConnection: (body: { connectionId: string }): Promise<unknown> => call("/connections", "DELETE", body),
   saveAgent: (body: AgentRequest): Promise<unknown> => call("/agents", "POST", body),
+  setCriterionStatus: (body: { id: string; to: "retired" | "pending" }): Promise<unknown> =>
+    call("/criteria/status", "POST", body),
   markCriterion: (body: {
     teamId: string;
     turnId: string;

@@ -258,6 +258,41 @@ export class ReasoningService extends Service {
     }));
   }
 
+  /**
+   * Withdraw a criterion without losing it.
+   *
+   * `retired` rather than a delete: `triggerMatches` refuses a retired
+   * criterion, so it stops shaping anything immediately, and the file — the
+   * claim, the boundary, the evidence ids — stays readable. Deleting would
+   * take the reasons with it, and the reasons are the only part worth having
+   * when you later wonder why you once believed this.
+   */
+  async retire(id: string): Promise<void> {
+    const criterion = (await this.store.criteria()).find((candidate) => candidate.id === id);
+    if (criterion === undefined) throw new Error(`没有这条判据：${id}。`);
+    if (criterion.status === "retired") return;
+    await this.store.putCriterion({ ...criterion, status: "retired" });
+  }
+
+  /**
+   * Put a live criterion back in the queue to be decided again.
+   *
+   * The gap this fills: adjudication was one-way. A criterion adopted in
+   * haste, or one whose wording stopped fitting, had no route back — the page
+   * offered 「采纳」 and 「否掉」 on proposals and nothing at all on what was
+   * already in force.
+   *
+   * It returns as `active` in the proposal file because that field describes
+   * a criterion in the library, not a proposal's standing; what makes this one
+   * pending is WHERE it now lives.
+   */
+  async reopen(id: string): Promise<void> {
+    const criterion = (await this.store.criteria()).find((candidate) => candidate.id === id);
+    if (criterion === undefined) throw new Error(`没有这条判据：${id}。`);
+    await this.store.putProposal({ ...criterion, status: "active" });
+    await this.store.dropCriterion(id);
+  }
+
   /** Everything currently active. */
   async criteria(): Promise<readonly Criterion[]> {
     return this.store.criteria();

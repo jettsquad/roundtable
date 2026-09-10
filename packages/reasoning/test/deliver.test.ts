@@ -3,6 +3,7 @@
  * criteria library from turning into either noise or an echo chamber, and
  * both are enforced here rather than left to whoever renders the result.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   DELIVERY_LIMIT,
@@ -169,5 +170,19 @@ describe("parseSelection tolerance", () => {
     // Tolerance is bounded. Guessing past this point would deliver criteria
     // nobody chose.
     expect(() => parseSelection("[42]", candidates)).toThrow(/读不出 id/);
+  });
+});
+
+describe("投放边界", () => {
+  it("这个模块里没有任何一处把判据交给讨论记录", () => {
+    // 靠拓扑守住，不靠人记得遵守。判据一旦作为 user/message 落进记录，
+    // 下一轮每个席位的窗口都会带上它——而席位知道了主持人的判断标准就会去
+    // 迎合它，五个人开始猜同一个答案，圆桌就不产生新信息了。
+    //
+    // 这条测试读源码文本：能证明「不存在这条路径」的检查，只能是这一种。
+    const source = readFileSync(new URL("../src/deliver.ts", import.meta.url), "utf8");
+    expect(source).not.toContain("recordSpoken");
+    expect(source).not.toContain("session.append");
+    expect(source).not.toContain("user/message");
   });
 });

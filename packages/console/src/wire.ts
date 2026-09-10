@@ -182,6 +182,15 @@ export interface TeamSummary {
    */
   readonly draftFromTurnId?: string | undefined;
   /**
+   * The host's own standards bearing on this plan, one entry per labelled
+   * phase.
+   *
+   * Travels with the draft rather than as a discussion line: a transcript
+   * entry would reach every seat's next window, and criteria go to the host
+   * side and the secretary only.
+   */
+  readonly draftCriteria?: readonly string[] | undefined;
+  /**
    * A confirmed agenda that has not finished — stopped, paused, or cut short
    * by a restart.
    *

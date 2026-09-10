@@ -396,6 +396,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
             draft: team.draft.agenda,
             draftedAt: team.draft.at,
             ...(team.draft.fromTurnId === undefined ? {} : { draftFromTurnId: team.draft.fromTurnId }),
+            ...(team.draft.criteria === undefined ? {} : { draftCriteria: team.draft.criteria }),
           }),
       context: contextOf(ctx, teamId, team.checkpointCoefficient),
       // Sent rather than hardcoded in the panel: a profile may override these,
@@ -496,7 +497,24 @@ export async function draftAgendaFor(ctx: Context, request: DraftAgendaRequest):
   if (problems.length > 0) {
     throw new Error(problems.map((problem) => `「${problem.phase}」：${problem.detail}`).join("\n"));
   }
-  team.setDraft(draft);
+  // The host's own standards for the KINDS of decision this plan makes,
+  // fetched now because now is when they can still change it. A criterion
+  // about how to organise work arrives useless once the work is organised.
+  //
+  // It cannot shape the draft itself, and that is structural rather than a
+  // shortcut: the situations come FROM the phases the secretary just wrote, so
+  // there is nothing to look them up by until the draft exists.
+  //
+  // Failure costs the briefs, never the draft. A criteria library that could
+  // stop an agenda from being proposed would be the tail wagging the dog.
+  const briefs = await ctx.reasoning
+    .briefForAgenda(draft, team.host)
+    .catch(() => [] as readonly { readonly phase: string; readonly brief: string }[]);
+  const lines = briefs
+    .filter((entry) => entry.brief.trim() !== "")
+    .map((entry) => `【${entry.phase}】\n${entry.brief}`);
+
+  team.setDraft(draft, undefined, lines);
   return draft;
 }
 
@@ -1388,6 +1406,14 @@ export function registerSquadApi(ctx: Context): () => void {
           const marked = await captureMarkedTurn(ctx, body);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify(marked));
+          return;
+        }
+        if (suffix === "/criteria/status" && req.method === "POST") {
+          const body = await readJson<{ id: string; to: "retired" | "pending" }>(req);
+          if (body.to === "retired") await ctx.reasoning.retire(body.id);
+          else await ctx.reasoning.reopen(body.id);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
           return;
         }
         if (suffix === "/criteria" && req.method === "POST") {

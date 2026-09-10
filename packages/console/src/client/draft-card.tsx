@@ -207,6 +207,20 @@ export function DraftCard({
         )}
       </div>
       {draft.hostGoal === undefined ? null : <div className={styles.muted}>{draft.hostGoal}</div>}
+      {/* Above the phases, because this is the material for the decision being
+          asked here — 「按不按这份计划」 — and a standard shown after the plan
+          reads as a comment on it rather than as something to check it
+          against. Shown to the HOST only: it lives on the draft, never in the
+          transcript, so no seat's next window can carry it. */}
+      {(team.draftCriteria ?? []).length === 0 ? null : (
+        <div className={styles.criteriaNote}>
+          {(team.draftCriteria ?? []).map((brief, index) => (
+            <div key={index} className={styles.criteriaBrief}>
+              {brief}
+            </div>
+          ))}
+        </div>
+      )}
       {draft.phases.map((phase, index) => (
         <Phase
           key={index}

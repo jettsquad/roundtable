@@ -153,7 +153,15 @@ export interface Team {
    * lived in one browser tab — or in one process's memory — is a decision
    * that can disappear without anybody deciding it.
    */
-  readonly draft: { readonly agenda: AgendaSpec; readonly at: number; readonly fromTurnId?: string } | undefined;
+  readonly draft:
+    | {
+        readonly agenda: AgendaSpec;
+        readonly at: number;
+        readonly fromTurnId?: string;
+        /** One brief per labelled phase. Never a transcript line — see `setDraft`. */
+        readonly criteria?: readonly string[];
+      }
+    | undefined;
   /**
    * The agenda the host confirmed and how far it got, when one is unfinished.
    *
@@ -211,7 +219,14 @@ export interface Team {
    * the page, far from the sentence that produced it, is a plan nobody reads
    * next to the reasoning behind it.
    */
-  setDraft(draft: AgendaSpec | undefined, fromTurnId?: string): void;
+  /**
+   * @param criteria the host's own standards that bear on this plan, already
+   *   selected and formatted. Shown BESIDE the draft and never recorded as a
+   *   line: a transcript entry would reach every seat's next window, and
+   *   criteria must not shape how a participant thinks — only how work is
+   *   organised and judged.
+   */
+  setDraft(draft: AgendaSpec | undefined, fromTurnId?: string, criteria?: readonly string[]): void;
   /** Background material every seat reads, oldest first. */
   readonly materials: readonly Material[];
   /** Attach one document. Refused for the reasons `checkMaterial` names. */
@@ -1273,7 +1288,7 @@ export class TeamsService extends Service {
         );
         this.persist(record);
       },
-      setDraft: (draft, fromTurnId) => {
+      setDraft: (draft, fromTurnId, criteria) => {
         if (draft === undefined) {
           record.draft = undefined;
         } else {
@@ -1284,6 +1299,7 @@ export class TeamsService extends Service {
             agenda: draft,
             at: Date.now(),
             ...(fromTurnId === undefined ? {} : { fromTurnId }),
+            ...(criteria === undefined || criteria.length === 0 ? {} : { criteria }),
             agendaId: record.draft?.agendaId ?? `ag-${record.teamId}`,
             revision: (record.draft?.revision ?? 0) + 1,
           };

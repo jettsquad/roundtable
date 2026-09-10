@@ -939,6 +939,28 @@
   background: rgb(68 204 136 / 6%);
 }
 
+/* The host's own standards, shown beside a draft they bear on.
+   Quieter than the plan it sits above: it is material for the decision, not
+   the thing being decided. Pre-wrapped because a brief is several lines with
+   its own structure — a boundary under its claim — and reflowing it would run
+   two different judgements into one paragraph. */
+.criteriaNote {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 2px solid #4c8;
+  background: rgb(68 204 136 / 4%);
+}
+
+.criteriaBrief {
+  white-space: pre-wrap;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.criteriaBrief + .criteriaBrief {
+  margin-top: 8px;
+}
+
 /* The message waiting for the running round.
    Deliberately quieter than `.draftCard`: a draft agenda is asking you for a
    decision, and a queued line is only telling you it is there. */

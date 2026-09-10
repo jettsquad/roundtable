@@ -100,6 +100,31 @@ export function CriteriaPage({
                 {criterion.health.verdict}：{criterion.health.detail}
               </div>
             )}
+            {/* Adjudication used to be one-way: 「采纳」 and 「否掉」 on a
+                proposal, and nothing at all on what was already in force. A
+                criterion adopted in haste had no route back, and one whose
+                wording had stopped fitting could only be edited by finding the
+                file on disk. */}
+            <div className={styles.row}>
+              <button
+                type="button"
+                className={styles.button}
+                title={t("criteria.reopen.title")}
+                onClick={() => void run(() => api.setCriterionStatus({ id: criterion.id, to: "pending" }))}
+              >
+                {t("criteria.reopen")}
+              </button>
+              {criterion.status === "retired" ? null : (
+                <button
+                  type="button"
+                  className={styles.button}
+                  title={t("criteria.retire.title")}
+                  onClick={() => void run(() => api.setCriterionStatus({ id: criterion.id, to: "retired" }))}
+                >
+                  {t("criteria.retire")}
+                </button>
+              )}
+            </div>
           </div>
         ))
       )}
