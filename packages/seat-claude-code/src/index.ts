@@ -25,12 +25,11 @@ import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "
 // Imported for the `Context.subprocess` declaration merging it carries: an
 // augmentation applies only where its module is in the compilation.
 import type {} from "@deepseek-ai/dsh-subprocess";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdir } from "node:fs/promises";
 import { runCliSeat, seatSessionId, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { CLAUDE_PERMISSION_MODES, providerNameFor } from "@squad/shared";
 import { DELEGATION_TOOLS, buildArgv, type PermissionMode } from "./argv.ts";
+import { claudeConfigDirFor } from "./config-dir.ts";
 import { readStream } from "./stream.ts";
 
 export const name = "squad-seat-claude-code";
@@ -167,25 +166,14 @@ export class FencedClaudeCodeSeats extends Service {
         const connectionEnv = connectionId === undefined ? {} : await ctx.seatConnections.envFor(connectionId);
         const connection = connectionId === undefined ? undefined : ctx.seatConnections.get(connectionId);
 
-        // An api-key seat gets its OWN config directory.
-        //
-        // Without one the host's `claude login` WINS: the CLI prefers its
-        // stored subscription over `ANTHROPIC_API_KEY`, so it sent an
-        // Anthropic OAuth token to the connection's gateway, got 401, and
-        // retried ten times with growing backoff — which from outside looks
-        // like a seat that hangs for minutes and then says nothing. The
-        // connection's key was stored, rendered in the library, and ignored.
-        //
-        // Proven rather than guessed: the same key, endpoint and model
-        // answered in 11 seconds the moment `CLAUDE_CONFIG_DIR` pointed
-        // somewhere empty, and failed with `authentication_failed` without it.
-        //
-        // Subscription seats keep the host's config — using that login IS
-        // what subscription mode means.
-        let configDir: string | undefined;
-        if (connection?.authMode === "api-key") {
-          configDir = await mkdtemp(join(tmpdir(), "squad-claude-"));
-        }
+        // An api-key seat runs against its own configuration home, created
+        // on first use and kept afterwards. Both halves of that matter and
+        // both were learned the hard way — see `config-dir.ts`: without a
+        // separate home the host's login beats the connection's key, and
+        // without a STABLE one the CLI's record of the conversation is
+        // deleted between the turn that opens it and the turn that resumes it.
+        const configDir = claudeConfigDirFor({ authMode: connection?.authMode, connectionId });
+        if (configDir !== undefined) await mkdir(configDir, { recursive: true });
 
         return runCliSeat({
           ctx,
@@ -196,9 +184,10 @@ export class FencedClaudeCodeSeats extends Service {
             buildArgv({
               prompt,
               // Continue this seat's own conversation when it has one. The
-              // table remembers the id after each turn and drops it when a
-              // resumed run fails, so an id that reaches here is one that
-              // worked last time.
+              // table remembers the id after each turn, and when a resumed run
+              // is refused it drops the id and runs the turn again without it
+              // — so an id that reaches here is one that worked last time, and
+              // one that has gone stale costs a retry rather than the turn.
               ...(() => {
                 const resume = seatSessionId(request.parent.session.id, request.label);
                 return resume === undefined ? {} : { resumeSessionId: resume };
@@ -219,15 +208,6 @@ export class FencedClaudeCodeSeats extends Service {
             ...connectionEnv,
             ...(configDir === undefined ? {} : { CLAUDE_CONFIG_DIR: configDir }),
           },
-          // Removed afterwards. A seat is a process that remembers nothing;
-          // a config directory left behind is state it would remember.
-          ...(configDir === undefined
-            ? {}
-            : {
-                cleanup: async () => {
-                  await rm(configDir, { recursive: true, force: true }).catch(() => undefined);
-                },
-              }),
           parse: readStream,
           limits: {
             idleMs: config.idleMs ?? DEFAULTS.idleMs,
@@ -242,6 +222,7 @@ export class FencedClaudeCodeSeats extends Service {
 }
 
 export { DELEGATION_TOOLS, buildArgv } from "./argv.ts";
+export { claudeConfigDirFor } from "./config-dir.ts";
 export type { ArgvInput, PermissionMode, ToolFence } from "./argv.ts";
 export { readStream } from "./stream.ts";
 export type { StreamOutcome } from "./stream.ts";
