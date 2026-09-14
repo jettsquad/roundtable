@@ -16,6 +16,7 @@ import { AgentsPage } from "./agents.tsx";
 import { Connections } from "./connections.tsx";
 import { Discussion } from "./discussion.tsx";
 import { CriteriaPage } from "./criteria.tsx";
+import { SeatSpend } from "./seat-spend.tsx";
 import { usageParts } from "./usage-figures.ts";
 import { MePage } from "./me.tsx";
 import { CreateForm } from "./create.tsx";
@@ -65,35 +66,6 @@ type Translate = ReturnType<typeof useT>;
 function usageFigures(t: Translate, usage: UsageTotals | undefined): string | undefined {
   const parts = usageParts(t as never, usage);
   return parts === undefined ? undefined : parts.join(" · ");
-}
-
-/**
- * What each seat has spent, and how many reported nothing.
- *
- * The unmeasured COUNT is printed rather than left implicit. A backend with no
- * accounting (dsh had none until its own plugin started reporting) makes the
- * team total quietly short, and a total that is short without saying so is
- * worse than one that is missing: it gets believed.
- */
-function SeatSpend({ team }: { readonly team: TeamSummary }): JSX.Element | null {
-  const t = useT();
-  const measured = team.seats.filter((seat) => seat.usage !== undefined && seat.usage.turns > 0);
-  if (measured.length === 0) return null;
-  const silent = team.seats.length - measured.length;
-  return (
-    <div className={styles.hint}>
-      <div>{t("team.usage.perSeat")}</div>
-      {measured.map((seat) => (
-        <div key={seat.seatId}>
-          {t("team.usage.seat", {
-            name: seat.displayName,
-            parts: (usageParts(t as never, seat.usage) ?? []).join(" · "),
-          })}
-        </div>
-      ))}
-      {silent === 0 ? null : <div>{t("team.usage.unmeasured", { n: silent })}</div>}
-    </div>
-  );
 }
 
 /**

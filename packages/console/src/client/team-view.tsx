@@ -32,6 +32,7 @@ import { useSitting } from "./use-sitting.ts";
 import { translate, useT } from "./locale.ts";
 import styles from "./panel.module.css";
 import { usageParts } from "./usage-figures.ts";
+import { SeatSpend } from "./seat-spend.tsx";
 
 /** One seat's live state, read the same way everywhere it is shown. */
 function statusOf(team: TeamSummary, seat: TeamSummary["seats"][number]): SeatStatus {
@@ -281,6 +282,10 @@ export function TeamView({
         {t("view.meta", { usage: usageLine(team.usage), rows: team.recorded })}
         {team.seats.some((seat) => seat.isSecretary) ? "" : t("view.noSecretary")}
       </div>
+      {/* Same block the panel's card shows. Both screens display a team, and
+          putting it on only one of them is how a person concludes the feature
+          was never built. */}
+      <SeatSpend team={team} />
 
       <Roster team={team} data={snapshot.data} onChanged={again} />
       <TeamPromptsPanel team={team} library={snapshot.data.blocks} onChanged={again} />
