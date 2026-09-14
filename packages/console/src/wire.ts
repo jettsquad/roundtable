@@ -87,6 +87,13 @@ export interface TeamSummary {
           readonly lastOutputAt: number;
         }
       | undefined;
+    /**
+     * What this seat has spent in this sitting, rebuilt from zero on restart.
+     *
+     * Per seat because the team total cannot answer what it provokes: six
+     * seats behind one number gives 「哪个席位在烧钱」 no answer at all.
+     */
+    readonly usage?: UsageTotals | undefined;
   }[];
   /**
    * When a seat counts as wedged, so the screen can say it rather than leave

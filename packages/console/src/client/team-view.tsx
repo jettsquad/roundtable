@@ -31,6 +31,7 @@ import { describeSeat, describeTeam, type SeatStatus } from "../seat-status.ts";
 import { useSitting } from "./use-sitting.ts";
 import { translate, useT } from "./locale.ts";
 import styles from "./panel.module.css";
+import { usageParts } from "./usage-figures.ts";
 
 /** One seat's live state, read the same way everywhere it is shown. */
 function statusOf(team: TeamSummary, seat: TeamSummary["seats"][number]): SeatStatus {
@@ -43,16 +44,10 @@ function statusOf(team: TeamSummary, seat: TeamSummary["seats"][number]): SeatSt
   });
 }
 
-/** One team's consumption, in a line. See `panel.tsx` for why cache is separate. */
+/** One team's consumption, in a line. `usage-figures.ts` owns what the columns are. */
 function usageLine(usage: UsageTotals | undefined): string {
-  if (usage === undefined || usage.turns === 0) return translate("team.usage.none");
-  const parts = [
-    translate("team.usage.turns", { n: usage.turns }),
-    translate("team.usage.in", { n: usage.inputTokens.toLocaleString() }),
-    translate("team.usage.out", { n: usage.outputTokens.toLocaleString() }),
-    translate("team.usage.cache", { n: (usage.cacheCreationTokens + usage.cacheReadTokens).toLocaleString() }),
-  ];
-  if (usage.costUsd !== undefined) parts.push(`$${usage.costUsd.toFixed(4)}`);
+  const parts = usageParts(translate as never, usage);
+  if (parts === undefined) return translate("team.usage.none");
   return translate("team.usage", { parts: parts.join(" · ") });
 }
 

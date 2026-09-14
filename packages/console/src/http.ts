@@ -295,6 +295,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           running: state?.running === true,
           ...(state?.running === true && state.instruction !== undefined ? { instruction: state.instruction } : {}),
           ...(state?.activity === undefined ? {} : { activity: state.activity }),
+          ...(state?.usage === undefined ? {} : { usage: state.usage }),
           systemPrompt: seat.systemPrompt,
           backend: seat.backend,
           ...(seat.connectionId === undefined ? {} : { connectionId: seat.connectionId }),

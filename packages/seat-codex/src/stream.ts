@@ -50,6 +50,7 @@ interface CodexEvent {
     | {
         readonly input_tokens?: unknown;
         readonly cached_input_tokens?: unknown;
+        readonly cache_write_input_tokens?: unknown;
         readonly output_tokens?: unknown;
       }
     | undefined;
@@ -96,14 +97,24 @@ export function readCodexStream(raw: string): CodexOutcome {
     const output = count(event.usage.output_tokens);
     if (input === undefined && cached === undefined && output === undefined) continue;
     usage = {
-      inputTokens: input ?? 0,
+      // SUBTRACTED, because codex's `input_tokens` already contains the
+      // cached part and Claude's does not. Left as reported, the same column
+      // meant two different things and a mixed team's total was the sum of
+      // two vocabularies.
+      //
+      // Settled by arithmetic on three real calls in one thread rather than
+      // by reading a doc: taken as exclusive, a resumed turn's total prompt
+      // came out SMALLER than the fresh turn it continued (22,922 against
+      // 30,547), which cannot happen — a conversation only grows. Taken as
+      // inclusive, the three totals sit at 17,619 / 15,882 / 15,896 and the
+      // new-input share falls as the cache warms.
+      inputTokens: Math.max(0, (input ?? 0) - (cached ?? 0)),
       outputTokens: output ?? 0,
-      // Codex reports cached input as a subset of a read, not a creation.
-      // Kept in its own column rather than folded into input: the whole
-      // reason cache is tracked separately is that it is the number worth
-      // acting on.
       cacheReadTokens: cached ?? 0,
-      cacheCreationTokens: 0,
+      // Reported by codex and previously dropped on the floor. Zero on most
+      // turns, but writing a cache is the expensive kind, and a column that
+      // is always zero hides exactly the turns worth looking at.
+      cacheCreationTokens: count(event.usage.cache_write_input_tokens) ?? 0,
     };
   }
 

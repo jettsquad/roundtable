@@ -16,6 +16,7 @@ import { AgentsPage } from "./agents.tsx";
 import { Connections } from "./connections.tsx";
 import { Discussion } from "./discussion.tsx";
 import { CriteriaPage } from "./criteria.tsx";
+import { usageParts } from "./usage-figures.ts";
 import { MePage } from "./me.tsx";
 import { CreateForm } from "./create.tsx";
 import { SeatEditor } from "./seats.tsx";
@@ -62,15 +63,37 @@ type Translate = ReturnType<typeof useT>;
  * which is the one thing a translation is free to change.
  */
 function usageFigures(t: Translate, usage: UsageTotals | undefined): string | undefined {
-  if (usage === undefined || usage.turns === 0) return undefined;
-  const parts = [
-    t("team.usage.turns", { n: usage.turns }),
-    t("team.usage.in", { n: usage.inputTokens.toLocaleString() }),
-    t("team.usage.out", { n: usage.outputTokens.toLocaleString() }),
-    t("team.usage.cache", { n: (usage.cacheCreationTokens + usage.cacheReadTokens).toLocaleString() }),
-  ];
-  if (usage.costUsd !== undefined) parts.push(`$${usage.costUsd.toFixed(4)}`);
-  return parts.join(" · ");
+  const parts = usageParts(t as never, usage);
+  return parts === undefined ? undefined : parts.join(" · ");
+}
+
+/**
+ * What each seat has spent, and how many reported nothing.
+ *
+ * The unmeasured COUNT is printed rather than left implicit. A backend with no
+ * accounting (dsh had none until its own plugin started reporting) makes the
+ * team total quietly short, and a total that is short without saying so is
+ * worse than one that is missing: it gets believed.
+ */
+function SeatSpend({ team }: { readonly team: TeamSummary }): JSX.Element | null {
+  const t = useT();
+  const measured = team.seats.filter((seat) => seat.usage !== undefined && seat.usage.turns > 0);
+  if (measured.length === 0) return null;
+  const silent = team.seats.length - measured.length;
+  return (
+    <div className={styles.hint}>
+      <div>{t("team.usage.perSeat")}</div>
+      {measured.map((seat) => (
+        <div key={seat.seatId}>
+          {t("team.usage.seat", {
+            name: seat.displayName,
+            parts: (usageParts(t as never, seat.usage) ?? []).join(" · "),
+          })}
+        </div>
+      ))}
+      {silent === 0 ? null : <div>{t("team.usage.unmeasured", { n: silent })}</div>}
+    </div>
+  );
 }
 
 /**
@@ -252,6 +275,12 @@ function TeamCard({
       </div>
       {!expanded ? null : (
         <>
+          {/* Per seat, and only when expanded: the team line answers 「花了多少」
+              and this answers 「谁花的」, which is the one a person can act on.
+              Six seats behind a single number left that question with no
+              answer at all — and three of them were on a backend that
+              reported nothing, so the single number was short as well. */}
+          <SeatSpend team={team} />
           <div className={styles.row}>
             {order === undefined ? null : (
               <MoveButtons index={order.index} count={order.count} label={team.displayName} onMove={order.move} />

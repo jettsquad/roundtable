@@ -389,6 +389,19 @@ export interface SeatState {
    * do) and only while the child lives.
    */
   readonly activity?: SeatActivity | undefined;
+  /**
+   * What this seat has spent, so far, in this sitting.
+   *
+   * Per seat rather than only per team, because the team total cannot answer
+   * the question it provokes. Six seats behind one number, and three of them
+   * on a backend that reported nothing at all, means 「哪个席位在烧钱」 had
+   * no answer — and without that answer there is nothing to act on.
+   *
+   * Not persisted: it is rebuilt from zero on restart, exactly as the team
+   * total in `record.usage` is not. Said here so a number that resets is a
+   * known property rather than a bug someone rediscovers.
+   */
+  readonly usage?: UsageTotals | undefined;
 }
 
 /**
@@ -1206,7 +1219,14 @@ export class TeamsService extends Service {
         const session = String(record.handle.agent.session.id);
         return record.seats.map((seat) => {
           const instruction = record.speaking.get(seat.seatId);
-          if (instruction === undefined) return { seatId: seat.seatId, displayName: seat.displayName, running: false };
+          // Attached to BOTH branches: a seat that is idle is exactly the one
+          // whose spend you are reading, and leaving it off the idle branch
+          // would show a number only while it was too busy to look at.
+          const spent = record.perSeat.get(seat.seatId);
+          const usage = spent === undefined || spent.turns === 0 ? {} : { usage: spent };
+          if (instruction === undefined) {
+            return { seatId: seat.seatId, displayName: seat.displayName, running: false, ...usage };
+          }
           // Addressed by the same label the request carried — `runSeat` sends
           // `label: seat.displayName` — so this asks the backend what it is
           // doing rather than guessing from what we asked it to do.
@@ -1217,6 +1237,7 @@ export class TeamsService extends Service {
             running: true,
             instruction,
             ...(activity === undefined ? {} : { activity }),
+            ...usage,
           };
         });
       },

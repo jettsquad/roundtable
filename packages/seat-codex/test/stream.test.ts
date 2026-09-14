@@ -23,9 +23,11 @@ describe("readCodexStream", () => {
   });
 
   it("用量来自 turn.completed，缓存单独一列", () => {
+    // 数字换成了子集关系：cached 是 input 的一部分，原来那组（输入 10、
+    // 缓存 90）按 codex 的口径不可能出现。
     const raw = [
       msg("答复"),
-      line({ type: "turn.completed", usage: { input_tokens: 10, cached_input_tokens: 90, output_tokens: 5 } }),
+      line({ type: "turn.completed", usage: { input_tokens: 100, cached_input_tokens: 90, output_tokens: 5 } }),
     ].join("\n");
     expect(readCodexStream(raw).usage).toEqual({
       inputTokens: 10,
@@ -51,5 +53,41 @@ describe("readCodexStream", () => {
     // 空回复读起来像「这位没什么要说的」——那是唯一一种会掩盖坏掉的运行的读法。
     expect(readCodexStream("").failed).toBe(true);
     expect(readCodexStream(msg("   ")).failed).toBe(true);
+  });
+});
+
+describe("用量口径", () => {
+  const turn = (usage: Record<string, number>): string =>
+    [
+      JSON.stringify({ type: "thread.started", thread_id: "t1" }),
+      JSON.stringify({ type: "item.completed", item: { id: "i0", type: "agent_message", text: "答复" } }),
+      JSON.stringify({ type: "turn.completed", usage }),
+    ].join("\n");
+
+  it("codex 的 input_tokens 含缓存，要减掉", () => {
+    // 两家口径不同：claude 的 input_tokens 不含缓存，codex 的含。原样上报会
+    // 让同一列在混编团队里表示两种东西，总数没有明确含义。
+    //
+    // 靠算术定的，不是靠读文档：按「不含」解释，同一个 thread 续接后的总
+    // prompt 会比它续接的那次还小（22,922 < 30,547），而对话只会变长。
+    const out = readCodexStream(
+      turn({ input_tokens: 17619, cached_input_tokens: 12928, output_tokens: 5, cache_write_input_tokens: 0 }),
+    );
+    expect(out.usage?.inputTokens).toBe(4691);
+    expect(out.usage?.cacheReadTokens).toBe(12928);
+  });
+
+  it("缓存比输入还大时归零，不给负数", () => {
+    // 上游换算一变就可能出现，而一个负数会把团队总数减小——比缺一个数更糟。
+    const out = readCodexStream(turn({ input_tokens: 100, cached_input_tokens: 500, output_tokens: 1 }));
+    expect(out.usage?.inputTokens).toBe(0);
+  });
+
+  it("新建缓存不再被丢掉", () => {
+    // 原来写死成 0。建缓存是贵的那一档，一列永远是零就藏掉了最该看的轮次。
+    const out = readCodexStream(
+      turn({ input_tokens: 900, cached_input_tokens: 100, output_tokens: 2, cache_write_input_tokens: 350 }),
+    );
+    expect(out.usage?.cacheCreationTokens).toBe(350);
   });
 });
