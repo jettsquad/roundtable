@@ -19,7 +19,7 @@
 import { existsSync, statSync } from "node:fs";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
-import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
+import type { SubagentResult, SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -56,6 +56,7 @@ import {
   activityKey,
   forgetSeatSession,
   rememberSeatSession,
+  resumeWasRejected,
   seatSessionId,
   type SeatActivity,
 } from "@squad/seat-runtime";
@@ -2026,26 +2027,27 @@ export class TeamsService extends Service {
       if (memoryNote !== undefined) {
         recordSpoken(host, "系统", memoryNote.notice);
       }
-      const lines = window.lines ?? [];
-      const prompt = composeSeatPrompt({
-        seat,
-        instruction: memoryNote === undefined ? instruction : `${memoryNote.forSeat}\n\n${instruction}`,
-        context: lines,
-        // The live roster, read at turn time: a member added mid-discussion
-        // should be someone the next round can hand work to.
-        roster: record.seats,
-        hostDisplayName: record.input.hostDisplayName,
-        // From the BASE team: a sitting is another piece of the same team's
-        // work, and its seats read the same shared blocks.
-        blocks: blocksForSeat(this.baseOf(record).input.prompts ?? EMPTY_TEAM_PROMPTS, seat.seatId),
-        // Only what this round attached, plus anything pinned. Carrying every
-        // imported document on every turn is what made importing one file so a
-        // seat could summarise it once cost that file on every later turn of
-        // every seat.
-        ...(materials.length === 0 ? {} : { materials }),
-        ...(quotes === undefined || quotes.length === 0 ? {} : { quotes }),
-      });
-      const request: SubagentStartRequest = {
+      let lines = window.lines ?? [];
+      const compose = (context: readonly string[]): string =>
+        composeSeatPrompt({
+          seat,
+          instruction: memoryNote === undefined ? instruction : `${memoryNote.forSeat}\n\n${instruction}`,
+          context,
+          // The live roster, read at turn time: a member added mid-discussion
+          // should be someone the next round can hand work to.
+          roster: record.seats,
+          hostDisplayName: record.input.hostDisplayName,
+          // From the BASE team: a sitting is another piece of the same team's
+          // work, and its seats read the same shared blocks.
+          blocks: blocksForSeat(this.baseOf(record).input.prompts ?? EMPTY_TEAM_PROMPTS, seat.seatId),
+          // Only what this round attached, plus anything pinned. Carrying every
+          // imported document on every turn is what made importing one file so a
+          // seat could summarise it once cost that file on every later turn of
+          // every seat.
+          ...(materials.length === 0 ? {} : { materials }),
+          ...(quotes === undefined || quotes.length === 0 ? {} : { quotes }),
+        });
+      const requestFor = (prompt: string): SubagentStartRequest => ({
         label: seat.displayName,
         prompt: [{ type: "text", text: prompt }],
         parent: host,
@@ -2060,9 +2062,41 @@ export class TeamsService extends Service {
         // the running process instead of leaving it to finish into a
         // discussion nobody is having any more.
         signal: signal ?? new AbortController().signal,
+      });
+      const runOnce = async (prompt: string): Promise<SubagentResult> => {
+        const run = await this.ctx.subagents.start(provider, requestFor(prompt));
+        return run.result;
       };
-      const run = await this.ctx.subagents.start(provider, request);
-      const result = await run.result;
+      // Read BEFORE the turn: the provider resolves the same id when it builds
+      // its command line, and if the CLI rejects it this is what says which id
+      // to stop trusting.
+      const resumeId = seatSessionId(host.session.id, seat.displayName);
+      let result = await runOnce(compose(lines));
+      // A conversation the CLI no longer has is the one failure that is cured
+      // by running again, so it is cured HERE rather than shown to the person.
+      // Left to the next turn it costs them a round and an error naming a uuid
+      // they never chose — which is what it did: `No conversation found with
+      // session ID: <uuid>`, on a seat that had answered minutes earlier.
+      //
+      // The window is rebuilt, not reused. A continuing seat is handed only
+      // what it has not already got, because the rest is in the conversation
+      // the CLI holds; once that conversation is gone, sending the trimmed
+      // window would hand a fresh seat a discussion with its middle missing.
+      if (result.stopReason !== "completed" && resumeWasRejected(resumeId, textOf(result.output))) {
+        forgetSeatSession(host.session.id, seat.displayName);
+        const reopened = await this.windowForSeat(record, host, seat);
+        // Only when the window came back. A rebuild that fails leaves the
+        // original failure standing, which is still the honest report.
+        if (reopened.error === undefined) {
+          this.ctx.logger.info(`${seat.displayName}：CLI 不认这个对话（${resumeId}），已丢弃并重开一次。`);
+          lines = reopened.lines ?? [];
+          // The rejected attempt is not counted. It never reached a model —
+          // the CLI exits at startup, before the first request — so charging
+          // it a turn would spend the seat's cap on something that did not
+          // happen.
+          result = await runOnce(compose(lines));
+        }
+      }
       const text = stripReasoning(textOf(result.output));
       // Only `completed` is an answer. `aborted`, `error`, `max-tokens` and
       // `refusal` all leave the seat without one, and each has to be visible —
@@ -2072,11 +2106,10 @@ export class TeamsService extends Service {
       // The conversation this turn ran in, so the next one can continue it
       // instead of paying for the standing prefix again.
       //
-      // A FAILED turn drops it instead. The commonest way a resume fails is an
-      // id the CLI no longer knows, and keeping it would make every later turn
-      // of this seat fail identically — with an error naming a uuid the person
-      // has never seen. Forgetting costs one un-resumed turn; keeping costs
-      // the seat.
+      // A FAILED turn drops it instead — the backstop for every failure the
+      // retry above does not recognise. An id kept after a failure would make
+      // every later turn of this seat fail the same way; forgetting one that
+      // was fine costs a single un-resumed turn.
       const cliSession = sessionIdOfResult(result);
       if (failed) {
         forgetSeatSession(host.session.id, seat.displayName);

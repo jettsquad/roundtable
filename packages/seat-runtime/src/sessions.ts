@@ -54,6 +54,25 @@ export function forgetSeatSession(parentSessionId: string, label: string | undef
 }
 
 /**
+ * Did this turn fail BECAUSE the conversation it was told to continue is gone?
+ *
+ * The test is that the failure names the id we passed. Every CLI phrases this
+ * differently — `claude` says "No conversation found with session ID: <uuid>"
+ * and exits 1 before it calls a model — but all of them have to say WHICH
+ * conversation, and none of them mentions an id nobody supplied. So this
+ * recognises the one failure a retry can actually cure, without a table of
+ * per-CLI error strings that goes stale the next time one is reworded.
+ *
+ * Deliberately narrow. A seat that failed for any other reason must NOT be
+ * run again: the commonest of those is a watchdog kill after a long silence,
+ * and retrying that costs the silence a second time.
+ */
+export function resumeWasRejected(resumeSessionId: string | undefined, failureText: string): boolean {
+  if (resumeSessionId === undefined || resumeSessionId === "") return false;
+  return failureText.includes(resumeSessionId);
+}
+
+/**
  * Drop every seat's conversation under one parent.
  *
  * This is what a FOLD does. The secretary's checkpoint replaces the history

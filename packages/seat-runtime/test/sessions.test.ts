@@ -10,6 +10,7 @@ import {
   forgetSeatSessions,
   rememberSeatSession,
   resetSeatSessions,
+  resumeWasRejected,
   seatSessionId,
 } from "../src/sessions.ts";
 
@@ -61,5 +62,25 @@ describe("席位会话记账", () => {
     rememberSeatSession("team-a2", "甲", "s2");
     forgetSeatSessions("team-a");
     expect(seatSessionId("team-a2", "甲")).toBe("s2");
+  });
+});
+
+describe("认出「这段对话没了」", () => {
+  const id = "dda3fe21-958d-4e17-9c95-8abe02d795c9";
+
+  it("失败里点了我们传过去的 id，就是这段对话没了", () => {
+    // claude 的原话，一字不差；它在调模型之前就退出，所以这一次不花钱。
+    expect(resumeWasRejected(id, `No conversation found with session ID: ${id}`)).toBe(true);
+  });
+
+  it("别的失败一律不重试", () => {
+    // 最常见的是静默超时被看门狗杀掉。重试它等于再等一次那个静默。
+    expect(resumeWasRejected(id, "这个席位连续 15 分钟没有输出，已停止。")).toBe(false);
+    expect(resumeWasRejected(id, "MISSING_CREDENTIAL: 没有 API key")).toBe(false);
+  });
+
+  it("本来就没续接的turn，谈不上续接失败", () => {
+    expect(resumeWasRejected(undefined, `No conversation found with session ID: ${id}`)).toBe(false);
+    expect(resumeWasRejected("", "whatever")).toBe(false);
   });
 });

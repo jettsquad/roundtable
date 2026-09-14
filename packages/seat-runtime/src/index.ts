@@ -46,6 +46,7 @@ export {
   forgetSeatSessions,
   rememberSeatSession,
   resetSeatSessions,
+  resumeWasRejected,
   seatSessionId,
 } from "./sessions.ts";
 export { dshHome, seatStateDir } from "./home.ts";
