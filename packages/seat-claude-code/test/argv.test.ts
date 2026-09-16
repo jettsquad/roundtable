@@ -101,3 +101,36 @@ describe("续接已有会话", () => {
     expect(argv).toContain("--disallowed-tools");
   });
 });
+
+describe("宿主配置", () => {
+  it("默认关掉，不读宿主的 CLAUDE.md", () => {
+    // 这是默认值，而不是一个选项——实测：常驻前缀带宿主配置是 100,113
+    // token，不带是 33,899，差额每次冷启动都按「建缓存」这一档付。
+    expect(buildArgv({ prompt: "x" })).toContain("--safe-mode");
+  });
+
+  it("显式打开时让开", () => {
+    expect(buildArgv({ prompt: "x", hostCustomizations: true })).not.toContain("--safe-mode");
+  });
+
+  it("false 和不给是同一件事", () => {
+    // 这个轴的存储值多半是 undefined（老席位存的时候还没有这个字段），
+    // 而「没选」必须和「选了不要」落在省钱的那一边。
+    expect(buildArgv({ prompt: "x", hostCustomizations: false })).toContain("--safe-mode");
+  });
+
+  it("跟续接、权限模式、工具围栏共存", () => {
+    // 靠实跑定的，不是靠读文档：--safe-mode 配上这三样，第一轮建 33,899、
+    // 读 0，续接那轮建 51、读 33,899。三者同时生效。
+    const argv = buildArgv({
+      prompt: "x",
+      resumeSessionId: "sess-1",
+      permissionMode: "acceptEdits",
+      toolFilter: { deny: ["Bash"] },
+    });
+    expect(argv).toContain("--safe-mode");
+    expect(argv).toContain("--resume");
+    expect(flagValues(argv, "--permission-mode")).toEqual(["acceptEdits"]);
+    expect(flagValues(argv, "--disallowed-tools")).toContain("Task");
+  });
+});

@@ -75,6 +75,7 @@ interface Draft {
   reasoningEffort: ReasoningEffort | "";
   secretaryCandidate: boolean;
   webAccess: boolean;
+  hostCustomizations: boolean;
   color: string;
   voiceId: string;
   /** "" means the host's own login. */
@@ -102,6 +103,7 @@ const blank = (): Draft => ({
   reasoningEffort: "",
   secretaryCandidate: false,
   webAccess: false,
+  hostCustomizations: false,
   color: COLORS[0] ?? "#2e7d6b",
   voiceId: "",
   connectionId: "",
@@ -129,6 +131,7 @@ function draftOf(template: AgentTemplate): Draft {
     reasoningEffort: template.reasoningEffort ?? "",
     secretaryCandidate: template.secretaryCandidate,
     webAccess: template.webAccess === true,
+    hostCustomizations: template.hostCustomizations === true,
     color: template.color,
     voiceId: template.voiceId ?? "",
     connectionId: template.connectionId ?? "",
@@ -198,6 +201,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
         backend: draft.backend,
         secretaryCandidate: draft.secretaryCandidate,
         webAccess: draft.webAccess,
+        hostCustomizations: draft.hostCustomizations,
         color: draft.color,
         // Trimmed, and an all-whitespace value counts as unset: the picker
         // uses a single space as its 「自己填一个」 sentinel, and saving that
@@ -497,6 +501,29 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               />
               {t("agent.allowWeb")}
             </label>
+          )}
+
+          {/* Claude Code alone — it is the only backend whose CLI auto-loads a
+              configuration home, so the only one with anything to turn off.
+              Off by default and the default is the point: measured on this
+              machine, the standing prefix is 100,113 tokens with the host's
+              configuration and 33,899 without, and every cold start pays the
+              difference in cache CREATION. The project's own CLAUDE.md is not
+              what this controls — Squad reads that file itself either way. */}
+          {draft.backend !== "claude-code" ? null : (
+            <>
+              <label className={styles.check}>
+                <input
+                  type="checkbox"
+                  checked={draft.hostCustomizations}
+                  onChange={(event) => set({ hostCustomizations: event.target.checked })}
+                />
+                {t("agent.hostConfig")}
+              </label>
+              <div className={styles.hint}>
+                {draft.hostCustomizations ? t("agent.hostConfig.on") : t("agent.hostConfig.off")}
+              </div>
+            </>
           )}
         </div>
 

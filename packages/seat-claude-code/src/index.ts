@@ -89,14 +89,20 @@ export class FencedClaudeCodeSeats extends Service {
 
   async [Service.init](): Promise<void> {
     // The unconfigured default: the host's own CLI login, nothing injected.
-    this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider()));
     // …and the same login under each permission mode, for a seat that picked
     // a mode but no connection. Without these that seat asks for
     // `claude-code-fenced#acceptEdits`, which nothing registered — and the
     // failure arrives at the first round as an unregistered provider name
     // nobody typed.
-    for (const mode of CLAUDE_PERMISSION_MODES) {
-      this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, mode)));
+    //
+    // Each crossed with host-customizations, because that is likewise decided
+    // when the child is spawned: `--safe-mode` is argv, and argv attaches
+    // here. The cross product stays bounded — the mode list is closed and the
+    // new axis has two values.
+    for (const mode of [undefined, ...CLAUDE_PERMISSION_MODES] as const) {
+      for (const hostMd of [false, true] as const) {
+        this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, mode, hostMd)));
+      }
     }
     this.syncConnections();
     this.ctx.effect(() => this.ctx.seatConnections.watch(() => this.syncConnections()));
@@ -130,10 +136,15 @@ export class FencedClaudeCodeSeats extends Service {
     for (const connection of this.ctx.seatConnections.list()) {
       if (connection.backend !== "claude-code") continue;
       for (const mode of combinations) {
-        const key = providerNameFor(connection.connectionId, mode);
-        wanted.add(key);
-        if (this.perConnection.has(key)) continue;
-        this.perConnection.set(key, this.ctx.subagents.registerProvider(this.provider(connection.connectionId, mode)));
+        for (const hostMd of [false, true] as const) {
+          const key = providerNameFor(connection.connectionId, mode, hostMd);
+          wanted.add(key);
+          if (this.perConnection.has(key)) continue;
+          this.perConnection.set(
+            key,
+            this.ctx.subagents.registerProvider(this.provider(connection.connectionId, mode, hostMd)),
+          );
+        }
       }
     }
     for (const [connectionId, dispose] of [...this.perConnection]) {
@@ -146,14 +157,14 @@ export class FencedClaudeCodeSeats extends Service {
     }
   }
 
-  private provider(connectionId?: string, permissionMode?: string): SubagentProvider {
+  private provider(connectionId?: string, permissionMode?: string, hostCustomizations?: boolean): SubagentProvider {
     const config = this.config;
     const ctx = this.ctx;
     return {
       name:
-        connectionId === undefined && permissionMode === undefined
+        connectionId === undefined && permissionMode === undefined && hostCustomizations !== true
           ? (config.provider ?? DEFAULTS.provider)
-          : providerNameFor(connectionId, permissionMode),
+          : providerNameFor(connectionId, permissionMode, hostCustomizations),
       // Declared honestly: this provider really does apply a tool filter and
       // really does append a persona. The service checks these before
       // dispatching, so declaring one we did not implement would turn a
@@ -201,6 +212,11 @@ export class FencedClaudeCodeSeats extends Service {
                 config.permissionMode ??
                 DEFAULTS.permissionMode,
               alwaysDeny: config.alwaysDeny ?? DEFAULTS.alwaysDeny,
+              // Off unless this registration is the opt-in one. See
+              // `ArgvInput.hostCustomizations`: leaving it on costs ~66k of
+              // cache CREATION per cold start, measured, for a framework
+              // describing capabilities the seat does not have.
+              hostCustomizations: hostCustomizations === true,
             }),
           // Resolved per start, so a rotated key reaches this turn.
           env: {

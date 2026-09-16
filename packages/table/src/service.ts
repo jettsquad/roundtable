@@ -21,7 +21,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import type { SubagentResult, SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Domain } from "@deepseek-ai/dsh-storage-domain";
 import { SQUAD_TABLE_DOMAIN, type TeamPersisted } from "./domain.ts";
@@ -1974,7 +1974,20 @@ export class TeamsService extends Service {
   }
 
   /**
-   * Whether this seat's backend has its project file yet, and what to say.
+   * This seat's project file: its CONTENTS when it exists, an errand when it
+   * does not.
+   *
+   * Squad reads it now. It used to arrive on its own — every CLI discovers
+   * its own file in the cwd — and that route was given up deliberately: the
+   * switch that stops `claude` reading the project's `CLAUDE.md` is the same
+   * one that stops it reading the host's 141,709-character framework, and
+   * only one of those is worth 66k of cache creation on every cold start.
+   * See `ArgvInput.hostCustomizations`.
+   *
+   * Handing it over ourselves is not merely a replacement. It is visible on
+   * screen, it is the same path for a backend whose CLI has no such
+   * convention, and it is sent once per conversation rather than rebuilt into
+   * every system prompt.
    *
    * Checked per turn rather than remembered, because the folder is the
    * person's and they may delete it, and a remembered "already done" would
@@ -1982,23 +1995,38 @@ export class TeamsService extends Service {
    *
    * A backend with no such convention, or a folder that cannot be read at
    * all, produces nothing: this is a convenience, and it must never be the
-   * reason a round fails.
+   * reason a round fails. That includes an unreadable or undecodable file —
+   * a seat with no project notes answers; a round that threw does not.
    */
-  private async projectMemoryNoteFor(
+  private async projectMemoryFor(
     record: TeamRecord,
     seat: SeatSpec,
-  ): Promise<{ readonly forSeat: string; readonly notice: string } | undefined> {
+  ): Promise<
+    | { readonly kind: "missing"; readonly forSeat: string; readonly notice: string }
+    | { readonly kind: "present"; readonly file: string; readonly text: string }
+    | undefined
+  > {
     const file = projectMemoryFile(seat.backend);
     const folder = record.input.projectFolder;
     if (file === undefined || folder === undefined || folder.trim() === "") return undefined;
+    const path = join(folder, file);
     try {
-      await stat(join(folder, file));
-      return undefined;
+      await stat(path);
     } catch {
       return {
+        kind: "missing",
         forSeat: projectMemoryNote(file).join("\n"),
         notice: `${seat.displayName} 发现这个项目还没有 ${file}，这一轮会先把它建起来。之后要改，请你自己改。`,
       };
+    }
+    try {
+      const text = await readFile(path, "utf8");
+      return text.trim() === "" ? undefined : { kind: "present", file, text };
+    } catch {
+      // It is there and we cannot read it. Saying nothing is right: the seat
+      // loses a convenience, and the alternative — failing the round — loses
+      // the answer.
+      return undefined;
     }
   }
 
@@ -2044,16 +2072,25 @@ export class TeamsService extends Service {
       // criterion this library already holds says such a thing must say what
       // it did. Said ONCE — the check is re-run every turn, but the file
       // exists after the first one, so the notice cannot repeat.
-      const memoryNote = await this.projectMemoryNoteFor(record, seat);
-      if (memoryNote !== undefined) {
-        recordSpoken(host, "系统", memoryNote.notice);
+      const memory = await this.projectMemoryFor(record, seat);
+      if (memory?.kind === "missing") {
+        recordSpoken(host, "系统", memory.notice);
       }
+      // Sent only when this seat is opening a FRESH conversation. A resumed
+      // one is still carrying the copy it was handed, and re-sending it would
+      // pay for the project's notes again every single turn — which is the
+      // exact waste this whole change exists to stop.
+      const continuing = seatSessionId(host.session.id, seat.displayName) !== undefined;
+      const projectMemory = memory?.kind === "present" && !continuing ? memory : undefined;
       let lines = window.lines ?? [];
       const compose = (context: readonly string[]): string =>
         composeSeatPrompt({
           seat,
-          instruction: memoryNote === undefined ? instruction : `${memoryNote.forSeat}\n\n${instruction}`,
+          instruction: memory?.kind === "missing" ? `${memory.forSeat}\n\n${instruction}` : instruction,
           context,
+          ...(projectMemory === undefined
+            ? {}
+            : { projectMemory: { file: projectMemory.file, text: projectMemory.text } }),
           // The live roster, read at turn time: a member added mid-discussion
           // should be someone the next round can hand work to.
           roster: record.seats,

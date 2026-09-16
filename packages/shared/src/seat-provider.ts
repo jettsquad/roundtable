@@ -34,8 +34,10 @@ export const STOCK_SEAT_PROVIDER = "claude-code";
  * ignored — a setting the person believes is in force, which is worse than
  * not offering it.
  */
-export function providerNameFor(connectionId?: string, permissionMode?: string): string {
-  return providerName(SEAT_PROVIDER, connectionId, permissionMode);
+export function providerNameFor(connectionId?: string, permissionMode?: string, hostCustomizations?: boolean): string {
+  // `webAccess` is skipped deliberately: the Claude Code backend decides the
+  // web per request through `toolFilter`, so it never registers on that axis.
+  return providerName(SEAT_PROVIDER, connectionId, permissionMode, false, hostCustomizations);
 }
 
 /**
@@ -51,6 +53,7 @@ export function providerName(
   connectionId?: string,
   permissionMode?: string,
   webAccess?: boolean,
+  hostCustomizations?: boolean,
 ): string {
   const withConnection = connectionId === undefined || connectionId === "" ? base : `${base}/${connectionId}`;
   const withMode =
@@ -59,7 +62,18 @@ export function providerName(
   // untouched for `false` keeps every existing registration and every stored
   // provider string byte-identical, so this axis cannot break a backend that
   // does not use it.
-  return webAccess === true ? `${withMode}+web` : withMode;
+  const withWeb = webAccess === true ? `${withMode}+web` : withMode;
+  // A fifth, on the same terms and for the same reason: `--safe-mode` is an
+  // argv flag, argv attaches at REGISTRATION, and `agentOptions` — the only
+  // per-request options bag the seam has — is a closed set (provider, model,
+  // reasoning effort, output cap). So "may this seat read the host's
+  // CLAUDE.md" has nowhere else to travel.
+  //
+  // Appended AFTER `+web` so one name has one spelling. The two never
+  // co-occur today — web rides only on codex, this only on claude-code — but
+  // a name that depends on argument order is a name two callers can spell
+  // differently, and the failure is an unregistered provider nobody typed.
+  return hostCustomizations === true ? `${withWeb}+hostmd` : withWeb;
 }
 
 /** The provider names the non-claude backends ask for. */
@@ -86,6 +100,7 @@ export function providerForSeat(seat: {
   readonly connectionId?: string | undefined;
   readonly permissionMode?: string | undefined;
   readonly webAccess?: boolean | undefined;
+  readonly hostCustomizations?: boolean | undefined;
 }): string {
   const base = PROVIDER_BY_BACKEND[seat.backend] ?? seat.backend;
   // dsh's headless profile has no sandbox or approval flags, so a mode in
@@ -98,5 +113,10 @@ export function providerForSeat(seat: {
   // `toolFilter`) or not at all (dsh always has `curl`), and giving them the
   // suffix would split their registry for a distinction they never read.
   const web = seat.backend === "codex" ? seat.webAccess === true : false;
-  return providerName(base, seat.connectionId, mode, web);
+  // Claude Code alone selects on this axis. It is the only backend whose CLI
+  // auto-loads a configuration home, and so the only one with anything to
+  // turn off; asking codex or dsh for `+hostmd` would split their registry
+  // for a distinction their child process never reads.
+  const hostMd = seat.backend === "claude-code" ? seat.hostCustomizations === true : false;
+  return providerName(base, seat.connectionId, mode, web, hostMd);
 }

@@ -97,6 +97,30 @@ export interface AgentTemplate {
    */
   readonly webAccess?: boolean | undefined;
   /**
+   * Let this agent's `claude` read the HOST's own configuration.
+   *
+   * Claude Code only — it is the one backend whose CLI auto-loads a
+   * configuration home. Off by default, and the default is the point: that
+   * home currently holds 141,709 characters of framework, and the standing
+   * prefix measured 100,113 tokens with it against 33,899 without. Every cold
+   * start pays the difference in cache CREATION, the dearest tier.
+   *
+   * Close to half of what it loads describes capabilities a seat does not
+   * have: slash commands it cannot call, thinking flags it cannot set,
+   * sub-agent delegation when `Task` is denied to every seat. What a seat
+   * SHOULD be given is prompt blocks — chosen per seat, visible on screen,
+   * and readable by the codex and dsh seats too, which can never see a
+   * `CLAUDE.md` at all.
+   *
+   * The project's own `CLAUDE.md` does not depend on this. Squad reads that
+   * file itself and puts it in the prompt either way.
+   *
+   * Turn it on for a seat genuinely doing Claude Code's own job in a
+   * repository, where the whole configuration is the point — knowing that it
+   * buys the dead weight along with the useful part.
+   */
+  readonly hostCustomizations?: boolean | undefined;
+  /**
    * Soft delete.
    *
    * A template a team was built from is not removed outright: the team holds

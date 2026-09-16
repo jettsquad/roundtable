@@ -267,3 +267,42 @@ describe("上网方式写进提示词", () => {
     expect(prompt.trimEnd().endsWith("去查 A 网站")).toBe(true);
   });
 });
+
+describe("composeSeatPrompt · 项目说明文件", () => {
+  const memory = { file: "CLAUDE.md", text: "这个项目在做电池 SOH 估计。数据在 data/ 下。" };
+
+  it("内容进提示词，标题带文件名", () => {
+    // 以前这段是 CLI 自己在 cwd 里找到并读进去的。那条路被 --safe-mode 一起
+    // 关掉了——关掉它才能同时关掉宿主那 141,709 字符的框架——所以现在由桌子
+    // 读了递过来。递过来这件事本身更好：屏幕上能看见席位拿到了什么。
+    const prompt = composeSeatPrompt({ seat, instruction: "干活", context: [], projectMemory: memory });
+    expect(prompt).toContain("## 这个项目：CLAUDE.md");
+    expect(prompt).toContain("数据在 data/ 下");
+  });
+
+  it("排在材料和讨论之前", () => {
+    // 它是整份提示词里最稳的一块：同桌会变、材料会加会撤、讨论每轮都长。
+    // 放在最前面，前缀缓存才留得住它。
+    const prompt = composeSeatPrompt({
+      seat,
+      instruction: "干活",
+      context: ["【甲】上一轮说过的话"],
+      projectMemory: memory,
+      materials: [{ materialId: "m1", name: "spec.md", text: "规格正文", addedAt: 0 }],
+    });
+    expect(prompt.indexOf("数据在 data/ 下")).toBeLessThan(prompt.indexOf("规格正文"));
+    expect(prompt.indexOf("规格正文")).toBeLessThan(prompt.indexOf("上一轮说过的话"));
+  });
+
+  it("空文件当没有", () => {
+    // 一个空的 CLAUDE.md 会印出一个没有正文的小标题，那读起来像「这个项目
+    // 没什么可说的」——那是一句断言，不是一个缺省。
+    const prompt = composeSeatPrompt({
+      seat,
+      instruction: "干活",
+      context: [],
+      projectMemory: { file: "CLAUDE.md", text: "   \n  " },
+    });
+    expect(prompt).not.toContain("## 这个项目");
+  });
+});

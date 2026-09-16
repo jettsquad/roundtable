@@ -318,6 +318,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           ...(seat.color === undefined ? {} : { color: seat.color }),
           ...(seat.voiceId === undefined ? {} : { voiceId: seat.voiceId }),
           ...(seat.webAccess === undefined ? {} : { webAccess: seat.webAccess }),
+          ...(seat.hostCustomizations === undefined ? {} : { hostCustomizations: seat.hostCustomizations }),
           ...(blockedReason(ctx, seat) === undefined ? {} : { blocked: blockedReason(ctx, seat) }),
         };
       }),
@@ -787,6 +788,7 @@ export async function createTeamWithMembers(
       ...(template.permissionMode === undefined ? {} : { permissionMode: template.permissionMode }),
       ...(template.caps === undefined ? {} : { caps: template.caps }),
       ...(template.webAccess === undefined ? {} : { webAccess: template.webAccess }),
+      ...(template.hostCustomizations === undefined ? {} : { hostCustomizations: template.hostCustomizations }),
     };
   });
 
@@ -863,6 +865,7 @@ export function addSeatFrom(ctx: Context, request: SeatRequest): void {
       ...(template.permissionMode === undefined ? {} : { permissionMode: template.permissionMode }),
       ...(template.caps === undefined ? {} : { caps: template.caps }),
       ...(template.webAccess === undefined ? {} : { webAccess: template.webAccess }),
+      ...(template.hostCustomizations === undefined ? {} : { hostCustomizations: template.hostCustomizations }),
     });
     return;
   }
@@ -919,6 +922,7 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
     ...(request.caps === undefined ? {} : { caps: request.caps }),
     ...(request.webAccess === undefined ? {} : { webAccess: request.webAccess }),
+    ...(request.hostCustomizations === undefined ? {} : { hostCustomizations: request.hostCustomizations }),
   });
 
   // And into every team already sitting this agent. Without this the library
@@ -936,6 +940,7 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     color: request.color,
     ...(request.voiceId === undefined ? {} : { voiceId: request.voiceId }),
     webAccess: request.webAccess,
+    hostCustomizations: request.hostCustomizations,
   });
 }
 
@@ -951,6 +956,7 @@ function templateFactsOf(template: {
   caps?: TemplateFacts["caps"];
   color?: string | undefined;
   webAccess?: boolean | undefined;
+  hostCustomizations?: boolean | undefined;
 }): TemplateFacts {
   return {
     templateId: template.templateId,
@@ -963,6 +969,7 @@ function templateFactsOf(template: {
     caps: template.caps,
     color: template.color,
     webAccess: template.webAccess,
+    hostCustomizations: template.hostCustomizations,
   };
 }
 

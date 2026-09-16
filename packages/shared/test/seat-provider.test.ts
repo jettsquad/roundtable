@@ -110,12 +110,44 @@ describe("the web axis", () => {
     // 存量席位存下来的 provider 字符串必须还能对上，否则这个改动会让每个
     // 已有的 codex 席位在下一轮报「no provider registered」。
     for (const web of [undefined, false]) {
-      expect(providerForSeat({ backend: "codex", permissionMode: "workspace", webAccess: web })).toBe("codex#workspace");
+      expect(providerForSeat({ backend: "codex", permissionMode: "workspace", webAccess: web })).toBe(
+        "codex#workspace",
+      );
     }
     expect(providerName("codex", "c1", "workspace")).toBe("codex/c1#workspace");
   });
 
   it("四个轴叠在一起", () => {
     expect(providerName("codex", "c1", "workspace", true)).toBe("codex/c1#workspace+web");
+  });
+});
+
+describe("宿主配置这个轴", () => {
+  it("关着的时候名字一个字节都不变", () => {
+    // 这一条保的是已存的席位：provider 名字是存下来的字符串，变一个字节
+    // 就是「没有注册这个 provider」，而且报错里那个名字谁都没打过。
+    expect(providerForSeat({ backend: "claude-code", connectionId: "c1", permissionMode: "acceptEdits" })).toBe(
+      providerName("claude-code-fenced", "c1", "acceptEdits"),
+    );
+  });
+
+  it("打开时加后缀", () => {
+    expect(providerForSeat({ backend: "claude-code", connectionId: "c1", hostCustomizations: true })).toBe(
+      "claude-code-fenced/c1+hostmd",
+    );
+  });
+
+  it("只有 claude-code 认这个轴", () => {
+    // codex 和 dsh 的子进程根本没有「宿主配置」这回事，给它们分出一份
+    // 注册，就是为一个它们永远不读的区别把注册表劈成两半。
+    for (const backend of ["codex", "dsh"]) {
+      expect(providerForSeat({ backend, connectionId: "c1", hostCustomizations: true })).not.toContain("+hostmd");
+    }
+  });
+
+  it("和 +web 同时出现时只有一种拼法", () => {
+    // 两个轴今天不会同时出现（web 只在 codex，这个只在 claude-code），
+    // 但一个依赖参数顺序的名字，是两个调用方能拼出两种写法的名字。
+    expect(providerName("x", "c1", "m", true, true)).toBe("x/c1#m+web+hostmd");
   });
 });

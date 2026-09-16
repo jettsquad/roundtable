@@ -187,6 +187,14 @@ export const zh = {
   "agent.caps": "上限",
   "agent.canSecretary": "可以当秘书",
   "agent.allowWeb": "允许联网（预先批准 WebFetch / WebSearch）",
+  "agent.hostConfig": "读取本机 Claude 配置（~/.claude）",
+  "agent.hostConfig.on":
+    "这个席位每次新开会话，会先把 ~/.claude 下的全部内容读进去。" +
+    "实测常驻前缀 100,113 token，不读是 33,899——差额按最贵的「建缓存」计价。" +
+    "只在这个席位真的要干 Claude Code 本行时才勾。",
+  "agent.hostConfig.off":
+    "本机配置不读。要给席位的规矩，用提示词块——按席位选、看得见、codex 和 dsh 也能用。" +
+    "项目自己的 CLAUDE.md 不受影响，Squad 会替它读。",
   "agent.voice": "声音",
   "agent.colour": "颜色",
 
@@ -507,6 +515,16 @@ export const en: Record<SquadKey, string> = {
   "agent.caps": "Caps",
   "agent.canSecretary": "can act as secretary",
   "agent.allowWeb": "Allow web access (pre-approve WebFetch / WebSearch)",
+  "agent.hostConfig": "Read this machine's Claude configuration (~/.claude)",
+  "agent.hostConfig.on":
+    "Every fresh conversation this seat opens reads all of ~/.claude first. " +
+    "Measured: the standing prefix is 100,113 tokens with it and 33,899 without — " +
+    "and the difference is billed as cache creation, the dearest tier. " +
+    "Tick it only for a seat genuinely doing Claude Code's own job.",
+  "agent.hostConfig.off":
+    "Not read. Give a seat its rules as prompt blocks instead — chosen per seat, " +
+    "visible on screen, and readable by the codex and dsh seats too. " +
+    "The project's own CLAUDE.md is unaffected; Squad reads that file for it.",
   "agent.voice": "Voice",
   "agent.colour": "Colour",
 

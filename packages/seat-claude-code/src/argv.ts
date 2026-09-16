@@ -63,6 +63,34 @@ export interface ArgvInput {
    * the table's `resumeIdFor`.
    */
   readonly resumeSessionId?: string | undefined;
+  /**
+   * Let this seat read the HOST's customizations: `~/.claude/CLAUDE.md` and
+   * everything it imports, plus the project's own `CLAUDE.md`, skills,
+   * plugins, hooks and MCP servers.
+   *
+   * Off by default, and that is the change worth explaining. The CLI loads
+   * all of it automatically, and on this machine that is 141,709 characters
+   * of framework — measured: the standing prefix goes 38,070 → 100,113 with
+   * it, so every cold start creates 62k extra tokens of cache, the dearest
+   * tier there is. Roughly half of it describes capabilities a seat does not
+   * have: slash commands it cannot call, `--think` flags it has no way to
+   * set, wave orchestration and sub-agent delegation when `Task` is denied to
+   * every seat by `DELEGATION_TOOLS`.
+   *
+   * What a seat SHOULD read instead is what the team gave it — its prompt
+   * blocks — because that is per-seat, visible on screen, editable, and works
+   * for the codex and dsh seats too, which can never see a `CLAUDE.md`.
+   *
+   * The project's own file is not lost with it: `--safe-mode` stops the CLI
+   * from reading it and the TABLE reads it instead, so it still reaches the
+   * seat, through a route Squad can show and control. See
+   * `projectMemoryFor` in `@squad/table`.
+   *
+   * This stays reachable for the seat that is genuinely doing Claude Code's
+   * own job in a repository and wants the whole configuration — but turning
+   * it on buys the dead weight along with the useful part.
+   */
+  readonly hostCustomizations?: boolean | undefined;
 }
 
 /** Delegation tools, denied to every seat unless the composition says otherwise. */
@@ -89,6 +117,16 @@ export function buildArgv(input: ArgvInput): readonly string[] {
     // an idle clock kills a seat that is working.
     "--include-partial-messages",
   ];
+
+  // Unless the seat asked for the host's configuration, everything the CLI
+  // would have loaded on its own is turned off here. Auth, model selection,
+  // built-in tools and permissions are unaffected — that is what makes this
+  // flag usable for a subscription seat, where giving the child its own
+  // `CLAUDE_CONFIG_DIR` is not an option: measured, an isolated config home
+  // answers "Not logged in · Please run /login", and copying `.claude.json`
+  // into it does not help, because the CLI only reads the Keychain from the
+  // default home.
+  if (input.hostCustomizations !== true) argv.push("--safe-mode");
 
   // Before the permission flags, and before the prompt: the CLI reads it as a
   // top-level option, and everything after it still applies to the resumed

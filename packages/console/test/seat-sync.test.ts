@@ -80,3 +80,18 @@ describe("把模板改动同步进席位", () => {
     expect(planSeatSync([syncSeat(seat, template)], template)).toEqual([]);
   });
 });
+
+describe("读取本机配置这个勾", () => {
+  it("在库里取消，已经坐着的席位也跟着取消", () => {
+    // 跟 webAccess 同一个坑：只会「加字段」的同步，永远传不动一次取消，
+    // 于是库里显示不读、席位每轮照读——一个看起来生效了的设置。
+    const sat: SyncableSeat = { ...seat, hostCustomizations: true };
+    expect(syncSeat(sat, { ...template, hostCustomizations: false }).hostCustomizations).toBe(false);
+    expect(seatMatches(sat, { ...template, hostCustomizations: false })).toBe(false);
+  });
+
+  it("两边都开着就不算漂移", () => {
+    const sat: SyncableSeat = { ...syncSeat(seat, { ...template, hostCustomizations: true }) };
+    expect(seatMatches(sat, { ...template, hostCustomizations: true })).toBe(true);
+  });
+});

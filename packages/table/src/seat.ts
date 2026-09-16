@@ -63,6 +63,13 @@ export interface SeatSpec {
    * permission gate to open. See `AgentTemplate.webAccess`.
    */
   readonly webAccess?: boolean | undefined;
+  /**
+   * Let this seat's `claude` read the host's own configuration.
+   *
+   * Decided when the child is spawned, so it travels in the PROVIDER NAME
+   * like the permission mode does. See `AgentTemplate.hostCustomizations`.
+   */
+  readonly hostCustomizations?: boolean | undefined;
 }
 
 /** What a seat is asked in one round, before it becomes prompt text. */
@@ -95,6 +102,25 @@ export interface SeatTurnInput {
    * keep handing out a document the host has since deleted.
    */
   readonly materials?: readonly Material[] | undefined;
+  /**
+   * The project's own memory file, read by Squad rather than by the CLI.
+   *
+   * It used to arrive on its own: `claude` discovers `CLAUDE.md` in the cwd
+   * and loads it, and so does `codex` with `AGENTS.md`. That route is gone
+   * for the Claude seat, because turning it off is the same switch that turns
+   * off the host's 141,709-character framework — `--safe-mode` takes both or
+   * neither, and only one of them is worth 66k of cache creation per cold
+   * start.
+   *
+   * So the file travels here instead, which is better in two ways it is worth
+   * saying out loud: Squad can show what a seat was given, and the same
+   * mechanism can serve a backend whose CLI has no such convention at all.
+   *
+   * Sent only when the seat is opening a FRESH conversation. A resumed one
+   * already has it — see `windowForSeat`, which draws the same line for the
+   * discussion.
+   */
+  readonly projectMemory?: { readonly file: string; readonly text: string } | undefined;
   readonly seat: SeatSpec;
   /** The host's instruction for this round. */
   readonly instruction: string;
@@ -187,6 +213,20 @@ export function composeSeatPrompt(input: SeatTurnInput): string {
       "只有主持人点名要你亲自做某件事时，你才自己做。",
     );
   }
+  // The project, before anything that happens inside it. This is the most
+  // STABLE thing in the prompt — a roster changes, material comes and goes,
+  // the discussion grows every round — so it sits ahead of all of them, where
+  // a prefix cache can keep it.
+  if (input.projectMemory !== undefined && input.projectMemory.text.trim() !== "") {
+    lines.push(
+      "",
+      `## 这个项目：${input.projectMemory.file}`,
+      "这是项目自己的说明文件，讲这个项目是干什么的、怎么组织的、有哪些约定。",
+      "",
+      input.projectMemory.text.trim(),
+    );
+  }
+
   // Material first, discussion second, instruction last. It is the background
   // the discussion happened AGAINST — a seat that meets the argument before
   // the document is reading a debate about something it has not seen.

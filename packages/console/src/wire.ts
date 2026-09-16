@@ -71,6 +71,7 @@ export interface TeamSummary {
     readonly orphaned?: boolean | undefined;
     /** Pre-approved for the web tools. Claude Code only. */
     readonly webAccess?: boolean | undefined;
+    readonly hostCustomizations?: boolean | undefined;
     /**
      * How a running seat's run is going, while it is going.
      *

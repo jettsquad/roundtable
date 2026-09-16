@@ -43,6 +43,7 @@ export interface SyncableSeat {
   readonly color?: string | undefined;
   readonly voiceId?: string | undefined;
   readonly webAccess?: boolean | undefined;
+  readonly hostCustomizations?: boolean | undefined;
   readonly templateId?: string | undefined;
   readonly isSecretary?: boolean | undefined;
 }
@@ -60,6 +61,7 @@ export interface TemplateFacts {
   readonly color?: string | undefined;
   readonly voiceId?: string | undefined;
   readonly webAccess?: boolean | undefined;
+  readonly hostCustomizations?: boolean | undefined;
 }
 
 /** Rebuild one seat from its template, keeping what belongs to the team. */
@@ -86,6 +88,9 @@ export function syncSeat<T extends SyncableSeat>(seat: T, template: TemplateFact
     // to reach the teams too, and a sync that only ever set `true` could
     // never carry that.
     webAccess: template.webAccess === true,
+    // Assigned, not added, for the same reason: unticking 「读取本机配置」 in
+    // the library has to reach the seats that are already sitting.
+    hostCustomizations: template.hostCustomizations === true,
   };
 }
 
@@ -102,6 +107,7 @@ export function seatMatches(seat: SyncableSeat, template: TemplateFacts): boolea
     next.color === seat.color &&
     next.voiceId === seat.voiceId &&
     next.webAccess === seat.webAccess &&
+    next.hostCustomizations === seat.hostCustomizations &&
     next.caps?.maxTurns === seat.caps?.maxTurns &&
     next.caps?.maxCostUsd === seat.caps?.maxCostUsd &&
     next.caps?.maxTokens === seat.caps?.maxTokens
