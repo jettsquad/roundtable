@@ -484,6 +484,8 @@ export class TeamsService extends Service {
 
   private readonly teams = new Map<string, TeamRecord>();
   private assembler: TeamAssembler | undefined;
+  /** sessionId → the lookup in flight for it. See `sittingFor`. */
+  private readonly sittingLookups = new Map<string, Promise<Team | undefined>>();
   private domain: Domain<typeof SQUAD_TABLE_DOMAIN> | undefined;
   /** Serialises writes so two edits in one tick cannot lose one another. */
   private writes: Promise<void> = Promise.resolve();
@@ -902,8 +904,30 @@ export class TeamsService extends Service {
    * other session, which is exactly what 「重新听我的命令开始新的工作」 means.
    */
   async sittingFor(input: { readonly projectFolder: string; readonly sessionId: string }): Promise<Team | undefined> {
+    // One lookup per session at a time. The body awaits (creating the host
+    // node) BETWEEN checking for a sitting and registering the new one, so
+    // three callers arriving together each found none and each made one — the
+    // duplicate sittings that hid a discussion behind an empty twin. Later
+    // callers wait for the first and then find its record.
+    const running = this.sittingLookups.get(input.sessionId);
+    if (running !== undefined) return running;
+    const lookup = this.findOrCreateSitting(input).finally(() => {
+      this.sittingLookups.delete(input.sessionId);
+    });
+    this.sittingLookups.set(input.sessionId, lookup);
+    return lookup;
+  }
+
+  private async findOrCreateSitting(input: {
+    readonly projectFolder: string;
+    readonly sessionId: string;
+  }): Promise<Team | undefined> {
     const records = [...this.teams.values()];
-    const existing = recordForSession(records, input.sessionId);
+    const existing = recordForSession(
+      records,
+      input.sessionId,
+      (record) => record.handle.agent.session.snapshotEvents().length,
+    );
     if (existing !== undefined) {
       // Marked here too. The session may be one dsh reused after discarding
       // its events, and an unmarked session disappears on reload whether or

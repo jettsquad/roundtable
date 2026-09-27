@@ -81,3 +81,14 @@ describe("第一个会话认领团队本身", () => {
     expect(unclaimed({ teamId: "sit-a", sessionId: "sit-a", baseTeamId: "t1" })).toBe(false);
   });
 });
+
+describe("recordForSession with duplicates", () => {
+  const dup = (teamId: string, size: number) => ({ teamId, sessionId: "s", size });
+  it("prefers the record with the discussion over an empty twin that comes first", () => {
+    const rows = [dup("empty-1", 1), dup("empty-2", 1), dup("full", 40)];
+    expect(recordForSession(rows, "s", (row) => row.size)?.teamId).toBe("full");
+  });
+  it("keeps the first when they weigh the same", () => {
+    expect(recordForSession([dup("a", 3), dup("b", 3)], "s", (row) => row.size)?.teamId).toBe("a");
+  });
+});

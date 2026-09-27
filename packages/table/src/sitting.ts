@@ -37,11 +37,33 @@ export interface FolderLike extends SittingLike {
  *
  * By session id and nothing else. Matching on folder is what produced the
  * bug: two sessions in one workspace both matched, and the first won.
+ *
+ * When SEVERAL records claim the same session, the one with the most in it
+ * wins, and the first only breaks a tie. Duplicates exist on disk: three
+ * concurrent first visits each passed the "is there one yet?" check before any
+ * of them registered, and made a sitting apiece. Taking the first match then
+ * meant whichever came first in the file was shown — an empty one, with the
+ * real discussion sitting unseen in its twin. Weighing is what lets those
+ * already-written duplicates resolve to the discussion without editing data.
  */
-export function recordForSession<T extends SittingLike>(records: readonly T[], sessionId: string): T | undefined {
+export function recordForSession<T extends SittingLike>(
+  records: readonly T[],
+  sessionId: string,
+  weigh: (record: T) => number = () => 0,
+): T | undefined {
   // Falling back to the id keeps a pre-sittings record matching its own
   // original session, which is what it always served.
-  return records.find((record) => record.disposed !== true && (record.sessionId ?? record.teamId) === sessionId);
+  let best: T | undefined;
+  let bestWeight = -1;
+  for (const record of records) {
+    if (record.disposed === true || (record.sessionId ?? record.teamId) !== sessionId) continue;
+    const weight = weigh(record);
+    if (weight > bestWeight) {
+      best = record;
+      bestWeight = weight;
+    }
+  }
+  return best;
 }
 
 /**
