@@ -12,11 +12,12 @@
  * has no answer at all for the round. A path costs nothing to a seat that
  * cannot read images: it answers the text and says so.
  */
-import { mkdir, writeFile } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { extname, join, sep } from "node:path";
+import { IMAGE_DIR } from "@squad/shared";
 
 /** Where pasted images live, under the team's own project folder. */
-export const IMAGE_DIR = "squad-images";
+export { IMAGE_DIR };
 
 /**
  * Extensions treated as images.
@@ -90,4 +91,40 @@ export async function saveImage(projectFolder: string, name: string, bytes: Uint
   const path = join(dir, imageFileName(name));
   await writeFile(path, bytes);
   return path;
+}
+
+const CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+  ".svg": "image/svg+xml",
+};
+
+/**
+ * Read one image the panel asked to show.
+ *
+ * The path arrives from a browser and originally from a model, so it is
+ * trusted for nothing: it must be an image by extension, and — after symlinks
+ * are resolved on BOTH sides — sit inside the team's own project folder. That
+ * is wider than the two folders this product writes to, on purpose: an agent
+ * that draws a diagram saves it under the project (`docs/…`), and that is the
+ * picture the person wants to see. Only image files, only inside the folder
+ * they gave the team; anything else is refused, not "not found", so a probe
+ * for `/etc/passwd` and a typo do not look alike in the log.
+ */
+export async function readMedia(
+  projectFolder: string,
+  path: string,
+): Promise<{ readonly bytes: Buffer; readonly contentType: string }> {
+  const contentType = CONTENT_TYPES[extname(path).toLowerCase()];
+  if (contentType === undefined) throw new Error("不是图片。");
+  const real = await realpath(path).catch(() => {
+    throw new Error("找不到这张图片。");
+  });
+  const root = await realpath(projectFolder).catch(() => undefined);
+  if (root === undefined || !real.startsWith(root + sep)) throw new Error("只能查看团队项目文件夹里的图片。");
+  return { bytes: await readFile(real), contentType };
 }

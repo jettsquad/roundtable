@@ -469,6 +469,41 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           </span>
           {current.materials.map((material) => {
             const on = material.pinned || attached.includes(material.materialId);
+            const toggle = (): void =>
+              void api
+                .select({
+                  teamId: current.teamId,
+                  kind: "material",
+                  id: material.materialId,
+                  on: !attached.includes(material.materialId),
+                })
+                .then(onSent);
+            // A pasted picture is shown, so you can tell it is the right one
+            // before it goes out. Click the picture to attach or detach it,
+            // the same as a document chip; 放大 opens it full size.
+            if (material.imagePath !== undefined) {
+              const src = api.fileUrl(current.teamId, material.imagePath);
+              return (
+                <span key={material.materialId} className={`${styles.thumb} ${on ? styles.thumbOn : ""}`}>
+                  <button
+                    type="button"
+                    className={styles.thumbButton}
+                    title={on ? "已附带，点击取消" : "点击附带这张图"}
+                    disabled={material.pinned}
+                    onClick={toggle}
+                  >
+                    <img className={styles.thumbImg} src={src} alt={material.name} />
+                  </button>
+                  <span className={styles.thumbName}>
+                    {on ? "✓ " : ""}
+                    {material.name} ·{" "}
+                    <a href={src} target="_blank" rel="noopener noreferrer">
+                      放大
+                    </a>
+                  </span>
+                </span>
+              );
+            }
             return (
               <button
                 key={material.materialId}
@@ -480,16 +515,7 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
                     : `${material.chars.toLocaleString()} 字 · 只带这一轮`
                 }
                 disabled={material.pinned}
-                onClick={() =>
-                  void api
-                    .select({
-                      teamId: current.teamId,
-                      kind: "material",
-                      id: material.materialId,
-                      on: !attached.includes(material.materialId),
-                    })
-                    .then(onSent)
-                }
+                onClick={toggle}
               >
                 {material.pinned ? "📌 " : on ? "✓ " : ""}
                 {material.name}

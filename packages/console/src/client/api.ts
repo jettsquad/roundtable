@@ -119,14 +119,18 @@ export const api = {
    * Base64 in a JSON envelope would cost a third more transfer and a full
    * re-encode at both ends for nothing.
    */
-  addMaterial: async (teamId: string, name: string, bytes: ArrayBuffer): Promise<void> => {
+  addMaterial: async (teamId: string, name: string, bytes: ArrayBuffer): Promise<{ imagePath?: string }> => {
     const url = `${PREFIX}/materials?teamId=${encodeURIComponent(teamId)}&name=${encodeURIComponent(name)}`;
     const response = await fetch(url, { method: "POST", body: bytes });
     if (!response.ok) {
       const detail = (await response.json().catch(() => ({ error: response.statusText }))) as { error?: string };
       throw new Error(detail.error ?? "导入失败。");
     }
+    return (await response.json()) as { imagePath?: string };
   },
+  /** Where the panel can load a picture from the team's folder. */
+  fileUrl: (teamId: string, path: string): string =>
+    `${PREFIX}/file?teamId=${encodeURIComponent(teamId)}&path=${encodeURIComponent(path)}`,
   removeMaterial: (body: { teamId: string; materialId: string }): Promise<{ ok: true }> =>
     call("/materials", "DELETE", body),
   /** Put the agenda back to before one phase. Never starts it — that is the next decision. */

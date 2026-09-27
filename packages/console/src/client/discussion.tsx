@@ -20,6 +20,7 @@
  * text told you what was said and nothing told you where one answer ended.
  */
 import { useEffect, useRef, useState } from "react";
+import { extractLocalImages, imagePathsIn } from "@squad/shared";
 import { MARKDOWN_LABELS } from "./markdown-labels.ts";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, type TeamSummary } from "./api.ts";
@@ -345,6 +346,17 @@ export function Discussion({
         const tint = tintOf(team, line.speaker);
         const host = line.speaker === team.hostDisplayName;
         const picked = quoted.includes(line.turnId);
+        // Pictures are shown by the panel, not the Markdown renderer, which
+        // prints an image as its alt text. Embedded ones first, in the order
+        // they were written, then any other image path the message names.
+        const shown = extractLocalImages(line.text);
+        const pictures = [
+          ...shown.images,
+          ...imagePathsIn(shown.text, team.projectFolder).map((path) => ({
+            alt: path.split("/").pop() ?? path,
+            path,
+          })),
+        ].filter((picture, index, all) => all.findIndex((other) => other.path === picture.path) === index);
         return (
           <article key={line.turnId} className={`${styles.message} ${host ? styles.messageMine : ""}`}>
             <div className={styles.messageHead}>
@@ -359,6 +371,11 @@ export function Discussion({
             <div
               className={`${styles.messageBody} ${host ? styles.bodyMine : styles.bodyTheirs}`}
               style={tint === undefined || host ? undefined : { borderLeftColor: tint }}
+              onClick={(event) => {
+                // A picture opens at full size in its own tab.
+                const target = event.target as HTMLElement;
+                if (target.tagName === "IMG") window.open((target as HTMLImageElement).src, "_blank", "noopener");
+              }}
             >
               {/* A plan is rendered, not printed. The secretary writes JSON
                   because that is what the build button needs; the person
@@ -368,8 +385,20 @@ export function Discussion({
               {(team.planTurnIds ?? []).includes(line.turnId) ? (
                 <PlanMessage team={team} turnId={line.turnId} raw={line.text} />
               ) : (
-                <MarkdownText text={line.text} labels={MARKDOWN_LABELS} />
+                <MarkdownText text={shown.text} labels={MARKDOWN_LABELS} />
               )}
+              {/* Pictures the message names, shown beneath it. A drawing an
+                  agent just saved is reported as a path, often inside a code
+                  block; the person wants to see the drawing, not the path. */}
+              {pictures.map((picture) => (
+                <img
+                  key={picture.path}
+                  className={styles.attached}
+                  src={api.fileUrl(team.teamId, picture.path)}
+                  alt={picture.alt}
+                  loading="lazy"
+                />
+              ))}
             </div>
             {/* Under the message, not above it. A seat's answer runs to
                 hundreds of lines; buttons at the top mean scrolling back to

@@ -18,6 +18,7 @@
  * about how material is presented, and the assembly, the console and the
  * tests all need to agree on it.
  */
+import { imagePathOfMaterial, markdownPath } from "./local-media.ts";
 
 /** One document attached to a team. */
 export interface Material {
@@ -178,5 +179,12 @@ export function attachmentNote(materials: readonly Material[]): string | undefin
   // Recorded with the instruction so the discussion stays readable later: an
   // answer that leans on a document is unaccountable if the record does not
   // say which document was in front of it.
-  return `（本轮附带资料：${materials.map((material) => material.name).join("、")}）`;
+  const line = `（本轮附带资料：${materials.map((material) => material.name).join("、")}）`;
+  // A picture is shown, not just named: the record is what you scroll back
+  // through, and a file name says nothing about what was in the screenshot.
+  const pictures = materials.flatMap((material) => {
+    const path = imagePathOfMaterial(material.text);
+    return path === undefined ? [] : [`![${material.name}](${markdownPath(path)})`];
+  });
+  return pictures.length === 0 ? line : `${line}\n${pictures.join("\n")}`;
 }

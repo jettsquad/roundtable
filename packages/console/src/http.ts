@@ -56,7 +56,8 @@ import { agendaEditIsLegal } from "./agenda-verdict.ts";
 import { driftBetween } from "./roster-drift.ts";
 import { parseMentions } from "./mention.ts";
 import { extractDocument, MAX_FILE_BYTES } from "./extract.ts";
-import { imagePointer, looksLikeImage, saveImage } from "./image.ts";
+import { presence } from "./notify.ts";
+import { imagePointer, looksLikeImage, readMedia, saveImage } from "./image.ts";
 import { planSeatSync, syncSeat, type TemplateFacts } from "./seat-sync.ts";
 import { parseNewTeam } from "./parse.ts";
 // Cyclic with `team-designer.ts`, which imports two helpers from here. Safe
@@ -77,6 +78,7 @@ import {
   assertPublicHostCommand,
   checkAgendaAgainstRoster,
   checkPromptSet,
+  imagePathOfMaterial,
   type AgendaSpec,
   type PromptBlock,
   type TeamPrompts,
@@ -414,6 +416,11 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
         chars: material.text.length,
         addedAt: material.addedAt,
         pinned: material.pinned === true,
+        // A pasted picture is shown as a thumbnail in the composer, so the
+        // person can check it is the right one BEFORE sending.
+        ...(imagePathOfMaterial(material.text) === undefined
+          ? {}
+          : { imagePath: imagePathOfMaterial(material.text) as string }),
       })),
       selection: { quoteIds: team.selection.quoteIds, materialIds: team.selection.materialIds },
       ...(team.queued === undefined ? {} : { queued: team.queued }),
@@ -1572,12 +1579,12 @@ export function registerSquadApi(ctx: Context): () => void {
           // An image has no text to extract, so it takes the other path: the
           // file is written into the team's own folder and what the seats
           // read is where to find it.
-          const extracted = looksLikeImage(name)
-            ? {
-                name,
-                text: imagePointer(await saveImage(team.projectFolder, name, new Uint8Array(bytes))),
-              }
-            : await extractDocument(name, new Uint8Array(bytes));
+          let imagePath: string | undefined;
+          if (looksLikeImage(name)) imagePath = await saveImage(team.projectFolder, name, new Uint8Array(bytes));
+          const extracted =
+            imagePath === undefined
+              ? await extractDocument(name, new Uint8Array(bytes))
+              : { name, text: imagePointer(imagePath) };
           // Refused here, before anything is stored, by the same rule the
           // panel shows: a document nobody can afford must not be half-added.
           team.addMaterial({
@@ -1587,7 +1594,13 @@ export function registerSquadApi(ctx: Context): () => void {
             addedAt: Date.now(),
           });
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-          res.end(JSON.stringify({ ok: true, chars: extracted.text.length }));
+          res.end(
+            JSON.stringify({
+              ok: true,
+              chars: extracted.text.length,
+              ...(imagePath === undefined ? {} : { imagePath }),
+            }),
+          );
           return;
         }
         if (suffix === "/materials" && req.method === "PATCH") {
@@ -1873,6 +1886,20 @@ export function registerSquadApi(ctx: Context): () => void {
                 });
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ teamId: created }));
+          return;
+        }
+        if (suffix === "/file" && req.method === "GET") {
+          const query = new URL(req.url ?? "", "http://x").searchParams;
+          const team = teamOf(ctx, query.get("teamId") ?? "");
+          const media = await readMedia(team.projectFolder, query.get("path") ?? "");
+          res.writeHead(200, {
+            "content-type": media.contentType,
+            // An SVG opened on its own is a document that can run script.
+            "content-security-policy": "sandbox",
+            "x-content-type-options": "nosniff",
+            "cache-control": "private, max-age=3600",
+          });
+          res.end(media.bytes);
           return;
         }
         if (req.method !== "GET") {

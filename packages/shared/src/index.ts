@@ -40,3 +40,4 @@ export * from "./project-memory.ts";
 export * from "./speakable.ts";
 export * from "./voices.ts";
 export { quotesFrom, type Quote, type TranscriptLine } from "./quotes.ts";
+export * from "./local-media.ts";

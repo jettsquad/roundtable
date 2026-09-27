@@ -123,6 +123,8 @@ export interface TeamSummary {
     readonly addedAt: number;
     /** Carried into every round without being attached. */
     readonly pinned: boolean;
+    /** Set when this material is a pasted picture: where the panel can load it from. */
+    readonly imagePath?: string;
   }[];
   /**
    * What the host has ticked for the next message.
