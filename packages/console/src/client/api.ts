@@ -90,8 +90,13 @@ export const api = {
     teamId: string;
     turnId: string;
   }): Promise<{ claim: string; applied: boolean; from: readonly string[] }> => call("/criteria/mark", "POST", body),
-  saveSettings: (body: { hostDisplayName?: string; distilConnectionId?: string }): Promise<unknown> =>
-    call("/settings", "POST", body),
+  saveSettings: (body: {
+    hostDisplayName?: string;
+    distilConnectionId?: string;
+    notifyOnFinish?: boolean;
+  }): Promise<unknown> => call("/settings", "POST", body),
+  /** Whether this page is in front of the person, so the server knows when a banner would be noise. */
+  reportPresence: (focused: boolean): Promise<unknown> => call("/presence", "POST", { focused }),
   saveBlock: (body: PromptBlock): Promise<unknown> => call("/blocks", "POST", body),
   removeBlock: (body: { blockId: string }): Promise<unknown> => call("/blocks", "DELETE", body),
   reorderBlocks: (body: { blockIds: readonly string[] }): Promise<unknown> => call("/blocks/order", "POST", body),

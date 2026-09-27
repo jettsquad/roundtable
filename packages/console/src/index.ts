@@ -24,6 +24,7 @@ import { shortHash } from "@squad/shared";
 import { createTeamFrom, registerSquadApi } from "./http.ts";
 import { TEAM_DESIGNER_PLAN, designerAgendaFor, instantiateTeamPlan, latestPlanOf } from "./team-designer.ts";
 import { parseSay } from "./parse.ts";
+import { bannerFor, presence, showBanner } from "./notify.ts";
 
 /**
  * Derived from the context rather than imported from `@squad/table`.
@@ -111,6 +112,17 @@ export class SquadConsole extends Service {
     // The browser half reads through this; every mutation stays on the
     // commands, where a person typed it.
     this.ctx.effect(() => registerSquadApi(this.ctx));
+
+    // A finished round is the moment someone who looked away wants to hear
+    // about. Skipped while the panel is in front of them and when they turned
+    // it off; `bannerFor` skips the ones that are not a stopping point.
+    this.ctx.effect(() =>
+      this.ctx.teams.onRoundEnded((event) => {
+        if (!this.ctx.userSettings.notifyOnFinish() || presence.isFocused()) return;
+        const banner = bannerFor(event);
+        if (banner !== undefined) showBanner(banner);
+      }),
+    );
 
     const register = (
       commandName: string,

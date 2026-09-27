@@ -11,6 +11,7 @@ export function apply(ctx: Context): void {
 export { TeamsService, spokenMessage } from "./service.ts";
 export type {
   AgendaOutcome,
+  RoundEndedEvent,
   AgendaTermination,
   CreateTeamInput,
   SeatReply,

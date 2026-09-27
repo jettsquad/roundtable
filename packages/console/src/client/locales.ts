@@ -83,6 +83,10 @@ export const zh = {
   "me.name.placeholder": "主持人",
   "me.name.save": "保存",
   "me.name.note": "新建团队时会用这个名字。已经存在的团队保持原样——改名不会重写已经记录下来的发言。",
+  "me.notify.head": "完成提醒",
+  "me.notify.label": "一轮或一个议程结束时，弹出系统通知",
+  "me.notify.note":
+    "你正在看这个页面时不会弹——只在你切到别的窗口、或者页面不在最前面时提醒。目前支持 macOS 和 Linux（notify-send）。",
   "me.distil.head": "谁来蒸馏你的判据",
   "me.distil.ownLogin": "本机登录（宿主 CLI 的登录态和默认模型）",
   "me.distil.note":
@@ -405,6 +409,10 @@ export const en: Record<SquadKey, string> = {
   "me.name.save": "Save",
   "me.name.note":
     "Used for teams you create from now on. Existing teams keep the name they were made with \u2014 renaming never rewrites what is already on the record.",
+  "me.notify.head": "Finish alerts",
+  "me.notify.label": "Show a system notification when a round or agenda finishes",
+  "me.notify.note":
+    "Not shown while this page is in front of you \u2014 only when you are in another window or this page is in the background. macOS and Linux (notify-send) for now.",
   "me.distil.head": "What distils your criteria",
   "me.distil.ownLogin": "Host login (the CLI's own session and default model)",
   "me.distil.note":

@@ -88,6 +88,16 @@ export class UserSettingsService extends Service {
     });
   }
 
+  /** Whether a finished round raises a system notification. On unless turned off. */
+  notifyOnFinish(): boolean {
+    return this.table().get(SETTINGS_KEY)?.notifyOnFinish !== false;
+  }
+
+  async setNotifyOnFinish(on: boolean): Promise<void> {
+    const existing = this.table().get(SETTINGS_KEY);
+    await this.table().put(SETTINGS_KEY, { ...existing, notifyOnFinish: on, updatedAt: Date.now() });
+  }
+
   private table() {
     if (this.domain === undefined) throw new Error("用户设置尚未启动（storage domain 未打开）。");
     return this.domain.table("settings");

@@ -487,6 +487,7 @@ export class TeamsService extends Service {
   private assembler: TeamAssembler | undefined;
   /** sessionId → the lookup in flight for it. See `sittingFor`. */
   private readonly sittingLookups = new Map<string, Promise<Team | undefined>>();
+  private readonly roundEndedListeners = new Set<(event: RoundEndedEvent) => void>();
   private domain: Domain<typeof SQUAD_TABLE_DOMAIN> | undefined;
   /** Serialises writes so two edits in one tick cannot lose one another. */
   private writes: Promise<void> = Promise.resolve();
@@ -787,6 +788,48 @@ export class TeamsService extends Service {
     return () => {
       if (this.assembler === assembler) this.assembler = undefined;
     };
+  }
+
+  /**
+   * Hear about every round and agenda that finishes. Returns the disposer.
+   *
+   * A listener that throws is logged and skipped: a notification that failed
+   * must never be the reason a round's replies do not reach the person.
+   */
+  onRoundEnded(listener: (event: RoundEndedEvent) => void): () => void {
+    this.roundEndedListeners.add(listener);
+    return () => {
+      this.roundEndedListeners.delete(listener);
+    };
+  }
+
+  private emitRoundEnded(
+    record: TeamRecord,
+    kind: RoundEndedEvent["kind"],
+    replies: readonly SeatReply[],
+    stopped: boolean,
+    waitingForHost: boolean,
+  ): void {
+    if (record.disposed || this.roundEndedListeners.size === 0) return;
+    const good = [...replies].reverse().find((reply) => !reply.failed && reply.text.trim() !== "");
+    const event: RoundEndedEvent = {
+      teamId: record.teamId,
+      teamName: record.input.displayName,
+      kind,
+      stopped,
+      answered: replies.length,
+      failed: replies.filter((reply) => reply.failed).length,
+      ...(good === undefined ? {} : { last: { speaker: good.displayName, text: good.text } }),
+      moreQueued: record.queued !== undefined && record.queued.held === undefined && !stopped,
+      waitingForHost,
+    };
+    for (const listener of this.roundEndedListeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        this.ctx.logger.warn(`round-ended 监听器抛错：${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
 
   async create(input: CreateTeamInput): Promise<Team> {
@@ -1527,6 +1570,7 @@ export class TeamsService extends Service {
     // signalled outside the caller's await path — the round is already
     // finished; whatever this starts must not make anyone wait for it.
     this.signalRoundEnded(record);
+    this.emitRoundEnded(record, "round", replies, abort.signal.aborted, false);
     // Whatever was waiting goes out now — unless this round was stopped, in
     // which case it is held. `aborted` is read after the fact rather than
     // caught, because a stop breaks the loop rather than throwing.
@@ -1778,6 +1822,7 @@ export class TeamsService extends Service {
     }
 
     this.signalRoundEnded(record);
+    this.emitRoundEnded(record, "agenda", replies, running.reason !== undefined, pausedAfter !== undefined);
     // Same rule as a plain round, and the reason an agenda holds the count for
     // its whole run: a message queued during phase two waits for phase five,
     // not for phase two. Stopping the agenda holds it rather than sending it.
@@ -2295,6 +2340,28 @@ export class TeamsService extends Service {
     if (record.baseTeamId !== undefined) return;
     for (const sitting of this.sittingsOf(record.teamId)) await this.dispose(sitting);
   }
+}
+
+/**
+ * A round or agenda has just finished — the moment a person who looked away
+ * wants to be told. Data only: what to do about it (a banner, a sound) is the
+ * listener's business, and the table has no business knowing there is a screen.
+ */
+export interface RoundEndedEvent {
+  readonly teamId: string;
+  readonly teamName: string;
+  readonly kind: "round" | "agenda";
+  /** Cut short by 「叫停」 or an abort, rather than finished. */
+  readonly stopped: boolean;
+  /** How many seats answered, and how many of those answers were failures. */
+  readonly answered: number;
+  readonly failed: number;
+  /** The last seat that answered properly, for a preview line. */
+  readonly last?: { readonly speaker: string; readonly text: string };
+  /** Another round is already queued and starting — this is not a stopping point. */
+  readonly moreQueued: boolean;
+  /** An agenda handed control back to the host and is waiting for them. */
+  readonly waitingForHost: boolean;
 }
 
 /** What one confirmed agenda did. */

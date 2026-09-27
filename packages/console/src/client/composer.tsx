@@ -23,6 +23,7 @@ import { api, useSnapshot } from "./api.ts";
 import { applyMention, mentionCandidates, mentionDraftAt, parseMentions } from "../mention.ts";
 import { describeSeat } from "../seat-status.ts";
 import { useSitting } from "./use-sitting.ts";
+import { startPresence } from "./presence.tsx";
 import { DRAFT_ANCHOR } from "./draft-card.tsx";
 import { Dictate } from "./dictate.tsx";
 import { useT } from "./locale.ts";
@@ -102,6 +103,9 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
     node.style.height = "auto";
     node.style.height = `${Math.min(node.scrollHeight, 200)}px`;
   };
+
+  // The server skips its finish banner while this page is in front.
+  useEffect(startPresence, []);
 
   // Once after mount, and again whenever the text is replaced from outside —
   // a send clears it, a refusal puts it back.

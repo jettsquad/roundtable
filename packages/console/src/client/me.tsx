@@ -17,11 +17,13 @@ import styles from "./panel.module.css";
 export function MePage({
   hostDisplayName,
   distilConnectionId,
+  notifyOnFinish,
   connections,
   onChanged,
 }: {
   readonly hostDisplayName: string;
   readonly distilConnectionId: string;
+  readonly notifyOnFinish: boolean;
   readonly connections: SquadSnapshot["connections"];
   readonly onChanged: () => void;
 }): JSX.Element {
@@ -77,6 +79,17 @@ export function MePage({
           every team, so the model that writes it should not be inherited from
           whichever seat happened to be configured first. */}
       <div className={styles.hint}>{t("me.distil.note")}</div>
+
+      <div className={styles.subhead}>{t("me.notify.head")}</div>
+      <label className={styles.row}>
+        <input
+          type="checkbox"
+          checked={notifyOnFinish}
+          onChange={(event) => void run(() => api.saveSettings({ notifyOnFinish: event.target.checked }))}
+        />
+        <span>{t("me.notify.label")}</span>
+      </label>
+      <div className={styles.hint}>{t("me.notify.note")}</div>
 
       {error === undefined ? null : <div className={styles.error}>{error}</div>}
     </div>

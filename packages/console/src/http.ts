@@ -445,6 +445,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
     // Empty string rather than absent: the picker's 「本机登录」 option needs
     // a value, and a select whose value is undefined is uncontrolled.
     distilConnectionId: ctx.userSettings.distilConnectionId() ?? "",
+    notifyOnFinish: ctx.userSettings.notifyOnFinish(),
     criteria: {
       active: active.length,
       pending: pending.length,
@@ -1405,15 +1406,27 @@ export function registerSquadApi(ctx: Context): () => void {
           return;
         }
         if (suffix === "/settings" && req.method === "POST") {
-          const body = await readJson<{ hostDisplayName?: string; distilConnectionId?: string }>(req);
+          const body = await readJson<{
+            hostDisplayName?: string;
+            distilConnectionId?: string;
+            notifyOnFinish?: boolean;
+          }>(req);
           // Each field only when it was sent: the page saves the name and the
           // model separately, and a PATCH that treated an absent field as an
           // empty one would clear the other every time.
           if (body.hostDisplayName !== undefined) await ctx.userSettings.setHostDisplayName(body.hostDisplayName);
           if (body.distilConnectionId !== undefined)
             await ctx.userSettings.setDistilConnectionId(body.distilConnectionId);
+          if (body.notifyOnFinish !== undefined) await ctx.userSettings.setNotifyOnFinish(body.notifyOnFinish);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true, hostDisplayName: ctx.userSettings.hostDisplayName() }));
+          return;
+        }
+        if (suffix === "/presence" && req.method === "POST") {
+          const body = await readJson<{ focused: boolean }>(req);
+          presence.report(body.focused === true);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
           return;
         }
         if (suffix === "/criteria/mark" && req.method === "POST") {

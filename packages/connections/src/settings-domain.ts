@@ -37,6 +37,12 @@ const userSettings = z.object({
    * writes it should be chosen here rather than inherited from a roster.
    */
   distilConnectionId: z.string().optional(),
+  /**
+   * Show a system banner when a round finishes. Absent means ON: the person
+   * who looked away is exactly who needs it, and one who does not want it
+   * turns it off once — the reverse would leave the feature unfound.
+   */
+  notifyOnFinish: z.boolean().optional(),
   updatedAt: z.number(),
 });
 

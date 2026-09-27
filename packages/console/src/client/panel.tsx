@@ -513,6 +513,7 @@ export function TeamPanel(): JSX.Element | null {
           <MePage
             hostDisplayName={snapshot.data.hostDisplayName}
             distilConnectionId={snapshot.data.distilConnectionId}
+            notifyOnFinish={snapshot.data.notifyOnFinish}
             connections={snapshot.data.connections}
             onChanged={again}
           />

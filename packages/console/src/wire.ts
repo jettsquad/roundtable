@@ -358,6 +358,8 @@ export interface SquadSnapshot {
   readonly hostDisplayName: string;
   /** Which connection distils criteria. Empty means the host's own login. */
   readonly distilConnectionId: string;
+  /** Whether a finished round raises a system banner. */
+  readonly notifyOnFinish: boolean;
   /**
    * Lil X's judgement library.
    *
