@@ -206,6 +206,16 @@ export function checkAgentTemplate(template: AgentTemplate): readonly AgentTempl
 export const WEB_TOOLS: readonly string[] = ["WebFetch", "WebSearch"];
 
 /**
+ * The download tool a claude-code seat with web access gets, and the MCP
+ * server that provides it. `WebFetch` returns parsed text and often fails on
+ * a PDF, so a datasheet had no route to disk. The tool is Squad's own
+ * (`@squad/seat-runtime`): https only, no private addresses, a size cap, one
+ * folder — where pre-approving `curl` would have allowed any write and any POST.
+ */
+export const DOWNLOAD_SERVER = "squad-download";
+export const DOWNLOAD_TOOL_NAME = `mcp__${DOWNLOAD_SERVER}__download_file`;
+
+/**
  * How this seat reaches the web, told to it up front.
  *
  * Each backend has exactly one route and they are all different, so a seat
@@ -283,7 +293,10 @@ export function webAccessNote(backend: AgentBackend, webAccess: boolean): readon
   return [
     "## 你怎么上网",
     "用 **WebFetch** 按 URL 抓页面，用 **WebSearch** 搜索——这两个已经预先批准，不会再问你要权限。",
+    `要**下载文件**（PDF、datasheet、图片等二进制），WebFetch 做不到：用 \`${DOWNLOAD_TOOL_NAME}\` 工具（参数 url，可选 filename）。` +
+      "它只接受 https 地址，文件存进团队文件夹的 `squad-downloads/`，返回绝对路径；之后用读文件工具打开。" +
+      "图片可以在回复里写 `![说明](绝对路径)` 让主持人直接看到。",
     "注意 WebFetch 只走 HTTPS：它会把 `http://` 自动升级成 `https://`，所以明文 HTTP 地址会在 SSL 握手就失败。",
-    "不要用 `bash` + `curl`：那条路没有被批准，会直接被拦下。",
+    "不要用 `bash` + `curl`：那条路没有被批准，会直接被拦下——下载请用上面的工具。",
   ];
 }

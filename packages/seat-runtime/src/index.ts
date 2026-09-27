@@ -50,6 +50,7 @@ export {
   seatSessionId,
 } from "./sessions.ts";
 export { dshHome, seatStateDir } from "./home.ts";
+export { downloadMcpConfig } from "./download-tool.ts";
 
 /** What a backend's parser makes of one run's output. */
 export interface SeatOutcome {

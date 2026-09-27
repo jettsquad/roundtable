@@ -133,4 +133,12 @@ describe("宿主配置", () => {
     expect(flagValues(argv, "--permission-mode")).toEqual(["acceptEdits"]);
     expect(flagValues(argv, "--disallowed-tools")).toContain("Task");
   });
+
+  it("mounts a tool of our own without --safe-mode, which would switch it off", () => {
+    const argv = buildArgv({ prompt: "x", mcpConfig: "{}" });
+    expect(argv).not.toContain("--safe-mode");
+    expect(argv).toContain("--strict-mcp-config");
+    expect(argv).toContain("--disable-slash-commands");
+    expect(argv[argv.indexOf("--mcp-config") + 1]).toBe("{}");
+  });
 });

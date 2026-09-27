@@ -26,8 +26,8 @@ import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "
 // augmentation applies only where its module is in the compilation.
 import type {} from "@deepseek-ai/dsh-subprocess";
 import { mkdir } from "node:fs/promises";
-import { runCliSeat, seatSessionId, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
-import { CLAUDE_PERMISSION_MODES, providerNameFor } from "@squad/shared";
+import { downloadMcpConfig, runCliSeat, seatSessionId, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
+import { CLAUDE_PERMISSION_MODES, DOWNLOAD_SERVER, DOWNLOAD_TOOL_NAME, providerNameFor } from "@squad/shared";
 import { DELEGATION_TOOLS, buildArgv, type PermissionMode } from "./argv.ts";
 import { claudeConfigDirFor } from "./config-dir.ts";
 import { readStream } from "./stream.ts";
@@ -191,9 +191,14 @@ export class FencedClaudeCodeSeats extends Service {
           who: name,
           request,
           command: "claude",
-          argv: ({ prompt }) =>
+          argv: ({ prompt, cwd }) =>
             buildArgv({
               prompt,
+              // Mounted only for a seat the table pre-approved the tool for:
+              // the allow list is the one signal that says web access is on.
+              ...(request.toolFilter?.allow?.includes(DOWNLOAD_TOOL_NAME) === true
+                ? { mcpConfig: downloadMcpConfig(cwd, DOWNLOAD_SERVER) }
+                : {}),
               // Continue this seat's own conversation when it has one. The
               // table remembers the id after each turn, and when a resumed run
               // is refused it drops the id and runs the turn again without it
@@ -221,6 +226,10 @@ export class FencedClaudeCodeSeats extends Service {
           // Resolved per start, so a rotated key reaches this turn.
           env: {
             ...(config.env ?? {}),
+            // Pairs with the isolation `buildArgv` spells out for a seat carrying our MCP tool.
+            ...(request.toolFilter?.allow?.includes(DOWNLOAD_TOOL_NAME) === true && hostCustomizations !== true
+              ? { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" }
+              : {}),
             ...connectionEnv,
             ...(configDir === undefined ? {} : { CLAUDE_CONFIG_DIR: configDir }),
           },

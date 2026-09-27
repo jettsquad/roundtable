@@ -91,6 +91,8 @@ export interface ArgvInput {
    * it on buys the dead weight along with the useful part.
    */
   readonly hostCustomizations?: boolean | undefined;
+  /** `--mcp-config` JSON, when the seat is given a tool of Squad's own. */
+  readonly mcpConfig?: string | undefined;
 }
 
 /** Delegation tools, denied to every seat unless the composition says otherwise. */
@@ -126,7 +128,17 @@ export function buildArgv(input: ArgvInput): readonly string[] {
   // answers "Not logged in · Please run /login", and copying `.claude.json`
   // into it does not help, because the CLI only reads the Keychain from the
   // default home.
-  if (input.hostCustomizations !== true) argv.push("--safe-mode");
+  //
+  // Except for a seat that is given a tool of Squad's own: `--safe-mode` also
+  // turns off `--mcp-config`, measured — the seat answered that it had no such
+  // tool. Those seats get the same isolation spelled out instead (only OUR MCP
+  // server, no skills, no settings files; the caller also sets
+  // CLAUDE_CODE_DISABLE_CLAUDE_MDS). Warm-cache cost measured equal to
+  // `--safe-mode`: ~2k created, ~40k read.
+  if (input.hostCustomizations !== true) {
+    if (input.mcpConfig === undefined) argv.push("--safe-mode");
+    else argv.push("--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "");
+  }
 
   // Before the permission flags, and before the prompt: the CLI reads it as a
   // top-level option, and everything after it still applies to the resumed
@@ -143,6 +155,8 @@ export function buildArgv(input: ArgvInput): readonly string[] {
   if (input.persona !== undefined && input.persona.trim() !== "") {
     argv.push("--append-system-prompt", input.persona);
   }
+
+  if (input.mcpConfig !== undefined) argv.push("--mcp-config", input.mcpConfig);
 
   const allow = input.toolFilter?.allow ?? [];
   if (allow.length > 0) argv.push("--allowed-tools", ...allow);

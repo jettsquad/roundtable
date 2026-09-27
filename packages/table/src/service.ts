@@ -26,6 +26,7 @@ import { dirname, join } from "node:path";
 import type { Domain } from "@deepseek-ai/dsh-storage-domain";
 import { SQUAD_TABLE_DOMAIN, type TeamPersisted } from "./domain.ts";
 import {
+  DOWNLOAD_TOOL_NAME,
   WEB_TOOLS,
   attachmentNote,
   materialsForRound,
@@ -2139,7 +2140,9 @@ export class TeamsService extends Service {
         // than accepting it and quietly dropping it — which is right, and
         // which means sending this to codex or dsh would fail the round
         // instead of being ignored.
-        ...(seat.webAccess === true && seat.backend === "claude-code" ? { toolFilter: { allow: [...WEB_TOOLS] } } : {}),
+        ...(seat.webAccess === true && seat.backend === "claude-code"
+          ? { toolFilter: { allow: [...WEB_TOOLS, DOWNLOAD_TOOL_NAME] } }
+          : {}),
         // The agenda's signal when there is one, so stopping actually reaches
         // the running process instead of leaving it to finish into a
         // discussion nobody is having any more.

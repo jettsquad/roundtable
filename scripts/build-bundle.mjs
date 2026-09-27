@@ -47,6 +47,8 @@ const ENTRIES = {
   // loads it as a plugin of its own — so it must survive as its own file
   // rather than be inlined into seat-dsh.
   heartbeat: "packages/seat-dsh/src/heartbeat.ts",
+  // Same: a child process the seat's CLI starts, so it stays its own file.
+  "download-mcp": "packages/seat-runtime/src/download-mcp.ts",
 };
 
 /**
