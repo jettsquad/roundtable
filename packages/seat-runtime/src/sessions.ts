@@ -92,3 +92,33 @@ export function forgetSeatSessions(parentSessionId: string): void {
 export function resetSeatSessions(): void {
   ids.clear();
 }
+
+/**
+ * Every seat's conversation id under one parent, for the table to persist.
+ *
+ * Read at the moment a turn ends (where the table already learns the id to
+ * remember or forget) rather than kept as a running snapshot — this module's
+ * map is the only source of truth, and reading it fresh avoids a second copy
+ * that could drift from it.
+ */
+export function snapshotSeatSessions(parentSessionId: string): Record<string, string> {
+  const prefix = `${parentSessionId} `;
+  const out: Record<string, string> = {};
+  for (const [key, id] of ids) {
+    if (key.startsWith(prefix)) out[key.slice(prefix.length)] = id;
+  }
+  return out;
+}
+
+/**
+ * Load a team's saved conversation ids back into this process, on restore.
+ *
+ * A restart previously meant every seat opened fresh — this module's map
+ * starts empty and nothing rebuilt it. A ROW that turns out to name a
+ * conversation the CLI already dropped is not a new failure mode: the same
+ * rejection a stale in-memory id already produces, caught by
+ * `resumeWasRejected` and retried fresh, exactly as it always was.
+ */
+export function restoreSeatSessions(parentSessionId: string, sessions: Readonly<Record<string, string>>): void {
+  for (const [label, id] of Object.entries(sessions)) rememberSeatSession(parentSessionId, label, id);
+}

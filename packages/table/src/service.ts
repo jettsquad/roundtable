@@ -57,8 +57,10 @@ import {
   activityKey,
   forgetSeatSession,
   rememberSeatSession,
+  restoreSeatSessions,
   resumeWasRejected,
   seatSessionId,
+  snapshotSeatSessions,
   type SeatActivity,
 } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
@@ -605,6 +607,12 @@ export class TeamsService extends Service {
   /** Rebuild one saved team, log and all. */
   private async restore(saved: TeamPersisted): Promise<void> {
     const handle = await this.ctx.agents.resume({ resumeSessionId: saved.teamId as never });
+    // Rehydrates the module-level map `seatSessionId` reads — empty on every
+    // fresh process — so the FIRST turn after a restart still resumes each
+    // seat's own conversation rather than opening a new one. A row naming a
+    // conversation the CLI has since dropped costs no more than that already
+    // did: `resumeWasRejected` catches it and the turn retries fresh.
+    if (saved.seatSessions !== undefined) restoreSeatSessions(handle.agent.session.id, saved.seatSessions);
     // A sitting takes its base's LIVE objects. Rebuilding them from its own
     // saved copy would give one team two rosters that drift apart the moment
     // a member is added in the other session.
@@ -715,6 +723,13 @@ export class TeamsService extends Service {
       seats: record.seats as unknown as TeamPersisted["seats"],
       usage: record.usage,
       ...(record.order === undefined ? {} : { order: record.order }),
+      // So a restart resumes each seat's own conversation instead of paying
+      // full system-prompt cache creation again for every one of them. See
+      // `TeamPersisted.seatSessions`.
+      ...((): { seatSessions?: TeamPersisted["seatSessions"] } => {
+        const sessions = snapshotSeatSessions(record.handle.agent.session.id);
+        return Object.keys(sessions).length === 0 ? {} : { seatSessions: sessions };
+      })(),
       ...(record.draft === undefined
         ? {}
         : {

@@ -46,8 +46,10 @@ export {
   forgetSeatSessions,
   rememberSeatSession,
   resetSeatSessions,
+  restoreSeatSessions,
   resumeWasRejected,
   seatSessionId,
+  snapshotSeatSessions,
 } from "./sessions.ts";
 export { dshHome, seatStateDir } from "./home.ts";
 export { downloadMcpConfig } from "./download-tool.ts";

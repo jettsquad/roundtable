@@ -228,6 +228,27 @@ const teamRecord = z.object({
    * is what it always showed. The first move writes one onto every team.
    */
   order: z.number().optional(),
+  /**
+   * Each seat's own CLI conversation id, so a Squad restart does not force
+   * every seat to open a fresh one.
+   *
+   * The id lives day-to-day in `@squad/seat-runtime`'s in-memory map, on
+   * purpose — that module's own comment explains why persisting felt unsafe:
+   * a stale id "fails at spawn time naming a uuid nobody recognises". But the
+   * table already recovers from exactly that failure (`resumeWasRejected` →
+   * forget → retry fresh), which is what makes writing the id down safe: the
+   * worst a stale one costs is the SAME un-resumed turn a restart already
+   * costs today, and the common case — restarted five minutes after a code
+   * change, the CLI's own session file still on disk — keeps the seat's
+   * cached system prompt instead of re-creating it. Measured: a fresh
+   * `--safe-mode` start creates on the order of tens of thousands of cache
+   * tokens; a resumed one reads them back for a few hundred.
+   *
+   * Keyed by seat DISPLAY NAME, matching `seatSessionId`'s own key — renaming
+   * a seat already starts it over even in memory, so this changes nothing
+   * about that.
+   */
+  seatSessions: z.record(z.string(), z.string()).optional(),
   createdAt: z.number(),
 });
 
