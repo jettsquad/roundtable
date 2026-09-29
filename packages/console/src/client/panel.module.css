@@ -1124,6 +1124,7 @@
 
 /* A pasted picture in the composer: a thumbnail you can check before sending. */
 .thumb {
+  position: relative;
   display: inline-flex;
   flex-direction: column;
   gap: 4px;
@@ -1156,4 +1157,31 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A document chip, so its delete button has a corner to sit in. */
+.chipWrap {
+  position: relative;
+  display: inline-flex;
+}
+/* Top-right corner of an attachment, image or document alike. */
+.chipRemove {
+  all: unset;
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3a3a3f;
+  color: #ddd;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
+}
+.chipRemove:hover {
+  background: #c0392b;
+  color: #fff;
 }
