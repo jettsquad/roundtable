@@ -19,6 +19,7 @@ import type {
   AgentTemplate,
   ConnectionView,
   PermissionMode,
+  ReasoningEffort,
   SeatCaps,
   SeatConnection,
   UsageTotals,
@@ -72,6 +73,7 @@ export interface TeamSummary {
     /** Pre-approved for the web tools. Claude Code only. */
     readonly webAccess?: boolean | undefined;
     readonly hostCustomizations?: boolean | undefined;
+    readonly reasoningEffort?: ReasoningEffort | undefined;
     /**
      * How a running seat's run is going, while it is going.
      *

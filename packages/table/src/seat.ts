@@ -1,4 +1,11 @@
-import { materialSection, webAccessNote, type Material, type PermissionMode, type SeatCaps } from "@squad/shared";
+import {
+  materialSection,
+  webAccessNote,
+  type Material,
+  type PermissionMode,
+  type ReasoningEffort,
+  type SeatCaps,
+} from "@squad/shared";
 /**
  * seat.ts — a seat's configuration, and how it becomes a subagent request.
  *
@@ -70,6 +77,12 @@ export interface SeatSpec {
    * like the permission mode does. See `AgentTemplate.hostCustomizations`.
    */
   readonly hostCustomizations?: boolean | undefined;
+  /**
+   * How hard this seat's model thinks. Travels on the seam's own
+   * `agentOptions.reasoningEffort`; each backend translates it. Absent means
+   * the backend's default — see `defaultEffortOf`.
+   */
+  readonly reasoningEffort?: ReasoningEffort | undefined;
 }
 
 /** What a seat is asked in one round, before it becomes prompt text. */

@@ -9,6 +9,7 @@
  */
 import { defineDomain, domainTable } from "@deepseek-ai/dsh-storage-domain";
 import { z } from "zod";
+import { REASONING_EFFORTS } from "@squad/shared";
 
 const capsRecord = z.object({
   maxTurns: z.number().optional(),
@@ -24,7 +25,7 @@ const agentTemplateRecord = z.object({
   backend: z.enum(["claude-code", "codex", "dsh"]),
   connectionId: z.string().optional(),
   permissionMode: z.string().optional(),
-  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
   caps: capsRecord.optional(),
   secretaryCandidate: z.boolean(),
   color: z.string(),

@@ -25,7 +25,7 @@ import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "
 // Imported for the `Context.subprocess` declaration merging it carries.
 import type {} from "@deepseek-ai/dsh-subprocess";
 import { CODEX_PERMISSION_MODES, modelArgumentFor, providerName, type SeatConnection } from "@squad/shared";
-import { runCliSeat, seatSessionId, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
+import { requestedEffort, runCliSeat, seatSessionId, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { buildCodexArgv, isCodexMode } from "./argv.ts";
 import { readCodexStream } from "./stream.ts";
 
@@ -37,7 +37,12 @@ export interface Config {
   /** Registry name for the host's own `codex login`, with no connection. */
   readonly provider?: string;
   readonly permissionMode?: (typeof CODEX_PERMISSION_MODES)[number];
-  readonly reasoningEffort?: "low" | "medium" | "high";
+  /**
+   * A fallback for agents that chose nothing. An agent's own level travels
+   * on the request and wins — it used to be saved on the agent and never
+   * read, so every codex seat ran on this one plugin-wide value.
+   */
+  readonly reasoningEffort?: string;
   readonly idleMs?: number;
   readonly firstOutputMs?: number;
   readonly pollMs?: number;
@@ -135,7 +140,7 @@ export class SquadSeatCodex extends Service {
       // Declared honestly. `codex exec` has no delegation tool to deny and no
       // system-prompt argument, so the seam should REFUSE a request asking
       // for either rather than accept one and ignore it.
-      capabilities: { ...NO_START_CAPABILITIES, toolFilter: false, persona: false },
+      capabilities: { ...NO_START_CAPABILITIES, toolFilter: false, persona: false, agentOptions: true },
       inheritsParentContext: false,
 
       async start(request): Promise<SubagentRun> {
@@ -164,7 +169,10 @@ export class SquadSeatCodex extends Service {
               // The endpoint, as a one-off provider. Dropped until now, so a
               // codex connection's address was stored, shown, and ignored.
               ...(connection?.endpoint === undefined ? {} : { endpoint: connection.endpoint }),
-              ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
+              ...(() => {
+                const effort = requestedEffort(request) ?? config.reasoningEffort;
+                return effort === undefined ? {} : { reasoningEffort: effort };
+              })(),
               // Opens the sandbox's way out. Closed by default, so a seat
               // without the checkbox keeps exactly the argv it had before.
               webAccess,

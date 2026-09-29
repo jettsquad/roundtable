@@ -2303,6 +2303,11 @@ export class TeamsService extends Service {
         label: seat.displayName,
         prompt: [{ type: "text", text: prompt }],
         parent: host,
+        // On the seam's own field; each backend translates it. Only when
+        // chosen, so a seat on 「默认」 sends exactly the request it always did.
+        ...(seat.reasoningEffort === undefined
+          ? {}
+          : { agentOptions: { reasoningEffort: seat.reasoningEffort as never } }),
         // Pre-approve the web tools when this seat is allowed the web, and
         // ONLY for the backend that declares the capability. The seam refuses
         // a request carrying something the provider does not support rather

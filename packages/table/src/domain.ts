@@ -18,7 +18,7 @@
  * the host node and put the roster back around it.
  */
 import { defineDomain, domainTable } from "@deepseek-ai/dsh-storage-domain";
-import { AgendaSpecSchema } from "@squad/shared";
+import { AgendaSpecSchema, REASONING_EFFORTS } from "@squad/shared";
 import { z } from "zod";
 
 const capsRecord = z.object({
@@ -40,6 +40,7 @@ const seatRecord = z.object({
   templateId: z.string().optional(),
   color: z.string().optional(),
   webAccess: z.boolean().optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
 });
 
 const teamRecord = z.object({

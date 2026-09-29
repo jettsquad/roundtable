@@ -24,6 +24,8 @@
  * The patch is a file on disk; a secret written there would outlive the run.
  */
 
+import { isDeepSeekModel, type ReasoningEffort } from "@squad/shared";
+
 /**
  * The heartbeat plugin's row, by absolute path.
  *
@@ -42,51 +44,75 @@ export const COMPAT_ROUTE = "squad-compat";
 export const COMPAT_API_KEY_ENV = "SQUAD_LLM_API_KEY";
 
 /** Whether DSH routes this model through its own DeepSeek provider. */
-export function isDeepSeekModel(model: string): boolean {
-  return model.trim().toLowerCase().startsWith("deepseek");
-}
+export { isDeepSeekModel };
 
 export interface PatchInput {
+  /** Empty means the profile's own default model (DeepSeek's). */
   readonly model: string;
   /** Empty means the profile's own default endpoint. */
   readonly baseUrl: string;
+  /**
+   * The agent's thinking level, already checked against this route.
+   *
+   * Each route takes it differently, both measured by capturing the request:
+   * `llm-deepseek.reasoningEffort` becomes `reasoning_effort` (and `off`
+   * becomes `thinking: disabled`); the compat route sends NOTHING unless the
+   * model declares its levels, so the patch declares them and sets the level.
+   */
+  readonly effort?: ReasoningEffort | undefined;
 }
 
+/** The compat-route levels a model is declared with; each key sent as spelt. */
+const COMPAT_LEVELS: readonly ReasoningEffort[] = ["low", "medium", "high", "xhigh", "max"];
+
 /**
- * The patch text for one run, or `undefined` when there is nothing to say.
- *
- * `undefined` when no model was configured: the profile's own settings are
- * then the answer, and writing a patch that repeated them would be a second
- * place for the same decision to live.
+ * The patch rows for this connection, or nothing when the profile's own
+ * defaults already say everything.
  */
 export function buildDshPatch(input: PatchInput): string | undefined {
   const model = input.model.trim();
   const baseUrl = input.baseUrl.trim();
-  if (model === "") return undefined;
+  const effort = input.effort;
+  if (model === "" && effort === undefined) return undefined;
 
-  const lines: readonly string[] = isDeepSeekModel(model)
-    ? [
-        "- id: agent-default-model",
-        "  config:",
-        "    provider: deepseek-official",
-        `    model: ${JSON.stringify(model)}`,
-        ...(baseUrl === "" ? [] : ["- id: llm-deepseek", "  config:", `    baseURL: ${JSON.stringify(baseUrl)}`]),
-      ]
-    : [
-        "- id: agent-default-model",
-        "  config:",
-        `    provider: ${COMPAT_ROUTE}`,
-        `    model: ${JSON.stringify(model)}`,
-        "- id: llm-pi-ai",
-        "  config:",
-        "    providers:",
-        `      ${COMPAT_ROUTE}:`,
-        "        displayName: Squad OpenAI-compatible",
-        `        apiKeyEnv: ${COMPAT_API_KEY_ENV}`,
-        "        api: openai-completions",
-        `        baseURL: ${JSON.stringify(baseUrl)}`,
-        "        models:",
-        `          - id: ${JSON.stringify(model)}`,
-      ];
+  const deepseek = (): readonly string[] => {
+    const config = [
+      ...(baseUrl === "" ? [] : [`    baseURL: ${JSON.stringify(baseUrl)}`]),
+      ...(effort === undefined ? [] : [`    reasoningEffort: ${effort}`]),
+    ];
+    return config.length === 0 ? [] : ["- id: llm-deepseek", "  config:", ...config];
+  };
+
+  const lines: readonly string[] =
+    model === ""
+      ? deepseek()
+      : isDeepSeekModel(model)
+        ? [
+            "- id: agent-default-model",
+            "  config:",
+            "    provider: deepseek-official",
+            `    model: ${JSON.stringify(model)}`,
+            ...deepseek(),
+          ]
+        : [
+            "- id: agent-default-model",
+            "  config:",
+            `    provider: ${COMPAT_ROUTE}`,
+            `    model: ${JSON.stringify(model)}`,
+            "- id: llm-pi-ai",
+            "  config:",
+            "    providers:",
+            `      ${COMPAT_ROUTE}:`,
+            "        displayName: Squad OpenAI-compatible",
+            `        apiKeyEnv: ${COMPAT_API_KEY_ENV}`,
+            "        api: openai-completions",
+            `        baseURL: ${JSON.stringify(baseUrl)}`,
+            ...(effort === undefined ? [] : [`        reasoning: ${effort}`]),
+            "        models:",
+            `          - id: ${JSON.stringify(model)}`,
+            ...(effort === undefined
+              ? []
+              : ["            reasoningEfforts:", ...COMPAT_LEVELS.map((level) => `              ${level}: ${level}`)]),
+          ];
   return `${lines.join("\n")}\n`;
 }

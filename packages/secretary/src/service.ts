@@ -20,7 +20,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
-import { providerForSeat, SEAT_PROVIDER, stripReasoning } from "@squad/shared";
+import { providerForSeat, SEAT_PROVIDER, stripReasoning, type ReasoningEffort } from "@squad/shared";
 import type { CheckpointPromptInput } from "./checkpoint.ts";
 import type { AgendaSpec } from "@squad/shared";
 import type { AgendaDraftInput } from "./agenda.ts";
@@ -83,6 +83,8 @@ export interface SecretarySeat {
   readonly backend: string;
   readonly connectionId?: string | undefined;
   readonly permissionMode?: string | undefined;
+  /** The secretary's own agent's level, like any seat's. */
+  readonly reasoningEffort?: ReasoningEffort | undefined;
 }
 
 export type WriteCheckpointInput = CheckpointPromptInput & SecretaryRun;
@@ -171,6 +173,9 @@ export class SecretaryService extends Service {
         parent: run.parent,
         signal: run.signal ?? new AbortController().signal,
         ...(plan.persona === undefined ? {} : { persona: plan.persona }),
+        ...(run.secretary?.reasoningEffort === undefined
+          ? {}
+          : { agentOptions: { reasoningEffort: run.secretary.reasoningEffort as never } }),
       };
       const started = await this.ctx.subagents.start(provider, request);
       const result = await started.result;

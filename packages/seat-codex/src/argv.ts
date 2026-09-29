@@ -38,7 +38,7 @@ export interface CodexArgvInput {
   readonly permissionMode?: CodexPermissionMode | undefined;
   /** Only when the connection's model can actually be honoured — see `modelArgumentFor`. */
   readonly model?: string | undefined;
-  readonly reasoningEffort?: "low" | "medium" | "high" | undefined;
+  readonly reasoningEffort?: string | undefined;
   /**
    * A custom endpoint, declared as a one-off provider.
    *

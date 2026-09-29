@@ -26,8 +26,20 @@ import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "
 // augmentation applies only where its module is in the compilation.
 import type {} from "@deepseek-ai/dsh-subprocess";
 import { mkdir } from "node:fs/promises";
-import { downloadMcpConfig, runCliSeat, seatSessionId, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
-import { CLAUDE_PERMISSION_MODES, DOWNLOAD_SERVER, DOWNLOAD_TOOL_NAME, providerNameFor } from "@squad/shared";
+import {
+  downloadMcpConfig,
+  requestedEffort,
+  runCliSeat,
+  seatSessionId,
+  SEAT_SILENCE_LIMITS,
+} from "@squad/seat-runtime";
+import {
+  CLAUDE_PERMISSION_MODES,
+  DOWNLOAD_SERVER,
+  DOWNLOAD_TOOL_NAME,
+  providerNameFor,
+  reasoningEffortsFor,
+} from "@squad/shared";
 import { DELEGATION_TOOLS, buildArgv, type PermissionMode } from "./argv.ts";
 import { claudeConfigDirFor } from "./config-dir.ts";
 import { readStream } from "./stream.ts";
@@ -169,7 +181,7 @@ export class FencedClaudeCodeSeats extends Service {
       // really does append a persona. The service checks these before
       // dispatching, so declaring one we did not implement would turn a
       // rejected request into a silently ignored one.
-      capabilities: { ...NO_START_CAPABILITIES, toolFilter: true, persona: true },
+      capabilities: { ...NO_START_CAPABILITIES, toolFilter: true, persona: true, agentOptions: true },
       // A fresh CLI process sees no parent conversation, only the text task.
       inheritsParentContext: false,
 
@@ -210,6 +222,10 @@ export class FencedClaudeCodeSeats extends Service {
               })(),
               ...(request.toolFilter === undefined ? {} : { toolFilter: request.toolFilter }),
               ...(request.persona === undefined ? {} : { persona: request.persona }),
+              ...(() => {
+                const effort = claudeEffort(request);
+                return effort === undefined ? {} : { effort };
+              })(),
               // The registration's mode wins over the plugin default: it is
               // the one the person picked for this agent.
               permissionMode:
@@ -250,4 +266,18 @@ export { DELEGATION_TOOLS, buildArgv } from "./argv.ts";
 export { claudeConfigDirFor } from "./config-dir.ts";
 export type { ArgvInput, PermissionMode, ToolFence } from "./argv.ts";
 export { readStream } from "./stream.ts";
+
+/**
+ * The level this request asks for, checked against what `claude --effort`
+ * accepts. Refused rather than passed through: the CLI would reject it at
+ * startup with a message about its own flag, not about the agent.
+ */
+function claudeEffort(request: { readonly agentOptions?: unknown }): string | undefined {
+  const effort = requestedEffort(request);
+  if (effort === undefined) return undefined;
+  if (!reasoningEffortsFor({ backend: "claude-code" }).includes(effort)) {
+    throw new Error(`Claude Code 没有「${effort}」这一档思考强度。`);
+  }
+  return effort;
+}
 export type { StreamOutcome } from "./stream.ts";
