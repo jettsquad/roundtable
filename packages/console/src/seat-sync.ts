@@ -21,7 +21,7 @@
  * seats from one template told apart). Everything that decides how a seat is
  * DISPATCHED follows the template.
  */
-import type { PermissionMode, SeatCaps } from "@squad/shared";
+import type { PermissionMode, ReasoningEffort, SeatCaps } from "@squad/shared";
 
 /**
  * The seat shape these rules touch, declared here rather than imported.
@@ -44,6 +44,7 @@ export interface SyncableSeat {
   readonly voiceId?: string | undefined;
   readonly webAccess?: boolean | undefined;
   readonly hostCustomizations?: boolean | undefined;
+  readonly reasoningEffort?: ReasoningEffort | undefined;
   readonly templateId?: string | undefined;
   readonly isSecretary?: boolean | undefined;
 }
@@ -62,6 +63,7 @@ export interface TemplateFacts {
   readonly voiceId?: string | undefined;
   readonly webAccess?: boolean | undefined;
   readonly hostCustomizations?: boolean | undefined;
+  readonly reasoningEffort?: ReasoningEffort | undefined;
 }
 
 /** Rebuild one seat from its template, keeping what belongs to the team. */
@@ -91,6 +93,9 @@ export function syncSeat<T extends SyncableSeat>(seat: T, template: TemplateFact
     // Assigned, not added, for the same reason: unticking 「读取本机配置」 in
     // the library has to reach the seats that are already sitting.
     hostCustomizations: template.hostCustomizations === true,
+    // Assigned, not added: going back to 「默认」 in the library has to reach
+    // the seats too.
+    reasoningEffort: template.reasoningEffort,
   };
 }
 
@@ -108,6 +113,7 @@ export function seatMatches(seat: SyncableSeat, template: TemplateFacts): boolea
     next.voiceId === seat.voiceId &&
     next.webAccess === seat.webAccess &&
     next.hostCustomizations === seat.hostCustomizations &&
+    next.reasoningEffort === seat.reasoningEffort &&
     next.caps?.maxTurns === seat.caps?.maxTurns &&
     next.caps?.maxCostUsd === seat.caps?.maxCostUsd &&
     next.caps?.maxTokens === seat.caps?.maxTokens

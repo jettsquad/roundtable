@@ -12,6 +12,7 @@ import { assertPublicHostCommand, buildAgendaPrompt, parseAgendaReply, type Agen
 import { buildCheckpointPrompt, validateCheckpoint, type CheckpointPromptInput } from "./checkpoint.ts";
 import { buildTeamAgendaTerminationPrompt, validateTeamAgendaTerminationSummary } from "./termination.ts";
 import { buildAssistPrompt, validateAssist, type AssistInput } from "./assist.ts";
+import { buildProjectMemoryPrompt, validateProjectMemory, type ProjectMemoryPromptInput } from "./project-memory.ts";
 
 /** What one finished text task produced. */
 export interface TextTaskResult {
@@ -68,6 +69,21 @@ export async function writeTerminationWith(run: TextTaskRunner, input: Terminati
     );
   }
   return text;
+}
+
+/**
+ * Rewrite a project file that has outgrown its limit. Returns the BODY; the
+ * caller puts the rules block back on top.
+ *
+ * Refused when it comes back empty or still over the limit. Either would be
+ * written into the person's project, and a file that is empty or still too
+ * big is worse than the one it replaced.
+ */
+export async function compressProjectMemoryWith(run: TextTaskRunner, input: ProjectMemoryPromptInput): Promise<string> {
+  const text = await settled(run, "秘书 · 精简项目文件", buildProjectMemoryPrompt(input));
+  const check = validateProjectMemory(text);
+  if (!check.ok) throw new Error(`秘书精简 ${input.file} 的结果不予采用：${check.detail}。`);
+  return text.trim();
 }
 
 /**

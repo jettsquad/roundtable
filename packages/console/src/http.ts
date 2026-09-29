@@ -321,6 +321,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           ...(seat.voiceId === undefined ? {} : { voiceId: seat.voiceId }),
           ...(seat.webAccess === undefined ? {} : { webAccess: seat.webAccess }),
           ...(seat.hostCustomizations === undefined ? {} : { hostCustomizations: seat.hostCustomizations }),
+          ...(seat.reasoningEffort === undefined ? {} : { reasoningEffort: seat.reasoningEffort }),
           ...(blockedReason(ctx, seat) === undefined ? {} : { blocked: blockedReason(ctx, seat) }),
         };
       }),
@@ -797,6 +798,7 @@ export async function createTeamWithMembers(
       ...(template.caps === undefined ? {} : { caps: template.caps }),
       ...(template.webAccess === undefined ? {} : { webAccess: template.webAccess }),
       ...(template.hostCustomizations === undefined ? {} : { hostCustomizations: template.hostCustomizations }),
+      ...(template.reasoningEffort === undefined ? {} : { reasoningEffort: template.reasoningEffort }),
     };
   });
 
@@ -874,6 +876,7 @@ export function addSeatFrom(ctx: Context, request: SeatRequest): void {
       ...(template.caps === undefined ? {} : { caps: template.caps }),
       ...(template.webAccess === undefined ? {} : { webAccess: template.webAccess }),
       ...(template.hostCustomizations === undefined ? {} : { hostCustomizations: template.hostCustomizations }),
+      ...(template.reasoningEffort === undefined ? {} : { reasoningEffort: template.reasoningEffort }),
     });
     return;
   }
@@ -949,6 +952,7 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     ...(request.voiceId === undefined ? {} : { voiceId: request.voiceId }),
     webAccess: request.webAccess,
     hostCustomizations: request.hostCustomizations,
+    reasoningEffort: request.reasoningEffort,
   });
 }
 
@@ -965,6 +969,7 @@ function templateFactsOf(template: {
   color?: string | undefined;
   webAccess?: boolean | undefined;
   hostCustomizations?: boolean | undefined;
+  reasoningEffort?: TemplateFacts["reasoningEffort"];
 }): TemplateFacts {
   return {
     templateId: template.templateId,
@@ -978,6 +983,7 @@ function templateFactsOf(template: {
     color: template.color,
     webAccess: template.webAccess,
     hostCustomizations: template.hostCustomizations,
+    reasoningEffort: template.reasoningEffort,
   };
 }
 
@@ -1036,6 +1042,11 @@ async function probeSeat(ctx: Context, template: AgentTemplate): Promise<CheckRe
       prompt: [{ type: "text", text: "回答两个字：收到。不要做别的事，不要读写任何文件。" }],
       parent: handle.agent,
       signal: deadline,
+      // The chosen level goes into the probe too: a gateway that refuses it
+      // should fail HERE, at 测试, not in the first round.
+      ...(template.reasoningEffort === undefined
+        ? {}
+        : { agentOptions: { reasoningEffort: template.reasoningEffort as never } }),
     });
     const result = await run.result;
     const text = textOfBlocks(result.output).trim();

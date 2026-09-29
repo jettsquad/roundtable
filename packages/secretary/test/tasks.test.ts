@@ -8,7 +8,15 @@
  * stored, and the refusal names what was missing.
  */
 import { describe, expect, it } from "vitest";
-import { agendaFromReplyWith, writeCheckpointWith, writeTerminationWith, type TextTaskRunner } from "../src/tasks.ts";
+import {
+  agendaFromReplyWith,
+  compressProjectMemoryWith,
+  writeCheckpointWith,
+  writeTerminationWith,
+  type TextTaskRunner,
+} from "../src/tasks.ts";
+import { buildProjectMemoryPrompt, projectMemoryBodyLimit } from "../src/project-memory.ts";
+import { PROJECT_MEMORY_RULES_BEGIN, withProjectMemoryRules } from "@squad/shared";
 import { CHECKPOINT_HEADING_LIST } from "../src/checkpoint.ts";
 import { TERMINATION_SUMMARY_HEADINGS } from "../src/termination.ts";
 
@@ -110,5 +118,29 @@ describe("把秘书的回复转成议程", () => {
         reply: "随便",
       }),
     ).rejects.toThrow(/@/);
+  });
+});
+
+describe("compressProjectMemoryWith", () => {
+  const input = { file: "CLAUDE.md", text: "# 很长的项目文件\n" + "旧内容\n".repeat(10_000) };
+
+  it("收下一份在上限内的正文", async () => {
+    await expect(compressProjectMemoryWith(answering("# 项目\n精简后"), input)).resolves.toBe("# 项目\n精简后");
+  });
+
+  it("压完还超上限：拒收，不写进人家的项目", async () => {
+    const tooLong = "字".repeat(projectMemoryBodyLimit() + 1);
+    await expect(compressProjectMemoryWith(answering(tooLong), input)).rejects.toThrow("超过上限");
+  });
+
+  it("空的：拒收", async () => {
+    await expect(compressProjectMemoryWith(answering("   "), input)).rejects.toThrow("空");
+  });
+
+  it("提示词里带着规则，但不带原文件里那份规则块", () => {
+    const prompt = buildProjectMemoryPrompt({ file: "CLAUDE.md", text: withProjectMemoryRules("# 项目\n正文") });
+    expect(prompt).toContain("@路径");
+    expect(prompt).not.toContain(PROJECT_MEMORY_RULES_BEGIN);
+    expect(prompt).toContain("正文");
   });
 });

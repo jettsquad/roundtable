@@ -482,6 +482,28 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
                   on: !attached.includes(material.materialId),
                 })
                 .then(onSent);
+            // Right here, next to the thing — the materials panel is at the
+            // top of the page, and scrolling up to drop a paste you just made
+            // costs more than the paste did. No confirmation: it is the chip
+            // you are looking at, and pasting it again is one keystroke.
+            const remove = (
+              <button
+                type="button"
+                className={styles.chipRemove}
+                title="删除这份资料"
+                aria-label={`删除 ${material.name}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setError(undefined);
+                  void api
+                    .removeMaterial({ teamId: current.teamId, materialId: material.materialId })
+                    .then(onSent)
+                    .catch((failure: unknown) => setError(String((failure as Error).message ?? failure)));
+                }}
+              >
+                ✕
+              </button>
+            );
             // A pasted picture is shown, so you can tell it is the right one
             // before it goes out. Click the picture to attach or detach it,
             // the same as a document chip; 放大 opens it full size.
@@ -489,6 +511,7 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
               const src = api.fileUrl(current.teamId, material.imagePath);
               return (
                 <span key={material.materialId} className={`${styles.thumb} ${on ? styles.thumbOn : ""}`}>
+                  {remove}
                   <button
                     type="button"
                     className={styles.thumbButton}
@@ -509,21 +532,23 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
               );
             }
             return (
-              <button
-                key={material.materialId}
-                type="button"
-                className={`${styles.quoteChip} ${on ? styles.quoted : styles.chipIdle}`}
-                title={
-                  material.pinned
-                    ? "常驻资料，每轮都带（在团队页可以取消常驻）"
-                    : `${material.chars.toLocaleString()} 字 · 只带这一轮`
-                }
-                disabled={material.pinned}
-                onClick={toggle}
-              >
-                {material.pinned ? "📌 " : on ? "✓ " : ""}
-                {material.name}
-              </button>
+              <span key={material.materialId} className={styles.chipWrap}>
+                <button
+                  type="button"
+                  className={`${styles.quoteChip} ${on ? styles.quoted : styles.chipIdle}`}
+                  title={
+                    material.pinned
+                      ? "常驻资料，每轮都带（在团队页可以取消常驻）"
+                      : `${material.chars.toLocaleString()} 字 · 只带这一轮`
+                  }
+                  disabled={material.pinned}
+                  onClick={toggle}
+                >
+                  {material.pinned ? "📌 " : on ? "✓ " : ""}
+                  {material.name}
+                </button>
+                {remove}
+              </span>
             );
           })}
         </div>

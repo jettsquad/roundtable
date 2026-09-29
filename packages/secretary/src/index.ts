@@ -27,12 +27,21 @@ export { SecretaryService } from "./service.ts";
 export {
   agendaFromReplyWith,
   assistWith,
+  compressProjectMemoryWith,
   draftAgendaWith,
   writeCheckpointWith,
   writeTerminationWith,
 } from "./tasks.ts";
 export type { TerminationInput, TextTaskResult, TextTaskRunner } from "./tasks.ts";
-export type { DraftAgendaInput, SecretaryRun, WriteCheckpointInput, WriteTerminationInput } from "./service.ts";
+export type {
+  CompressProjectMemoryInput,
+  DraftAgendaInput,
+  SecretaryRun,
+  WriteCheckpointInput,
+  WriteTerminationInput,
+} from "./service.ts";
+export { buildProjectMemoryPrompt, projectMemoryBodyLimit, validateProjectMemory } from "./project-memory.ts";
+export type { ProjectMemoryPromptInput, ProjectMemoryValidation } from "./project-memory.ts";
 export { assertPublicHostCommand, buildAgendaPrompt, extractJson, parseAgendaReply } from "./agenda.ts";
 export { buildAssistPrompt, validateAssist } from "./assist.ts";
 export type { AssistInput, AssistLine } from "./assist.ts";

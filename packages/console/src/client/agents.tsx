@@ -18,7 +18,8 @@ import {
   meaningfulCaps,
   permissionModesFor,
   overallOf,
-  REASONING_EFFORTS,
+  defaultEffortOf,
+  reasoningEffortsFor,
   type AgentBackend,
   type AgentTemplate,
   type AuthMode,
@@ -209,9 +210,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
         ...(draft.voiceId.trim() === "" ? {} : { voiceId: draft.voiceId.trim() }),
         ...(connectionId === "" ? {} : { connectionId }),
         ...(draft.backend === "dsh" ? {} : { permissionMode: draft.permissionMode }),
-        ...(draft.backend === "codex" && draft.reasoningEffort !== ""
-          ? { reasoningEffort: draft.reasoningEffort }
-          : {}),
+        ...(draft.reasoningEffort === "" ? {} : { reasoningEffort: draft.reasoningEffort }),
         ...(caps === undefined ? {} : { caps }),
         ...(newConnection
           ? {
@@ -322,20 +321,36 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               ))}
             </select>
           )}
-          {draft.backend !== "codex" ? null : (
-            <select
-              className={styles.field}
-              value={draft.reasoningEffort}
-              onChange={(event) => set({ reasoningEffort: event.target.value as ReasoningEffort | "" })}
-            >
-              <option value="">{t("agent.effort.default")}</option>
-              {REASONING_EFFORTS.map((effort) => (
-                <option key={effort} value={effort}>
-                  {t("agent.effort", { effort })}
-                </option>
-              ))}
-            </select>
-          )}
+          {(() => {
+            // The model decides which levels exist (dsh's DeepSeek route has
+            // `off`, its compatible route `medium`), so read it off the
+            // connection this form is pointing at.
+            const model = newConnection
+              ? draft.modelId
+              : connections.find((c) => c.connectionId === draft.connectionId)?.modelId;
+            const target = { backend: draft.backend, model };
+            const fallback = defaultEffortOf(target);
+            const label =
+              fallback.kind === "sends"
+                ? t("agent.effort.defaultSends", { effort: fallback.level })
+                : fallback.kind === "config"
+                  ? t("agent.effort.defaultConfig")
+                  : t("agent.effort.defaultNone");
+            return (
+              <select
+                className={styles.field}
+                value={draft.reasoningEffort}
+                onChange={(event) => set({ reasoningEffort: event.target.value as ReasoningEffort | "" })}
+              >
+                <option value="">{label}</option>
+                {reasoningEffortsFor(target).map((effort) => (
+                  <option key={effort} value={effort}>
+                    {t("agent.effort", { effort })}
+                  </option>
+                ))}
+              </select>
+            );
+          })()}
         </div>
 
         <div className={styles.subhead}>{t("agent.model")}</div>

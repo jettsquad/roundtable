@@ -10,8 +10,11 @@ import {
   forgetSeatSessions,
   rememberSeatSession,
   resetSeatSessions,
+  restoreSeatSessions,
   resumeWasRejected,
+  seatSession,
   seatSessionId,
+  snapshotSeatSessions,
 } from "../src/sessions.ts";
 
 describe("席位会话记账", () => {
@@ -62,6 +65,43 @@ describe("席位会话记账", () => {
     rememberSeatSession("team-a2", "甲", "s2");
     forgetSeatSessions("team-a");
     expect(seatSessionId("team-a2", "甲")).toBe("s2");
+  });
+});
+
+describe("重启前后的记账（持久化）", () => {
+  beforeEach(() => resetSeatSessions());
+
+  it("只吐出这一个父会话名下的、去掉前缀的记账", () => {
+    rememberSeatSession("team-a", "樱木", "s1");
+    rememberSeatSession("team-a", "流川", "s2");
+    rememberSeatSession("team-b", "樱木", "s3");
+    expect(snapshotSeatSessions("team-a")).toEqual({ 樱木: { id: "s1" }, 流川: { id: "s2" } });
+  });
+
+  it("没记过任何东西，吐出空对象而不是抛错", () => {
+    expect(snapshotSeatSessions("team-never-seen")).toEqual({});
+  });
+
+  it("重启（清空内存）之后，读回保存的记账能恢复续接", () => {
+    rememberSeatSession("team-a", "樱木", "s1");
+    const saved = snapshotSeatSessions("team-a");
+    resetSeatSessions(); // 模拟进程重启：内存清空，磁盘上的 saved 还在
+    expect(seatSessionId("team-a", "樱木")).toBeUndefined();
+    restoreSeatSessions("team-a", saved);
+    expect(seatSessionId("team-a", "樱木")).toBe("s1");
+  });
+
+  it("上次什么时候用的、上下文多大，跟着一起存、一起读回", () => {
+    rememberSeatSession("team-a", "樱木", "s1", { usedAt: 1000, contextTokens: 250_000 });
+    const saved = snapshotSeatSessions("team-a");
+    resetSeatSessions();
+    restoreSeatSessions("team-a", saved);
+    expect(seatSession("team-a", "樱木")).toEqual({ id: "s1", usedAt: 1000, contextTokens: 250_000 });
+  });
+
+  it("旧格式（只有 id 的字符串）也能读回，只是不知道年龄", () => {
+    restoreSeatSessions("team-a", { 樱木: "s1" });
+    expect(seatSession("team-a", "樱木")).toEqual({ id: "s1" });
   });
 });
 

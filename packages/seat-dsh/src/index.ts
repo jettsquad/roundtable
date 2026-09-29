@@ -19,8 +19,8 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "@deepseek-ai/dsh-subagent";
 // Imported for the `Context.subprocess` declaration merging it carries.
 import type {} from "@deepseek-ai/dsh-subprocess";
-import { providerName, type SeatConnection } from "@squad/shared";
-import { runCliSeat, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
+import { providerName, reasoningEffortsFor, type SeatConnection } from "@squad/shared";
+import { requestedEffort, runCliSeat, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -136,7 +136,7 @@ export class SquadSeatDsh extends Service {
     const base = config.provider ?? DEFAULTS.provider;
     return {
       name: providerName(base, connection?.connectionId),
-      capabilities: { ...NO_START_CAPABILITIES, toolFilter: false, persona: false },
+      capabilities: { ...NO_START_CAPABILITIES, toolFilter: false, persona: false, agentOptions: true },
       inheritsParentContext: false,
 
       async start(request): Promise<SubagentRun> {
@@ -144,13 +144,22 @@ export class SquadSeatDsh extends Service {
         // dsh has no environment variable for either, so this is the only
         // way they can take effect — and without it a MiniMax key goes to
         // DeepSeek's endpoint and comes back as an invalid key.
-        const model =
-          connection === undefined
-            ? undefined
-            : buildDshPatch({
-                model: (connection.modelId ?? "").trim(),
-                baseUrl: (connection.endpoint ?? "").trim(),
-              });
+        //
+        // The thinking level rides the same patch, checked against the route
+        // the model will actually take — the DeepSeek route has `off` and no
+        // `medium`, the compatible route the reverse.
+        const modelId = (connection?.modelId ?? "").trim();
+        const effort = requestedEffort(request);
+        if (effort !== undefined && !reasoningEffortsFor({ backend: "dsh", model: modelId }).includes(effort)) {
+          throw new Error(
+            `${modelId === "" ? "DeepSeek 默认模型" : modelId} 走的这条线路没有「${effort}」这一档思考强度。`,
+          );
+        }
+        const model = buildDshPatch({
+          model: modelId,
+          baseUrl: (connection?.endpoint ?? "").trim(),
+          effort,
+        });
         // ALWAYS written now, where it used to appear only when a connection
         // named a model. The heartbeat has to be mounted on every run — a
         // seat on the profile's own default model is exactly as invisible to

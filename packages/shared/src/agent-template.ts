@@ -17,6 +17,7 @@
  * it does not become a different argument one layer up.
  */
 import type { SeatCaps } from "./connection.ts";
+import { reasoningEffortsOfBackend, type ReasoningEffort } from "./reasoning-effort.ts";
 
 /** Which CLI runs this agent. Provider names are fixed by dsh. */
 export type AgentBackend = "claude-code" | "codex" | "dsh";
@@ -44,9 +45,6 @@ export function defaultPermissionMode(backend: AgentBackend): PermissionMode {
   return backend === "codex" ? "workspace" : "acceptEdits";
 }
 
-export const REASONING_EFFORTS = ["low", "medium", "high"] as const;
-export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
-
 export interface AgentTemplate {
   readonly templateId: string;
   readonly displayName: string;
@@ -57,7 +55,10 @@ export interface AgentTemplate {
   /** Which connection supplies the model. Absent means the host's own login. */
   readonly connectionId?: string | undefined;
   readonly permissionMode?: PermissionMode | undefined;
-  /** Codex only. */
+  /**
+   * How hard this agent's model thinks. Absent means the backend's own
+   * default — see `defaultEffortOf` for what that actually is.
+   */
   readonly reasoningEffort?: ReasoningEffort | undefined;
   readonly caps?: SeatCaps | undefined;
   /** Whether this agent may be a team's secretary. */
@@ -190,8 +191,14 @@ export function checkAgentTemplate(template: AgentTemplate): readonly AgentTempl
       detail: `${template.backend} 没有「${template.permissionMode}」这个权限模式——它会被原样交给子进程，报错来自 CLI 而不是这里。`,
     });
   }
-  if (template.reasoningEffort !== undefined && template.backend !== "codex") {
-    problems.push({ field: "reasoningEffort", detail: "推理档位只有 codex 有。" });
+  if (
+    template.reasoningEffort !== undefined &&
+    !reasoningEffortsOfBackend(template.backend).includes(template.reasoningEffort)
+  ) {
+    problems.push({
+      field: "reasoningEffort",
+      detail: `${template.backend} 没有「${template.reasoningEffort}」这一档思考强度。`,
+    });
   }
   return problems;
 }

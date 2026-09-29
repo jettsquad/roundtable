@@ -20,13 +20,14 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
-import { providerForSeat, SEAT_PROVIDER, stripReasoning } from "@squad/shared";
+import { providerForSeat, SEAT_PROVIDER, stripReasoning, type ReasoningEffort } from "@squad/shared";
 import type { CheckpointPromptInput } from "./checkpoint.ts";
 import type { AgendaSpec } from "@squad/shared";
 import type { AgendaDraftInput } from "./agenda.ts";
 import {
   agendaFromReplyWith,
   assistWith,
+  compressProjectMemoryWith,
   draftAgendaWith,
   writeCheckpointWith,
   writeTerminationWith,
@@ -34,6 +35,7 @@ import {
   type TextTaskRunner,
 } from "./tasks.ts";
 import type { AssistInput } from "./assist.ts";
+import type { ProjectMemoryPromptInput } from "./project-memory.ts";
 import { personaPlan } from "./persona.ts";
 
 declare module "@deepseek-ai/cordis" {
@@ -81,6 +83,8 @@ export interface SecretarySeat {
   readonly backend: string;
   readonly connectionId?: string | undefined;
   readonly permissionMode?: string | undefined;
+  /** The secretary's own agent's level, like any seat's. */
+  readonly reasoningEffort?: ReasoningEffort | undefined;
 }
 
 export type WriteCheckpointInput = CheckpointPromptInput & SecretaryRun;
@@ -97,6 +101,9 @@ export type AssistTaskInput = AssistInput & SecretaryRun;
  * secretary's own is the caller's job — this service never sees a record.
  */
 export type AgendaFromReplyInput = AgendaDraftInput & SecretaryRun & { readonly reply: string };
+
+/** A project file to shrink back under its limit. */
+export type CompressProjectMemoryInput = ProjectMemoryPromptInput & SecretaryRun;
 
 /** Everything the hand-off needs, fed in by the caller — nothing is remembered here. */
 export type WriteTerminationInput = TerminationInput & SecretaryRun;
@@ -130,6 +137,11 @@ export class SecretaryService extends Service {
     return writeCheckpointWith(this.runner(input), input);
   }
 
+  /** Shrink a project file back under its limit. Returns the body, without the rules block. */
+  async compressProjectMemory(input: CompressProjectMemoryInput): Promise<string> {
+    return compressProjectMemoryWith(this.runner(input), input);
+  }
+
   async writeTermination(input: WriteTerminationInput): Promise<string> {
     return writeTerminationWith(this.runner(input), input);
   }
@@ -161,6 +173,9 @@ export class SecretaryService extends Service {
         parent: run.parent,
         signal: run.signal ?? new AbortController().signal,
         ...(plan.persona === undefined ? {} : { persona: plan.persona }),
+        ...(run.secretary?.reasoningEffort === undefined
+          ? {}
+          : { agentOptions: { reasoningEffort: run.secretary.reasoningEffort as never } }),
       };
       const started = await this.ctx.subagents.start(provider, request);
       const result = await started.result;

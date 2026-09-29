@@ -91,6 +91,11 @@ export interface ArgvInput {
    * it on buys the dead weight along with the useful part.
    */
   readonly hostCustomizations?: boolean | undefined;
+  /**
+   * `--effort`, when the agent chose one. Absent leaves the CLI to its own
+   * default, which is `high` — sent even to a non-Claude model, measured.
+   */
+  readonly effort?: string | undefined;
   /** `--mcp-config` JSON, when the seat is given a tool of Squad's own. */
   readonly mcpConfig?: string | undefined;
 }
@@ -152,6 +157,7 @@ export function buildArgv(input: ArgvInput): readonly string[] {
   else argv.push("--permission-mode", mode);
 
   if (input.model !== undefined && input.model !== "") argv.push("--model", input.model);
+  if (input.effort !== undefined && input.effort !== "") argv.push("--effort", input.effort);
   if (input.persona !== undefined && input.persona.trim() !== "") {
     argv.push("--append-system-prompt", input.persona);
   }
