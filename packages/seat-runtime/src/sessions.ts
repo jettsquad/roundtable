@@ -18,26 +18,52 @@
  * writer and the readers are in different packages that must not import each
  * other, and both already depend on this one.
  *
- * DELIBERATELY NOT PERSISTED. A restart loses the mapping, and the cost of
- * that is one un-resumed turn per seat before it rebuilds itself. Persisting
- * would mean holding ids for conversations the CLI may have cleaned up in the
- * meantime, and a stale id is worse than none: it fails at spawn time naming a
- * uuid nobody recognises.
+ * Persisted by the table (`snapshotSeatSessions` / `restoreSeatSessions`), so
+ * a restart does not force every seat to open fresh. A stale id is recovered
+ * the way it always was: `resumeWasRejected`, forget, retry fresh.
+ *
+ * Each entry also carries WHEN the conversation was last used and HOW BIG its
+ * context had grown. Neither is needed to resume; both are needed to decide
+ * whether resuming is worth it — see `@squad/table`'s `reopenReason`.
  */
 
-const ids = new Map<string, string>();
+/** One seat's conversation, and the two facts that decide whether to keep it. */
+export interface SeatSession {
+  readonly id: string;
+  /** When its last turn ended, epoch ms. Absent for an entry saved before this was recorded. */
+  readonly usedAt?: number | undefined;
+  /** The context its last model call carried, in tokens. Absent when the backend did not say. */
+  readonly contextTokens?: number | undefined;
+}
+
+const ids = new Map<string, SeatSession>();
 
 const keyOf = (parentSessionId: string, label: string): string => `${parentSessionId} ${label}`;
 
 /** The conversation this seat is already in, if any. */
 export function seatSessionId(parentSessionId: string, label: string | undefined): string | undefined {
   if (label === undefined || label === "") return undefined;
+  return ids.get(keyOf(parentSessionId, label))?.id;
+}
+
+/** The whole entry, facts included, if this seat has a conversation. */
+export function seatSession(parentSessionId: string, label: string | undefined): SeatSession | undefined {
+  if (label === undefined || label === "") return undefined;
   return ids.get(keyOf(parentSessionId, label));
 }
 
-export function rememberSeatSession(parentSessionId: string, label: string | undefined, id: string): void {
+export function rememberSeatSession(
+  parentSessionId: string,
+  label: string | undefined,
+  id: string,
+  facts: Omit<SeatSession, "id"> = {},
+): void {
   if (label === undefined || label === "" || id === "") return;
-  ids.set(keyOf(parentSessionId, label), id);
+  ids.set(keyOf(parentSessionId, label), {
+    id,
+    ...(facts.usedAt === undefined ? {} : { usedAt: facts.usedAt }),
+    ...(facts.contextTokens === undefined ? {} : { contextTokens: facts.contextTokens }),
+  });
 }
 
 /**
@@ -101,11 +127,11 @@ export function resetSeatSessions(): void {
  * map is the only source of truth, and reading it fresh avoids a second copy
  * that could drift from it.
  */
-export function snapshotSeatSessions(parentSessionId: string): Record<string, string> {
+export function snapshotSeatSessions(parentSessionId: string): Record<string, SeatSession> {
   const prefix = `${parentSessionId} `;
-  const out: Record<string, string> = {};
-  for (const [key, id] of ids) {
-    if (key.startsWith(prefix)) out[key.slice(prefix.length)] = id;
+  const out: Record<string, SeatSession> = {};
+  for (const [key, session] of ids) {
+    if (key.startsWith(prefix)) out[key.slice(prefix.length)] = session;
   }
   return out;
 }
@@ -118,7 +144,17 @@ export function snapshotSeatSessions(parentSessionId: string): Record<string, st
  * conversation the CLI already dropped is not a new failure mode: the same
  * rejection a stale in-memory id already produces, caught by
  * `resumeWasRejected` and retried fresh, exactly as it always was.
+ *
+ * A bare string is an entry saved before the facts were recorded. It is kept,
+ * with no `usedAt` — which the reopen rule reads as "age unknown" and treats
+ * as cold, because guessing warm is the expensive mistake.
  */
-export function restoreSeatSessions(parentSessionId: string, sessions: Readonly<Record<string, string>>): void {
-  for (const [label, id] of Object.entries(sessions)) rememberSeatSession(parentSessionId, label, id);
+export function restoreSeatSessions(
+  parentSessionId: string,
+  sessions: Readonly<Record<string, string | SeatSession>>,
+): void {
+  for (const [label, saved] of Object.entries(sessions)) {
+    if (typeof saved === "string") rememberSeatSession(parentSessionId, label, saved);
+    else rememberSeatSession(parentSessionId, label, saved.id, saved);
+  }
 }

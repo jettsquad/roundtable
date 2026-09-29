@@ -27,6 +27,7 @@ import type { AgendaDraftInput } from "./agenda.ts";
 import {
   agendaFromReplyWith,
   assistWith,
+  compressProjectMemoryWith,
   draftAgendaWith,
   writeCheckpointWith,
   writeTerminationWith,
@@ -34,6 +35,7 @@ import {
   type TextTaskRunner,
 } from "./tasks.ts";
 import type { AssistInput } from "./assist.ts";
+import type { ProjectMemoryPromptInput } from "./project-memory.ts";
 import { personaPlan } from "./persona.ts";
 
 declare module "@deepseek-ai/cordis" {
@@ -98,6 +100,9 @@ export type AssistTaskInput = AssistInput & SecretaryRun;
  */
 export type AgendaFromReplyInput = AgendaDraftInput & SecretaryRun & { readonly reply: string };
 
+/** A project file to shrink back under its limit. */
+export type CompressProjectMemoryInput = ProjectMemoryPromptInput & SecretaryRun;
+
 /** Everything the hand-off needs, fed in by the caller — nothing is remembered here. */
 export type WriteTerminationInput = TerminationInput & SecretaryRun;
 
@@ -128,6 +133,11 @@ export class SecretaryService extends Service {
 
   async writeCheckpoint(input: WriteCheckpointInput): Promise<string> {
     return writeCheckpointWith(this.runner(input), input);
+  }
+
+  /** Shrink a project file back under its limit. Returns the body, without the rules block. */
+  async compressProjectMemory(input: CompressProjectMemoryInput): Promise<string> {
+    return compressProjectMemoryWith(this.runner(input), input);
   }
 
   async writeTermination(input: WriteTerminationInput): Promise<string> {

@@ -248,7 +248,16 @@ const teamRecord = z.object({
    * a seat already starts it over even in memory, so this changes nothing
    * about that.
    */
-  seatSessions: z.record(z.string(), z.string()).optional(),
+  seatSessions: z
+    .record(
+      z.string(),
+      z.union([
+        // An entry saved before the facts below were recorded.
+        z.string(),
+        z.object({ id: z.string(), usedAt: z.number().optional(), contextTokens: z.number().optional() }),
+      ]),
+    )
+    .optional(),
   createdAt: z.number(),
 });
 

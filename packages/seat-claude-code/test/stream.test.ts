@@ -116,3 +116,30 @@ describe("usage", () => {
     expect(partial.usage).toMatchObject({ inputTokens: 5, outputTokens: 0, cacheReadTokens: 0 });
   });
 });
+
+describe("contextTokens", () => {
+  const call = (usage: Record<string, number>) =>
+    line({ type: "assistant", message: { content: [{ type: "text", text: "…" }], usage } });
+  const done = line({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: "ok",
+    usage: { input_tokens: 9, output_tokens: 9, cache_read_input_tokens: 900_000, cache_creation_input_tokens: 9 },
+  });
+
+  it("取最后一次模型调用的上下文，而不是整轮的累加", () => {
+    // 整轮累加是花了多少钱；最后一次是下一次调用要读多少——决定还值不值得续接的是后者。
+    const usage = readStream(
+      call({ input_tokens: 2, cache_read_input_tokens: 100_000, cache_creation_input_tokens: 0 }) +
+        call({ input_tokens: 3, cache_read_input_tokens: 300_000, cache_creation_input_tokens: 5_000 }) +
+        done,
+    ).usage;
+    expect(usage?.contextTokens).toBe(305_003);
+    expect(usage?.cacheReadTokens).toBe(900_000);
+  });
+
+  it("消息里没有用量时不瞎报", () => {
+    expect(readStream(assistant("…") + done).usage?.contextTokens).toBeUndefined();
+  });
+});

@@ -48,8 +48,10 @@ import {
 import {
   EMPTY_TEAM_PROMPTS,
   blocksForSeat,
+  PROJECT_MEMORY_MAX_CHARS,
   projectMemoryFile,
   projectMemoryNote,
+  withProjectMemoryRules,
   type TeamPrompts,
 } from "@squad/shared";
 import {
@@ -59,11 +61,13 @@ import {
   rememberSeatSession,
   restoreSeatSessions,
   resumeWasRejected,
+  seatSession,
   seatSessionId,
   snapshotSeatSessions,
   type SeatActivity,
 } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
+import { reopenReason } from "./reopen.ts";
 import { baseForFolder, recordForSession, restoreOrder, unclaimed } from "./sitting.ts";
 import { appendAudit, type AuditEntry, type AuditKind } from "./audit.ts";
 import { agendaHash } from "./hash.ts";
@@ -480,6 +484,26 @@ export interface TeamAssembler {
    * team wait, and the registrant owns reporting its own failures.
    */
   artifactWritten(teamId: string, path: string): void;
+  /**
+   * Some seat in the round about to start will open a FRESH conversation.
+   *
+   * Awaited, unlike the two above, and called only while the team is idle:
+   * a fresh conversation is handed the newest checkpoint plus every word
+   * after it, verbatim, and this is the one chance to fold that tail first
+   * so the new conversation starts small. Must not reject — a round that
+   * cannot start because a summary failed loses the round to save tokens.
+   */
+  beforeFreshStart?(teamId: string): Promise<void>;
+  /**
+   * A project file has outgrown `PROJECT_MEMORY_MAX_CHARS`: return its
+   * rewritten BODY, or nothing when it could not be done.
+   *
+   * Here rather than on the table because rewriting is judgement work and the
+   * secretary is reached through this side of the seam. The table reads the
+   * file, decides it is too big, and writes the answer back — the program's
+   * half. Must not reject: a seat with a big file still answers.
+   */
+  compactProjectMemory?(teamId: string, file: string, text: string): Promise<string | undefined>;
 }
 
 export class TeamsService extends Service {
@@ -489,6 +513,8 @@ export class TeamsService extends Service {
   private assembler: TeamAssembler | undefined;
   /** sessionId → the lookup in flight for it. See `sittingFor`. */
   private readonly sittingLookups = new Map<string, Promise<Team | undefined>>();
+  /** path → the rewrite in flight for it. See `compacted`. */
+  private readonly compactions = new Map<string, Promise<string>>();
   private readonly roundEndedListeners = new Set<(event: RoundEndedEvent) => void>();
   private domain: Domain<typeof SQUAD_TABLE_DOMAIN> | undefined;
   /** Serialises writes so two edits in one tick cannot lose one another. */
@@ -1549,6 +1575,7 @@ export class TeamsService extends Service {
     // stood when the round opened, not as the seats ahead of it left it.
     // (Cumulative mode will need this taken per seat, mid-loop, instead.)
     this.refreshAuthModes(record);
+    await this.prepareFreshStarts(record, host, seats);
     const windows = new Map<string, WindowAttempt>();
     for (const seat of seats) {
       windows.set(seat.seatId, await this.windowForSeat(record, host, seat));
@@ -1591,6 +1618,41 @@ export class TeamsService extends Service {
     // caught, because a stop breaks the loop rather than throwing.
     this.drainQueue(record, abort.signal.aborted ? "上一轮被叫停，这条没有发出去。" : undefined);
     return replies;
+  }
+
+  /**
+   * Drop the conversations that are no longer worth continuing, then — when
+   * anyone in this round will start fresh — let the assembler fold first.
+   *
+   * Decided by the program, before the windows are taken, because the window
+   * a seat gets depends on it: a continuing seat is handed only what it has
+   * not seen, a fresh one the checkpoint and everything after it. See
+   * `reopen.ts` for the two lines and the measurements behind them.
+   */
+  private async prepareFreshStarts(record: TeamRecord, host: Agent, seats: readonly SeatSpec[]): Promise<void> {
+    this.dropStaleSessions(record, host, seats);
+    if (this.assembler?.beforeFreshStart === undefined) return;
+    if (seats.every((seat) => seatSessionId(host.session.id, seat.displayName) !== undefined)) return;
+    try {
+      await this.assembler.beforeFreshStart(record.teamId);
+    } catch (error) {
+      // The contract says it never rejects; if it does anyway, the round
+      // still runs — on a longer window, which is the cost of the failure.
+      this.ctx.logger.warn(
+        `团队 ${record.teamId}：新开对话前的折叠失败，这一轮按原窗口进行：` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private dropStaleSessions(record: TeamRecord, host: Agent, seats: readonly SeatSpec[]): void {
+    const now = Date.now();
+    for (const seat of seats) {
+      const reason = reopenReason(seatSession(host.session.id, seat.displayName), now);
+      if (reason === undefined) continue;
+      forgetSeatSession(host.session.id, seat.displayName);
+      this.ctx.logger.info(`团队 ${record.teamId}：${seat.displayName} 这一轮新开对话（${reason}）。`);
+    }
   }
 
   /**
@@ -1700,6 +1762,9 @@ export class TeamsService extends Service {
     };
     record.running = running;
     this.refreshAuthModes(record);
+    // Before `roundsInFlight` goes up: the fold this may run needs the team
+    // idle, and between phases it never is again until the agenda ends.
+    await this.prepareFreshStarts(record, record.handle.agent, record.seats);
     record.roundsInFlight += 1;
     try {
       for (const [phaseIndex, phase] of agenda.phases.entries()) {
@@ -1724,6 +1789,10 @@ export class TeamsService extends Service {
         // effect was making the logs of a cumulative phase look like an
         // independent one.
         const runs = planPhase(phase);
+        // A long agenda can outgrow a conversation or outlast the cache
+        // between phases too. No fold here — the team is mid-agenda — so a
+        // seat dropped now reopens on the checkpoint and the tail as they are.
+        this.dropStaleSessions(record, host, record.seats);
         const opening = new Map<string, WindowAttempt>();
         for (const run of runs) {
           if (run.window === "phase-start" && !opening.has(run.task.seatId)) {
@@ -2106,12 +2175,52 @@ export class TeamsService extends Service {
     }
     try {
       const text = await readFile(path, "utf8");
-      return text.trim() === "" ? undefined : { kind: "present", file, text };
+      if (text.trim() === "") return undefined;
+      return { kind: "present", file, text: await this.compacted(record, path, file, text) };
     } catch {
       // It is there and we cannot read it. Saying nothing is right: the seat
       // loses a convenience, and the alternative — failing the round — loses
       // the answer.
       return undefined;
+    }
+  }
+
+  /**
+   * The project file, shrunk back under its limit first when it has outgrown it.
+   *
+   * Done, not reported. Telling the person the file is too big hands them a
+   * job they would only give back to a Claude — so the secretary rewrites it,
+   * the program puts the rules back on top and writes it into the project.
+   * The project's own history keeps the old version, which is the undo.
+   *
+   * One rewrite per file at a time: the seats of a round read it one after
+   * another, and the second must wait for the first rewrite rather than start
+   * its own.
+   */
+  private async compacted(record: TeamRecord, path: string, file: string, text: string): Promise<string> {
+    if (text.length <= PROJECT_MEMORY_MAX_CHARS) return text;
+    const compact = this.assembler?.compactProjectMemory;
+    if (compact === undefined) return text;
+    const running = this.compactions.get(path);
+    if (running !== undefined) return running;
+    const work = (async (): Promise<string> => {
+      const body = await compact(record.teamId, file, text);
+      if (body === undefined) return text;
+      const next = withProjectMemoryRules(body);
+      await writeFile(path, next, "utf8");
+      this.ctx.logger.info(`团队 ${record.teamId}：${file} 从 ${text.length} 字符精简到 ${next.length} 字符。`);
+      return next;
+    })();
+    this.compactions.set(path, work);
+    try {
+      return await work;
+    } catch (error) {
+      this.ctx.logger.warn(
+        `团队 ${record.teamId}：精简 ${file} 失败，这一轮照原文发：${error instanceof Error ? error.message : String(error)}`,
+      );
+      return text;
+    } finally {
+      this.compactions.delete(path);
     }
   }
 
@@ -2256,15 +2365,20 @@ export class TeamsService extends Service {
       // every later turn of this seat fail the same way; forgetting one that
       // was fine costs a single un-resumed turn.
       const cliSession = sessionIdOfResult(result);
+      const usage = usageOfResult(result);
       if (failed) {
         forgetSeatSession(host.session.id, seat.displayName);
       } else if (cliSession !== undefined) {
-        rememberSeatSession(host.session.id, seat.displayName, cliSession);
+        // With when it was used and how big it got: the two facts the next
+        // turn needs to decide whether continuing is still the cheap path.
+        rememberSeatSession(host.session.id, seat.displayName, cliSession, {
+          usedAt: Date.now(),
+          contextTokens: usage?.contextTokens,
+        });
       }
       recordSpoken(host, seat.displayName, text);
       // Counted before the reply is returned, and counted on failures too:
       // a turn that burned tokens and then errored still cost what it cost.
-      const usage = usageOfResult(result);
       record.usage = addUsage(record.usage, usage);
       record.perSeat.set(seat.seatId, addUsage(record.perSeat.get(seat.seatId) ?? EMPTY_TOTALS, usage));
       // Written after every turn, not at shutdown: a crash between the spend

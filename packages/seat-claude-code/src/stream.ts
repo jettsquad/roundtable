@@ -83,6 +83,30 @@ function usageOf(envelope: StreamEvent): SeatUsage | undefined {
   };
 }
 
+/**
+ * The context the LAST model call of this run carried.
+ *
+ * Every assistant message reports its own call's usage; the envelope reports
+ * the sum over all of them. The sum is what the turn cost, the last one is how
+ * much the next call of this conversation will have to read — a turn of fifty
+ * tool calls sums to millions while its context may be 300k.
+ */
+function lastContextTokens(events: readonly StreamEvent[]): number | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type !== "assistant") continue;
+    const usage = (event.message as { readonly usage?: unknown } | undefined)?.usage;
+    if (typeof usage !== "object" || usage === null) continue;
+    const record = usage as Record<string, unknown>;
+    const total =
+      count(record["input_tokens"]) +
+      count(record["cache_read_input_tokens"]) +
+      count(record["cache_creation_input_tokens"]);
+    if (total > 0) return total;
+  }
+  return undefined;
+}
+
 const parseLines = (output: string): StreamEvent[] => {
   const events: StreamEvent[] = [];
   for (const line of output.split("\n")) {
@@ -148,7 +172,9 @@ export function readStream(output: string): StreamOutcome {
 
   const failed = envelope.is_error === true || envelope.subtype !== "success";
   const fromEnvelope = typeof envelope.result === "string" ? envelope.result.trim() : "";
-  const usage = usageOf(envelope);
+  const totals = usageOf(envelope);
+  const context = lastContextTokens(events);
+  const usage = totals === undefined || context === undefined ? totals : { ...totals, contextTokens: context };
   return {
     text: streamed !== "" ? streamed : fromEnvelope,
     failed,

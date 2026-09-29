@@ -28,6 +28,17 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
+/**
+ * Tail past which a seat about to open a fresh conversation waits for a fold.
+ *
+ * A fresh conversation is handed the newest checkpoint plus every word after
+ * it, verbatim, and the ordinary threshold lets that tail reach ~100k before
+ * folding. Below this size carrying the tail is cheaper than a secretary call;
+ * above it, folding first makes every fresh seat in the round start small —
+ * and the checkpoint is shared, so one fold serves all of them.
+ */
+export const FRESH_START_FOLD_TOKENS = 30_000;
+
 /** What the host is told when recording a checkpoint the secretary wrote. */
 export interface RecordCheckpointInput {
   readonly teamId: string;
@@ -82,6 +93,8 @@ export class TeamContextService extends Service {
       windowFor: (teamId, seatId, continuingAs) => this.windowFor(teamId, seatId, continuingAs),
       roundEnded: (teamId) => this.onRoundEnded(teamId),
       artifactWritten: (teamId, path) => this.onArtifactWritten(teamId, path),
+      beforeFreshStart: (teamId) => this.beforeFreshStart(teamId),
+      compactProjectMemory: (teamId, file, text) => this.compactProjectMemory(teamId, file, text),
     });
     this.ctx.effect(() => release);
   }
@@ -240,6 +253,52 @@ export class TeamContextService extends Service {
         `团队 ${teamId}：自动折叠失败：${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
       );
     });
+  }
+
+  /**
+   * A seat is about to open a fresh conversation: fold first if the tail it
+   * would be handed is long.
+   *
+   * Awaited by the table, unlike round-end folding — the whole point is that
+   * the fresh window is taken AFTER the checkpoint lands. Never rejects: a
+   * failed fold costs the round a longer window, not the round.
+   */
+  private async beforeFreshStart(teamId: string): Promise<void> {
+    if (this.folding.has(teamId)) return;
+    if (this.accumulated(teamId) < FRESH_START_FOLD_TOKENS) return;
+    try {
+      await this.fold(teamId);
+    } catch (error) {
+      this.ctx.logger.warn(
+        `团队 ${teamId}：新开对话前的折叠失败，这一轮带着原文尾巴进行：` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Have the secretary rewrite an oversized project file. Returns the body,
+   * or nothing when it failed — never rejects, because the seat waiting on
+   * this still has to answer, with the long file if need be.
+   *
+   * The team's designated secretary does it, on its own model, like a fold.
+   */
+  private async compactProjectMemory(teamId: string, file: string, text: string): Promise<string | undefined> {
+    const team = this.ctx.teams.get(teamId);
+    if (team === undefined) return undefined;
+    try {
+      return await this.ctx.secretary.compressProjectMemory({
+        parent: team.host,
+        ...(team.secretary === undefined ? {} : { secretary: team.secretary }),
+        file,
+        text,
+      });
+    } catch (error) {
+      this.ctx.logger.warn(
+        `团队 ${teamId}：秘书没能精简 ${file}：${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
   }
 
   /**

@@ -12,6 +12,7 @@ import {
   resetSeatSessions,
   restoreSeatSessions,
   resumeWasRejected,
+  seatSession,
   seatSessionId,
   snapshotSeatSessions,
 } from "../src/sessions.ts";
@@ -74,7 +75,7 @@ describe("重启前后的记账（持久化）", () => {
     rememberSeatSession("team-a", "樱木", "s1");
     rememberSeatSession("team-a", "流川", "s2");
     rememberSeatSession("team-b", "樱木", "s3");
-    expect(snapshotSeatSessions("team-a")).toEqual({ 樱木: "s1", 流川: "s2" });
+    expect(snapshotSeatSessions("team-a")).toEqual({ 樱木: { id: "s1" }, 流川: { id: "s2" } });
   });
 
   it("没记过任何东西，吐出空对象而不是抛错", () => {
@@ -88,6 +89,19 @@ describe("重启前后的记账（持久化）", () => {
     expect(seatSessionId("team-a", "樱木")).toBeUndefined();
     restoreSeatSessions("team-a", saved);
     expect(seatSessionId("team-a", "樱木")).toBe("s1");
+  });
+
+  it("上次什么时候用的、上下文多大，跟着一起存、一起读回", () => {
+    rememberSeatSession("team-a", "樱木", "s1", { usedAt: 1000, contextTokens: 250_000 });
+    const saved = snapshotSeatSessions("team-a");
+    resetSeatSessions();
+    restoreSeatSessions("team-a", saved);
+    expect(seatSession("team-a", "樱木")).toEqual({ id: "s1", usedAt: 1000, contextTokens: 250_000 });
+  });
+
+  it("旧格式（只有 id 的字符串）也能读回，只是不知道年龄", () => {
+    restoreSeatSessions("team-a", { 樱木: "s1" });
+    expect(seatSession("team-a", "樱木")).toEqual({ id: "s1" });
   });
 });
 

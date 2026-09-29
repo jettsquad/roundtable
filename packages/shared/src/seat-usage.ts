@@ -20,6 +20,15 @@ export interface SeatUsage {
   /** The backend's own accounting. Absent when it reported none. */
   readonly costUsd?: number | undefined;
   readonly durationMs?: number | undefined;
+  /**
+   * How big the context was on the turn's LAST model call, in tokens.
+   *
+   * Not a total, and deliberately not summed by `addUsage`: it answers "how
+   * much does the next call of this conversation have to read", which is what
+   * decides whether continuing it is still cheaper than starting over. The
+   * four counters above are sums over every call in the turn and cannot say.
+   */
+  readonly contextTokens?: number | undefined;
 }
 
 /**

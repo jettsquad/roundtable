@@ -48,8 +48,10 @@ export {
   resetSeatSessions,
   restoreSeatSessions,
   resumeWasRejected,
+  seatSession,
   seatSessionId,
   snapshotSeatSessions,
+  type SeatSession,
 } from "./sessions.ts";
 export { dshHome, seatStateDir } from "./home.ts";
 export { downloadMcpConfig } from "./download-tool.ts";
