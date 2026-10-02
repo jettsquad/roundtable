@@ -476,7 +476,10 @@ export function Discussion({
               ))}
             </div>
             {(() => {
-              const command = team.commands.find((one) => one.commandId === line.turnId);
+              // `?? []`: a server started before commands existed sends none,
+              // and the client is rebuilt without restarting it. Failing here
+              // blanked the whole discussion, which read as the history gone.
+              const command = (team.commands ?? []).find((one) => one.commandId === line.turnId);
               return command === undefined ? null : (
                 <CommandStatus team={team} command={command} onChanged={onChanged ?? (() => undefined)} />
               );
