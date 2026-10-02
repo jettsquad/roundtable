@@ -33,6 +33,8 @@ const agentTemplateRecord = z.object({
   voiceId: z.string().optional(),
   /** Pre-approve the web tools for this agent. Claude Code only. */
   webAccess: z.boolean().optional(),
+  /** Let this agent spawn subagents of its own. Off unless set. */
+  subagents: z.boolean().optional(),
   /** Soft delete: a disabled template is hidden, not gone. */
   enabled: z.boolean(),
   /**

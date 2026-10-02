@@ -78,6 +78,13 @@ export interface SeatSpec {
    */
   readonly hostCustomizations?: boolean | undefined;
   /**
+   * Let this seat spawn subagents of its own. Off unless set.
+   *
+   * Decided when the child is spawned, so it travels in the PROVIDER NAME.
+   * See `AgentTemplate.subagents`.
+   */
+  readonly subagents?: boolean | undefined;
+  /**
    * How hard this seat's model thinks. Travels on the seam's own
    * `agentOptions.reasoningEffort`; each backend translates it. Absent means
    * the backend's default — see `defaultEffortOf`.

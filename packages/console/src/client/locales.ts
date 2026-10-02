@@ -202,6 +202,11 @@ export const zh = {
   "agent.hostConfig.off":
     "本机配置不读。要给席位的规矩，用提示词块——按席位选、看得见、codex 和 dsh 也能用。" +
     "项目自己的 CLAUDE.md 不受影响，Squad 会替它读。",
+  "agent.subagents": "允许派生子 agent",
+  "agent.subagents.on":
+    "这个 agent 可以把活拆给它自己的子 agent 并行做。子 agent 的过程不进讨论记录，只有它的最终回答进；" +
+    "花费都记在它头上。适合要并行读很多文件、查资料的执行类 agent，不适合秘书和负责分工的 agent。",
+  "agent.subagents.off": "不能派生子 agent——Claude Code、Codex、dsh 三种后端都关掉了这个能力。",
   "agent.voice": "声音",
   "agent.colour": "颜色",
 
@@ -215,14 +220,6 @@ export const zh = {
   "composer.head.noSeats": " · 还没有成员",
   "composer.placeholder": "跟「{name}」说点什么，@ 点名单独问某人…（⌘↵ 发送，↵ 换行）",
   "composer.running": "进行中 {seconds}s",
-  "composer.writeWhileRunning": "本轮还在跑（{seconds}s）——可以先写，发出去会排队，上一轮结束后自动发。",
-  "composer.queue": "排队（本轮结束后发）",
-  "composer.queueSome": "排队问 {names}",
-  "composer.queued": "已排队，上一轮结束后发出：",
-  "composer.queued.held": "没有发出——{reason}",
-  "composer.queued.send": "现在发",
-  "composer.queued.drop": "撤销",
-  "composer.queued.replaced": "再发一条会替换它。",
   "composer.askAll": "问所有人",
   "composer.askSome": "问 {names}",
   "composer.materials.title": "导入 PDF、Word、Markdown 或纯文本作为背景资料",
@@ -232,7 +229,16 @@ export const zh = {
   "composer.context.title": "已累计 {used} / {limit} token",
   "composer.summarising": "秘书正在总结…",
   "composer.summarise": "总结",
-  "composer.stop": "叫停",
+  "cmd.queued": "排队中 · 等 {names} 空出来",
+  "cmd.running": "{names} 回答中",
+  "cmd.runningAndQueued": "{running} 回答中 · {queued} 排队中",
+  "cmd.done": "已答完",
+  "cmd.doneWithFailures": "已结束 · {names} 没答成",
+  "cmd.stopped": "已叫停",
+  "cmd.withdrawn": "已撤回",
+  "cmd.stop": "叫停",
+  "cmd.withdraw": "撤回",
+  "cmd.resend": "重发",
   "composer.carry": "资料（点一下这一轮带上）：",
   "composer.carry.some": "资料（这一轮带上 {n} 份）：",
   "composer.members": "成员：{names}",
@@ -539,6 +545,12 @@ export const en: Record<SquadKey, string> = {
     "Not read. Give a seat its rules as prompt blocks instead — chosen per seat, " +
     "visible on screen, and readable by the codex and dsh seats too. " +
     "The project's own CLAUDE.md is unaffected; Squad reads that file for it.",
+  "agent.subagents": "Allow spawning subagents",
+  "agent.subagents.on":
+    "This agent may split its work across subagents of its own. Their steps do not enter the discussion — " +
+    "only its final answer does — and their cost is counted as its own. Suited to hands-on agents that read " +
+    "many files or research in parallel; not to a secretary or an agent that divides the work.",
+  "agent.subagents.off": "Cannot spawn subagents — fenced off on Claude Code, Codex and dsh alike.",
   "agent.voice": "Voice",
   "agent.colour": "Colour",
 
@@ -552,15 +564,6 @@ export const en: Record<SquadKey, string> = {
   "composer.head.noSeats": " · no members yet",
   "composer.placeholder": "Say something to \u201c{name}\u201d; @ to address one person… (⌘↵ send, ↵ newline)",
   "composer.running": "running {seconds}s",
-  "composer.writeWhileRunning":
-    "This round is still running ({seconds}s) — write now; sending queues it, and it goes out when the round ends.",
-  "composer.queue": "Queue (sends when this round ends)",
-  "composer.queueSome": "Queue for {names}",
-  "composer.queued": "Queued — goes out when this round ends:",
-  "composer.queued.held": "Not sent — {reason}",
-  "composer.queued.send": "Send now",
-  "composer.queued.drop": "Discard",
-  "composer.queued.replaced": "Sending again replaces it.",
   "composer.askAll": "Ask everyone",
   "composer.askSome": "Ask {names}",
   "composer.materials.title": "Import a PDF, Word, Markdown or plain-text file as background material",
@@ -570,7 +573,16 @@ export const en: Record<SquadKey, string> = {
   "composer.context.title": "{used} / {limit} tokens accumulated",
   "composer.summarising": "The secretary is summarising…",
   "composer.summarise": "Summarise",
-  "composer.stop": "Stop",
+  "cmd.queued": "Queued · waiting for {names}",
+  "cmd.running": "{names} answering",
+  "cmd.runningAndQueued": "{running} answering · {queued} queued",
+  "cmd.done": "Answered",
+  "cmd.doneWithFailures": "Finished · {names} did not answer",
+  "cmd.stopped": "Stopped",
+  "cmd.withdrawn": "Withdrawn",
+  "cmd.stop": "Stop",
+  "cmd.withdraw": "Withdraw",
+  "cmd.resend": "Resend",
   "composer.carry": "Material (click to carry this round):",
   "composer.carry.some": "Material ({n} carried this round):",
   "composer.members": "Members: {names}",

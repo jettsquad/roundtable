@@ -77,6 +77,7 @@ interface Draft {
   secretaryCandidate: boolean;
   webAccess: boolean;
   hostCustomizations: boolean;
+  subagents: boolean;
   color: string;
   voiceId: string;
   /** "" means the host's own login. */
@@ -105,6 +106,7 @@ const blank = (): Draft => ({
   secretaryCandidate: false,
   webAccess: false,
   hostCustomizations: false,
+  subagents: false,
   color: COLORS[0] ?? "#2e7d6b",
   voiceId: "",
   connectionId: "",
@@ -133,6 +135,7 @@ function draftOf(template: AgentTemplate): Draft {
     secretaryCandidate: template.secretaryCandidate,
     webAccess: template.webAccess === true,
     hostCustomizations: template.hostCustomizations === true,
+    subagents: template.subagents === true,
     color: template.color,
     voiceId: template.voiceId ?? "",
     connectionId: template.connectionId ?? "",
@@ -203,6 +206,7 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
         secretaryCandidate: draft.secretaryCandidate,
         webAccess: draft.webAccess,
         hostCustomizations: draft.hostCustomizations,
+        subagents: draft.subagents,
         color: draft.color,
         // Trimmed, and an all-whitespace value counts as unset: the picker
         // uses a single space as its 「自己填一个」 sentinel, and saving that
@@ -540,6 +544,21 @@ export function AgentsPage({ agents, connections, onChanged }: AgentsPageProps):
               </div>
             </>
           )}
+
+          {/* Every backend: all three can spawn subagents when left alone,
+              and all three are fenced off unless this is ticked. Off by
+              default, because an agent that organises the table — a
+              secretary above all — fanning work out to helpers of its own is
+              the table being bypassed. */}
+          <label className={styles.check}>
+            <input
+              type="checkbox"
+              checked={draft.subagents}
+              onChange={(event) => set({ subagents: event.target.checked })}
+            />
+            {t("agent.subagents")}
+          </label>
+          <div className={styles.hint}>{draft.subagents ? t("agent.subagents.on") : t("agent.subagents.off")}</div>
         </div>
 
         {/* Its own section, not another item in the checkbox row.

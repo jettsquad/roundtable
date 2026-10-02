@@ -44,6 +44,7 @@ export interface SyncableSeat {
   readonly voiceId?: string | undefined;
   readonly webAccess?: boolean | undefined;
   readonly hostCustomizations?: boolean | undefined;
+  readonly subagents?: boolean | undefined;
   readonly reasoningEffort?: ReasoningEffort | undefined;
   readonly templateId?: string | undefined;
   readonly isSecretary?: boolean | undefined;
@@ -63,6 +64,7 @@ export interface TemplateFacts {
   readonly voiceId?: string | undefined;
   readonly webAccess?: boolean | undefined;
   readonly hostCustomizations?: boolean | undefined;
+  readonly subagents?: boolean | undefined;
   readonly reasoningEffort?: ReasoningEffort | undefined;
 }
 
@@ -93,6 +95,9 @@ export function syncSeat<T extends SyncableSeat>(seat: T, template: TemplateFact
     // Assigned, not added, for the same reason: unticking 「读取本机配置」 in
     // the library has to reach the seats that are already sitting.
     hostCustomizations: template.hostCustomizations === true,
+    // Assigned, not added: turning delegation OFF in the library has to
+    // reach the seats already sitting.
+    subagents: template.subagents === true,
     // Assigned, not added: going back to 「默认」 in the library has to reach
     // the seats too.
     reasoningEffort: template.reasoningEffort,
@@ -113,6 +118,9 @@ export function seatMatches(seat: SyncableSeat, template: TemplateFacts): boolea
     next.voiceId === seat.voiceId &&
     next.webAccess === seat.webAccess &&
     next.hostCustomizations === seat.hostCustomizations &&
+    // Compared as booleans: a seat saved before this field existed has none,
+    // and that is the same as off — not a difference worth a resync.
+    (next.subagents === true) === (seat.subagents === true) &&
     next.reasoningEffort === seat.reasoningEffort &&
     next.caps?.maxTurns === seat.caps?.maxTurns &&
     next.caps?.maxCostUsd === seat.caps?.maxCostUsd &&

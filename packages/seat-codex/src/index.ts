@@ -7,12 +7,15 @@
  * typed. Storable, renderable, ignored — for the third time in this project,
  * and this is the fix rather than another label saying so.
  *
- * NO TOOL FENCE, and that is a fact about Codex rather than an omission.
- * `claude-code-fenced` exists because Claude Code's stock provider lets a
- * seat spawn its own subagents; `codex exec` has no delegation tool to deny.
- * The capability is declared `toolFilter: false` so the seam REJECTS a
- * request that asks for one, instead of accepting it and quietly not
- * applying it.
+ * NO TOOL FILTER. `codex exec` takes no per-tool allow or deny list, so the
+ * capability is declared `toolFilter: false` and the seam REJECTS a request
+ * that asks for one, instead of accepting it and quietly not applying it.
+ *
+ * Delegation IS fenced, but not through a tool list. This used to say
+ * `codex exec` had no delegation tool to deny; that stopped being true when
+ * Codex's `multi_agent` feature went stable and on by default, and seats on
+ * this backend could spawn subagents with nothing stopping them. The fence
+ * is the feature flag, set on the command line — see `CodexArgvInput.subagents`.
  *
  * Persona is likewise not supported: `codex exec` takes one prompt and has no
  * system-prompt argument. Squad's seats already carry their standing
@@ -79,8 +82,11 @@ export class SquadSeatCodex extends Service {
   async [Service.init](): Promise<void> {
     // The host's own `codex login`, nothing injected — once closed, once open,
     // because the web axis has to exist for connectionless seats too.
+    // Crossed with delegation, which is argv too.
     for (const web of [false, true]) {
-      this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, undefined, web)));
+      for (const sub of [false, true]) {
+        this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, undefined, web, sub)));
+      }
     }
     this.syncConnections();
     this.ctx.effect(() => this.ctx.seatConnections.watch(() => this.syncConnections()));
@@ -108,10 +114,12 @@ export class SquadSeatCodex extends Service {
         // not are two registrations — not one provider reading a request field
         // the seam does not carry.
         for (const web of [false, true]) {
-          const key = providerName(BASE, connection.connectionId, mode, web);
-          wanted.add(key);
-          if (this.perConnection.has(key)) continue;
-          this.perConnection.set(key, this.ctx.subagents.registerProvider(this.provider(connection, mode, web)));
+          for (const sub of [false, true]) {
+            const key = providerName(BASE, connection.connectionId, mode, web, false, sub);
+            wanted.add(key);
+            if (this.perConnection.has(key)) continue;
+            this.perConnection.set(key, this.ctx.subagents.registerProvider(this.provider(connection, mode, web, sub)));
+          }
         }
       }
     }
@@ -124,7 +132,12 @@ export class SquadSeatCodex extends Service {
     }
   }
 
-  private provider(connection?: SeatConnection, permissionMode?: string, webAccess = false): SubagentProvider {
+  private provider(
+    connection?: SeatConnection,
+    permissionMode?: string,
+    webAccess = false,
+    subagents = false,
+  ): SubagentProvider {
     const config = this.config;
     const ctx = this.ctx;
     const limits = {
@@ -134,10 +147,10 @@ export class SquadSeatCodex extends Service {
     };
     return {
       name:
-        connection === undefined && permissionMode === undefined && !webAccess
+        connection === undefined && permissionMode === undefined && !webAccess && !subagents
           ? (config.provider ?? DEFAULTS.provider)
-          : providerName(BASE, connection?.connectionId, permissionMode, webAccess),
-      // Declared honestly. `codex exec` has no delegation tool to deny and no
+          : providerName(BASE, connection?.connectionId, permissionMode, webAccess, false, subagents),
+      // Declared honestly. `codex exec` has no per-tool filter and no
       // system-prompt argument, so the seam should REFUSE a request asking
       // for either rather than accept one and ignore it.
       capabilities: { ...NO_START_CAPABILITIES, toolFilter: false, persona: false, agentOptions: true },
@@ -176,6 +189,7 @@ export class SquadSeatCodex extends Service {
               // Opens the sandbox's way out. Closed by default, so a seat
               // without the checkbox keeps exactly the argv it had before.
               webAccess,
+              subagents,
             }),
           // Resolved per start, so a rotated key reaches this turn.
           env: {

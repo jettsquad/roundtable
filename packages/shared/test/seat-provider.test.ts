@@ -151,3 +151,37 @@ describe("宿主配置这个轴", () => {
     expect(providerName("x", "c1", "m", true, true)).toBe("x/c1#m+web+hostmd");
   });
 });
+
+describe("派生子 agent 这一轴", () => {
+  it("三个后端都用它选 provider", () => {
+    // 三个后端都能派生子 agent，围栏都是启动子进程时定死的，所以只能靠名字选。
+    expect(providerForSeat({ backend: "claude-code", subagents: true })).toBe(`${SEAT_PROVIDER}+sub`);
+    expect(providerForSeat({ backend: "codex", subagents: true })).toBe("codex+sub");
+    expect(providerForSeat({ backend: "dsh", subagents: true })).toBe("dsh-sdk+sub");
+  });
+
+  it("关着的时候名字一个字都不变", () => {
+    // 存量席位存下来的 provider 字符串必须还能对上。
+    for (const backend of ["claude-code", "codex", "dsh"]) {
+      for (const subagents of [undefined, false]) {
+        expect(providerForSeat({ backend, connectionId: "c", subagents })).toBe(
+          providerForSeat({ backend, connectionId: "c" }),
+        );
+      }
+    }
+  });
+
+  it("排在最后，跟其它轴叠在一起只有一种拼法", () => {
+    expect(providerName("codex", "c1", "workspace", true, false, true)).toBe("codex/c1#workspace+web+sub");
+    expect(providerNameFor("c1", "plan", true, true)).toBe(`${SEAT_PROVIDER}/c1#plan+hostmd+sub`);
+    expect(
+      providerForSeat({
+        backend: "codex",
+        connectionId: "c1",
+        permissionMode: "workspace",
+        webAccess: true,
+        subagents: true,
+      }),
+    ).toBe(providerName("codex", "c1", "workspace", true, false, true));
+  });
+});

@@ -40,7 +40,7 @@ import {
   providerNameFor,
   reasoningEffortsFor,
 } from "@squad/shared";
-import { DELEGATION_TOOLS, buildArgv, type PermissionMode } from "./argv.ts";
+import { DELEGATION_TOOLS, buildArgv, seatDenials, type PermissionMode } from "./argv.ts";
 import { claudeConfigDirFor } from "./config-dir.ts";
 import { readStream } from "./stream.ts";
 
@@ -111,9 +111,14 @@ export class FencedClaudeCodeSeats extends Service {
     // when the child is spawned: `--safe-mode` is argv, and argv attaches
     // here. The cross product stays bounded — the mode list is closed and the
     // new axis has two values.
+    //
+    // And with delegation, for the same reason: whether `Task`/`Agent` are
+    // denied is argv too.
     for (const mode of [undefined, ...CLAUDE_PERMISSION_MODES] as const) {
       for (const hostMd of [false, true] as const) {
-        this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, mode, hostMd)));
+        for (const sub of [false, true] as const) {
+          this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, mode, hostMd, sub)));
+        }
       }
     }
     this.syncConnections();
@@ -149,13 +154,15 @@ export class FencedClaudeCodeSeats extends Service {
       if (connection.backend !== "claude-code") continue;
       for (const mode of combinations) {
         for (const hostMd of [false, true] as const) {
-          const key = providerNameFor(connection.connectionId, mode, hostMd);
-          wanted.add(key);
-          if (this.perConnection.has(key)) continue;
-          this.perConnection.set(
-            key,
-            this.ctx.subagents.registerProvider(this.provider(connection.connectionId, mode, hostMd)),
-          );
+          for (const sub of [false, true] as const) {
+            const key = providerNameFor(connection.connectionId, mode, hostMd, sub);
+            wanted.add(key);
+            if (this.perConnection.has(key)) continue;
+            this.perConnection.set(
+              key,
+              this.ctx.subagents.registerProvider(this.provider(connection.connectionId, mode, hostMd, sub)),
+            );
+          }
         }
       }
     }
@@ -169,14 +176,19 @@ export class FencedClaudeCodeSeats extends Service {
     }
   }
 
-  private provider(connectionId?: string, permissionMode?: string, hostCustomizations?: boolean): SubagentProvider {
+  private provider(
+    connectionId?: string,
+    permissionMode?: string,
+    hostCustomizations?: boolean,
+    subagents?: boolean,
+  ): SubagentProvider {
     const config = this.config;
     const ctx = this.ctx;
     return {
       name:
-        connectionId === undefined && permissionMode === undefined && hostCustomizations !== true
+        connectionId === undefined && permissionMode === undefined && hostCustomizations !== true && subagents !== true
           ? (config.provider ?? DEFAULTS.provider)
-          : providerNameFor(connectionId, permissionMode, hostCustomizations),
+          : providerNameFor(connectionId, permissionMode, hostCustomizations, subagents),
       // Declared honestly: this provider really does apply a tool filter and
       // really does append a persona. The service checks these before
       // dispatching, so declaring one we did not implement would turn a
@@ -232,7 +244,9 @@ export class FencedClaudeCodeSeats extends Service {
                 (permissionMode as typeof DEFAULTS.permissionMode | undefined) ??
                 config.permissionMode ??
                 DEFAULTS.permissionMode,
-              alwaysDeny: config.alwaysDeny ?? DEFAULTS.alwaysDeny,
+              // Delegation comes off the floor only for an agent created
+              // allowing it. See `seatDenials`.
+              alwaysDeny: seatDenials(config.alwaysDeny ?? DEFAULTS.alwaysDeny, subagents === true),
               // Off unless this registration is the opt-in one. See
               // `ArgvInput.hostCustomizations`: leaving it on costs ~66k of
               // cache CREATION per cold start, measured, for a framework
@@ -262,7 +276,7 @@ export class FencedClaudeCodeSeats extends Service {
   }
 }
 
-export { DELEGATION_TOOLS, buildArgv } from "./argv.ts";
+export { DELEGATION_TOOLS, buildArgv, seatDenials } from "./argv.ts";
 export { claudeConfigDirFor } from "./config-dir.ts";
 export type { ArgvInput, PermissionMode, ToolFence } from "./argv.ts";
 export { readStream } from "./stream.ts";

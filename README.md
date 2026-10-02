@@ -37,11 +37,13 @@ dsh web
 
 ## 席位后端
 
-| 后端          | 跑的是                    | 工具围栏                         |
-| ------------- | ------------------------- | -------------------------------- |
-| `claude-code` | 你本机的 Claude Code 登录 | 有（默认禁掉 Task/Agent）        |
-| `codex`       | `codex exec`              | 无——codex 本来就没有可委派的工具 |
-| `dsh`         | `dsh --profile headless`  | 无                               |
+| 后端          | 跑的是                    | 派生子 agent 的围栏                       |
+| ------------- | ------------------------- | ----------------------------------------- |
+| `claude-code` | 你本机的 Claude Code 登录 | 默认禁掉 Task/Agent                       |
+| `codex`       | `codex exec`              | 默认 `-c features.multi_agent=false`      |
+| `dsh`         | `dsh --profile headless`  | 默认在 patch 里关掉 subagent 等六个插件   |
+
+三种后端默认都不能派生子 agent；创建 agent 时勾「允许派生子 agent」才放开。
 
 席位是新起的**子进程**，用你本机已有的登录态，Squad 不碰也不改它们。跑 dsh 席位时
 它会往 stderr 发心跳，好让看门狗知道「在想」和「死了」的区别。
