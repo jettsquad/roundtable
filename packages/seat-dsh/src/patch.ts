@@ -38,6 +38,35 @@ export function heartbeatRows(modulePath: string): readonly string[] {
   return ["- insert:", "    - id: squad-seat-heartbeat", `      name: ${JSON.stringify(modulePath)}`];
 }
 
+/**
+ * The profile plugins that let a seat spawn subagents of its own.
+ *
+ * The headless profile mounts all of them by default: `subagent` and
+ * `subagent_fork` directly, `ralph` and `workflow` by running subagents as
+ * their workers, and the control tools that manage them. Read off
+ * `dsh --profile headless --dump-config` (dsh 0.1.2-alpha.5), where a patch
+ * row marking each `disabled: true` was checked to land on all six.
+ */
+export const DELEGATION_PLUGINS: readonly string[] = [
+  "tool-subagent",
+  "tool-subagent-fork",
+  "tool-subagent-control",
+  "tool-subagent-list-agents",
+  "tool-ralph",
+  "tool-workflow",
+];
+
+/**
+ * Patch rows turning those plugins off, for a seat not created allowing it.
+ *
+ * Disabled rather than left to the prompt: a fence a model is asked to
+ * respect is a request, and 1.x showed what a seat does with a request when
+ * it does not know the roster.
+ */
+export function delegationOffRows(): readonly string[] {
+  return DELEGATION_PLUGINS.flatMap((id) => [`- id: ${id}`, "  disabled: true"]);
+}
+
 /** The provider id a non-DeepSeek model is routed through. */
 export const COMPAT_ROUTE = "squad-compat";
 /** The variable the compat provider reads its key from. */

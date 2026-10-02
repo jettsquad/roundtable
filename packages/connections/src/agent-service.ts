@@ -44,6 +44,7 @@ function templateOf(record: AgentTemplateRecord): AgentTemplate {
     color: record.color,
     voiceId: record.voiceId,
     webAccess: record.webAccess,
+    subagents: record.subagents,
     enabled: record.enabled,
   };
 }

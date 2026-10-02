@@ -75,10 +75,6 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
   // the box vanished entirely rather than merely missing a button.
   const filePicker = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
-  // Which documents ride along with THIS message. Empty by default: importing
-  // a file so one seat can summarise it must not cost that file on every
-  // later turn of every seat.
-  const [elapsed, setElapsed] = useState(0);
   // A wrapper, not the input itself: dsh's `Input` does not forward a ref, and
   // reaching for the element through the row we own is honest about that —
   // the alternative would be dropping the shared primitive for a bare
@@ -126,14 +122,6 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
     const timer = setInterval(() => setTick((value) => value + 1), 1000);
     return () => clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (!running) return;
-    setElapsed(0);
-    const started = Date.now();
-    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
-    return () => clearInterval(timer);
-  }, [running]);
 
   if (current === undefined) {
     return (
@@ -373,16 +361,11 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           disabled={mentions.instruction.trim() === "" || current.seats.length === 0 || allBlocked || misnamed}
           onClick={() => void send()}
         >
-          {/* While a round runs the same button QUEUES, and says so. It used
-              to be disabled, which meant the next question had to be
-              remembered instead of written. */}
-          {running || current.busy
-            ? named.length === 0
-              ? t("composer.queue")
-              : t("composer.queueSome", { names: named.map((seat) => seat.displayName).join("、") })
-            : named.length === 0
-              ? t("composer.askAll")
-              : t("composer.askSome", { names: named.map((seat) => seat.displayName).join("、") })}
+          {/* The same label busy or not: a command to a busy seat waits for
+              that seat, and says so under its own line in the discussion. */}
+          {named.length === 0
+            ? t("composer.askAll")
+            : t("composer.askSome", { names: named.map((seat) => seat.displayName).join("、") })}
         </Button>
         {/* Next to the send button, because importing a document is part of
             saying what you want the team to work on. It sat at the top of the
@@ -441,21 +424,6 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
         >
           {current.context.folding ? t("composer.summarising") : t("composer.summarise")}
         </button>
-        {!current.busy ? null : (
-          <Button
-            type="button"
-            onClick={() =>
-              // The refusal is shown. It used to be dropped on the floor,
-              // which is what made the button look dead.
-              void api
-                .stop({ teamId: current.teamId })
-                .then(onSent)
-                .catch((failure: Error) => setError(String(failure.message)))
-            }
-          >
-            {t("composer.stop")}
-          </Button>
-        )}
       </div>
 
       {/* The documents this message carries, chosen before it is sent.
@@ -636,60 +604,6 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
         </div>
       )}
       {worry === undefined ? null : <div className={styles.hint}>{worry}</div>}
-      {/* Why the send button is refusing, said where a person looks after
-          pressing ⌘↵ and getting nothing. The button's own label reads
-          「进行中 62s」, which explains it only if you were looking at the
-          button — and you were looking at the box you just typed into. */}
-      {!running || current.queued !== undefined ? null : (
-        <div className={styles.hint}>{t("composer.writeWhileRunning", { seconds: elapsed })}</div>
-      )}
-      {/* What is waiting, always visible. A message that was accepted and is
-          not on screen is indistinguishable from one that was dropped. */}
-      {current.queued === undefined ? null : (
-        <div className={`${styles.queuedCard} ${current.queued.held === undefined ? "" : styles.queuedHeld}`}>
-          <div className={styles.hint}>
-            {current.queued.held === undefined
-              ? t("composer.queued")
-              : t("composer.queued.held", { reason: current.queued.held })}
-          </div>
-          <div className={styles.queuedText}>{current.queued.instruction}</div>
-          <div className={styles.row}>
-            {current.queued.held === undefined ? (
-              <span className={styles.hint}>{t("composer.queued.replaced")}</span>
-            ) : (
-              <button
-                type="button"
-                className={styles.button}
-                onClick={() => {
-                  const held = current.queued;
-                  if (held === undefined) return;
-                  void api
-                    .unqueue({ teamId: current.teamId })
-                    .then(() =>
-                      api.say({
-                        teamId: current.teamId,
-                        instruction: held.instruction,
-                        ...(held.seatIds === undefined ? {} : { seatIds: held.seatIds }),
-                        ...(held.quoteIds.length === 0 ? {} : { quoteIds: held.quoteIds }),
-                        ...(held.materialIds.length === 0 ? {} : { materialIds: held.materialIds }),
-                      }),
-                    )
-                    .then(onSent);
-                }}
-              >
-                {t("composer.queued.send")}
-              </button>
-            )}
-            <button
-              type="button"
-              className={styles.drop}
-              onClick={() => void api.unqueue({ teamId: current.teamId }).then(onSent)}
-            >
-              {t("composer.queued.drop")}
-            </button>
-          </div>
-        </div>
-      )}
       {blocked.length === 0 ? null : (
         <div className={styles.error}>
           {allBlocked ? t("composer.allBlocked") : t("composer.someBlocked")}

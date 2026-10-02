@@ -5,7 +5,7 @@
  * 了——而不是像一个没拿到材料的人。所以边界都要钉死。
  */
 import { describe, expect, it } from "vitest";
-import { tailForSeat, type SelectableEvent } from "../src/window.ts";
+import { tailForSeat, tailSince, type SelectableEvent } from "../src/window.ts";
 
 const said = (speaker: string, text: string, turnId: string): SelectableEvent => ({
   kind: "user/message",
@@ -68,5 +68,33 @@ describe("tailForSeat", () => {
       said("主持人", "问题", "t1"),
     ];
     expect(tailForSeat(events, "樱木")).toHaveLength(2);
+  });
+});
+
+describe("tailSince", () => {
+  it("别的席位在它答题期间说的话，下一轮不会漏掉", () => {
+    // 并行之后，流川可以在樱木还在答的时候答完。流川那句落在樱木的答复之前，
+    // 按「上次发言之后」截就永远送不到樱木手上。
+    const events = [
+      said("主持人", "问樱木", "t1"),
+      said("主持人", "问流川", "t2"),
+      // 樱木开工时窗口取到 t2 为止。
+      said("流川", "流川的答复", "t3"),
+      said("樱木", "樱木的答复", "t4"),
+      said("主持人", "再问樱木", "t5"),
+    ];
+    expect(tailForSeat(events, "樱木").map((e) => e.turnId)).toEqual(["t5"]);
+    expect(tailSince(events, "t2", "樱木").map((e) => e.turnId)).toEqual(["t3", "t5"]);
+  });
+
+  it("它自己说过的话不再发一遍", () => {
+    // 那些在它自己的 CLI 对话里已经有了。
+    const events = [said("主持人", "问", "t1"), said("樱木", "答", "t2"), said("主持人", "再问", "t3")];
+    expect(tailSince(events, "t1", "樱木").map((e) => e.turnId)).toEqual(["t3"]);
+  });
+
+  it("找不到上次看到的位置（重启过、或被检查点截掉），退回按发言截", () => {
+    const events = [said("主持人", "问", "t1"), said("樱木", "答", "t2"), said("主持人", "再问", "t3")];
+    expect(tailSince(events, "gone", "樱木")).toEqual(tailForSeat(events, "樱木"));
   });
 });

@@ -204,6 +204,81 @@ function MarkButton({ team, turnId }: { readonly team: TeamSummary; readonly tur
   );
 }
 
+/**
+ * Where one command stands, and the one thing you can do about it.
+ *
+ * Under the command's own line, because a stop names the command it stops:
+ * with several commands running at once, a single 「叫停」 by the input box
+ * could not say which one it meant. A stop is always about the command — by
+ * the time a reply is on screen it has finished, so there is nothing left of
+ * it to stop.
+ */
+function CommandStatus({
+  team,
+  command,
+  onChanged,
+}: {
+  readonly team: TeamSummary;
+  readonly command: TeamSummary["commands"][number];
+  readonly onChanged: () => void;
+}): JSX.Element {
+  const t = useT();
+  const [error, setError] = useState<string>();
+  const names = (state: string): string =>
+    command.seats
+      .filter((seat) => seat.state === state)
+      .map((seat) => seat.displayName)
+      .join("、");
+  const running = names("running");
+  const queued = names("queued");
+  const failed = names("failed");
+  const label =
+    command.state === "interrupted"
+      ? (command.note ?? "")
+      : command.state === "stopped"
+        ? command.withdrawn === true
+          ? t("cmd.withdrawn")
+          : t("cmd.stopped")
+        : command.state === "done"
+          ? failed === ""
+            ? t("cmd.done")
+            : t("cmd.doneWithFailures", { names: failed })
+          : running === ""
+            ? t("cmd.queued", { names: queued })
+            : queued === ""
+              ? t("cmd.running", { names: running })
+              : t("cmd.runningAndQueued", { running, queued });
+  const act = (work: Promise<unknown>): void => {
+    setError(undefined);
+    void work.then(onChanged).catch((failure: Error) => setError(String(failure.message)));
+  };
+  return (
+    <div className={`${styles.commandStatus} ${command.state === "interrupted" ? styles.commandInterrupted : ""}`}>
+      <span>{label}</span>
+      {command.state === "queued" || command.state === "running" ? (
+        <button
+          type="button"
+          className={styles.commandButton}
+          onClick={() => act(api.cancelCommand({ teamId: team.teamId, commandId: command.commandId }))}
+        >
+          {/* Withdraw while nothing has started; stop once something has. */}
+          {command.state === "queued" ? t("cmd.withdraw") : t("cmd.stop")}
+        </button>
+      ) : null}
+      {command.state === "interrupted" ? (
+        <button
+          type="button"
+          className={styles.commandButton}
+          onClick={() => act(api.resendCommand({ teamId: team.teamId, commandId: command.commandId }))}
+        >
+          {t("cmd.resend")}
+        </button>
+      ) : null}
+      {error === undefined ? null : <span className={styles.error}>{error}</span>}
+    </div>
+  );
+}
+
 function CopyButton({ text }: { readonly text: string }): JSX.Element {
   const t = useT();
   const [state, setState] = useState<"idle" | "done" | "failed">("idle");
@@ -400,6 +475,12 @@ export function Discussion({
                 />
               ))}
             </div>
+            {(() => {
+              const command = team.commands.find((one) => one.commandId === line.turnId);
+              return command === undefined ? null : (
+                <CommandStatus team={team} command={command} onChanged={onChanged ?? (() => undefined)} />
+              );
+            })()}
             {/* Under the message, not above it. A seat's answer runs to
                 hundreds of lines; buttons at the top mean scrolling back to
                 the beginning to act on what you just finished reading. Where

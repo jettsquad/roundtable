@@ -961,32 +961,39 @@
   margin-top: 8px;
 }
 
-/* The message waiting for the running round.
-   Deliberately quieter than `.draftCard`: a draft agenda is asking you for a
-   decision, and a queued line is only telling you it is there. */
-.queuedCard {
-  margin-top: 8px;
-  padding: 8px 11px;
-  border-radius: 9px;
+/* Where a command stands, under its own line. Always visible — unlike the
+   hover-only actions beside it — because 「还在跑吗」 is asked by looking, and
+   the stop button has to be there before you think to hover. */
+.commandStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.messageMine .commandStatus {
+  justify-content: flex-end;
+}
+
+/* Interrupted by a restart: a decision is owed. Amber rather than red —
+   nothing broke. */
+.commandInterrupted {
+  color: #e0a040;
+  opacity: 1;
+}
+
+.commandButton {
+  all: unset;
+  cursor: pointer;
+  padding: 1px 8px;
+  border-radius: 999px;
   border: 1px solid var(--dsh-color-border, #34343a);
-  background: #ffffff08;
 }
 
-/* Held, because the round it was waiting behind did not finish. Amber rather
-   than red: nothing broke, a decision is simply owed. */
-.queuedHeld {
-  border-color: #a83;
-  background: #f2a93b12;
-}
-
-/* The queued text itself. Wraps and scrolls rather than stretching the
-   composer off the screen — a long question is exactly the kind you queue. */
-.queuedText {
-  margin: 4px 0;
-  max-height: 120px;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.commandButton:hover {
+  background: #ffffff10;
 }
 
 /* An unchecked phase stays readable — it is still part of what the secretary

@@ -4,7 +4,7 @@
  * about delegation must still not be able to open that door.
  */
 import { describe, expect, it } from "vitest";
-import { DELEGATION_TOOLS, buildArgv } from "../src/argv.ts";
+import { DELEGATION_TOOLS, buildArgv, seatDenials } from "../src/argv.ts";
 
 const flagValues = (argv: readonly string[], flag: string): string[] => {
   const at = argv.indexOf(flag);
@@ -140,5 +140,18 @@ describe("宿主配置", () => {
     expect(argv).toContain("--strict-mcp-config");
     expect(argv).toContain("--disable-slash-commands");
     expect(argv[argv.indexOf("--mcp-config") + 1]).toBe("{}");
+  });
+});
+
+describe("seatDenials", () => {
+  it("没允许派生子 agent，委派工具留在底线上", () => {
+    expect(seatDenials(DELEGATION_TOOLS, false)).toEqual([...DELEGATION_TOOLS]);
+  });
+
+  it("创建时允许了，只拿掉委派工具，部署另外禁的照样禁", () => {
+    expect(seatDenials([...DELEGATION_TOOLS, "Bash"], true)).toEqual(["Bash"]);
+    expect(
+      flagValues(buildArgv({ prompt: "x", alwaysDeny: seatDenials(DELEGATION_TOOLS, true) }), "--disallowed-tools"),
+    ).toEqual([]);
   });
 });

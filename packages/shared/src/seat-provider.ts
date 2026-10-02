@@ -34,10 +34,15 @@ export const STOCK_SEAT_PROVIDER = "claude-code";
  * ignored — a setting the person believes is in force, which is worse than
  * not offering it.
  */
-export function providerNameFor(connectionId?: string, permissionMode?: string, hostCustomizations?: boolean): string {
+export function providerNameFor(
+  connectionId?: string,
+  permissionMode?: string,
+  hostCustomizations?: boolean,
+  subagents?: boolean,
+): string {
   // `webAccess` is skipped deliberately: the Claude Code backend decides the
   // web per request through `toolFilter`, so it never registers on that axis.
-  return providerName(SEAT_PROVIDER, connectionId, permissionMode, false, hostCustomizations);
+  return providerName(SEAT_PROVIDER, connectionId, permissionMode, false, hostCustomizations, subagents);
 }
 
 /**
@@ -54,6 +59,7 @@ export function providerName(
   permissionMode?: string,
   webAccess?: boolean,
   hostCustomizations?: boolean,
+  subagents?: boolean,
 ): string {
   const withConnection = connectionId === undefined || connectionId === "" ? base : `${base}/${connectionId}`;
   const withMode =
@@ -73,7 +79,13 @@ export function providerName(
   // co-occur today — web rides only on codex, this only on claude-code — but
   // a name that depends on argument order is a name two callers can spell
   // differently, and the failure is an unregistered provider nobody typed.
-  return hostCustomizations === true ? `${withWeb}+hostmd` : withWeb;
+  const withHostMd = hostCustomizations === true ? `${withWeb}+hostmd` : withWeb;
+  // A sixth, on the same terms: whether the seat may spawn its own subagents
+  // is a delegation tool left in or taken out of the child's argv (Claude
+  // Code), a feature flag on it (Codex) or plugins in its profile patch (dsh)
+  // — all fixed at spawn. Last, so a name has one spelling, and only when on,
+  // so every existing registration keeps its name.
+  return subagents === true ? `${withHostMd}+sub` : withHostMd;
 }
 
 /** The provider names the non-claude backends ask for. */
@@ -101,6 +113,7 @@ export function providerForSeat(seat: {
   readonly permissionMode?: string | undefined;
   readonly webAccess?: boolean | undefined;
   readonly hostCustomizations?: boolean | undefined;
+  readonly subagents?: boolean | undefined;
 }): string {
   const base = PROVIDER_BY_BACKEND[seat.backend] ?? seat.backend;
   // dsh's headless profile has no sandbox or approval flags, so a mode in
@@ -118,5 +131,7 @@ export function providerForSeat(seat: {
   // turn off; asking codex or dsh for `+hostmd` would split their registry
   // for a distinction their child process never reads.
   const hostMd = seat.backend === "claude-code" ? seat.hostCustomizations === true : false;
-  return providerName(base, seat.connectionId, mode, web, hostMd);
+  // Every backend selects on this one: all three can spawn subagents, and all
+  // three are fenced off from it unless the agent was created allowing it.
+  return providerName(base, seat.connectionId, mode, web, hostMd, seat.subagents === true);
 }

@@ -321,6 +321,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           ...(seat.voiceId === undefined ? {} : { voiceId: seat.voiceId }),
           ...(seat.webAccess === undefined ? {} : { webAccess: seat.webAccess }),
           ...(seat.hostCustomizations === undefined ? {} : { hostCustomizations: seat.hostCustomizations }),
+          ...(seat.subagents === undefined ? {} : { subagents: seat.subagents }),
           ...(seat.reasoningEffort === undefined ? {} : { reasoningEffort: seat.reasoningEffort }),
           ...(blockedReason(ctx, seat) === undefined ? {} : { blocked: blockedReason(ctx, seat) }),
         };
@@ -424,7 +425,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
           : { imagePath: imagePathOfMaterial(material.text) as string }),
       })),
       selection: { quoteIds: team.selection.quoteIds, materialIds: team.selection.materialIds },
-      ...(team.queued === undefined ? {} : { queued: team.queued }),
+      commands: team.commands,
       sessionId: team.sessionId,
       ...(team.baseTeamId === undefined ? {} : { baseTeamId: team.baseTeamId }),
     });
@@ -798,6 +799,7 @@ export async function createTeamWithMembers(
       ...(template.caps === undefined ? {} : { caps: template.caps }),
       ...(template.webAccess === undefined ? {} : { webAccess: template.webAccess }),
       ...(template.hostCustomizations === undefined ? {} : { hostCustomizations: template.hostCustomizations }),
+      ...(template.subagents === undefined ? {} : { subagents: template.subagents }),
       ...(template.reasoningEffort === undefined ? {} : { reasoningEffort: template.reasoningEffort }),
     };
   });
@@ -876,6 +878,7 @@ export function addSeatFrom(ctx: Context, request: SeatRequest): void {
       ...(template.caps === undefined ? {} : { caps: template.caps }),
       ...(template.webAccess === undefined ? {} : { webAccess: template.webAccess }),
       ...(template.hostCustomizations === undefined ? {} : { hostCustomizations: template.hostCustomizations }),
+      ...(template.subagents === undefined ? {} : { subagents: template.subagents }),
       ...(template.reasoningEffort === undefined ? {} : { reasoningEffort: template.reasoningEffort }),
     });
     return;
@@ -934,6 +937,7 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     ...(request.caps === undefined ? {} : { caps: request.caps }),
     ...(request.webAccess === undefined ? {} : { webAccess: request.webAccess }),
     ...(request.hostCustomizations === undefined ? {} : { hostCustomizations: request.hostCustomizations }),
+    ...(request.subagents === undefined ? {} : { subagents: request.subagents }),
   });
 
   // And into every team already sitting this agent. Without this the library
@@ -952,6 +956,7 @@ export async function saveAgentFrom(ctx: Context, request: AgentRequest): Promis
     ...(request.voiceId === undefined ? {} : { voiceId: request.voiceId }),
     webAccess: request.webAccess,
     hostCustomizations: request.hostCustomizations,
+    subagents: request.subagents,
     reasoningEffort: request.reasoningEffort,
   });
 }
@@ -969,6 +974,7 @@ function templateFactsOf(template: {
   color?: string | undefined;
   webAccess?: boolean | undefined;
   hostCustomizations?: boolean | undefined;
+  subagents?: boolean | undefined;
   reasoningEffort?: TemplateFacts["reasoningEffort"];
 }): TemplateFacts {
   return {
@@ -983,6 +989,7 @@ function templateFactsOf(template: {
     color: template.color,
     webAccess: template.webAccess,
     hostCustomizations: template.hostCustomizations,
+    subagents: template.subagents,
     reasoningEffort: template.reasoningEffort,
   };
 }
@@ -1802,32 +1809,35 @@ export function registerSquadApi(ctx: Context): () => void {
           // panel could have sent the text, and then a quote would be
           // whatever the browser last saw rather than what the team actually
           // said — a difference nobody could spot afterwards.
-          // Busy? Hold it instead of refusing it. The old behaviour threw
-          // 「上一轮还没结束」 and the box stayed locked for the length of the
-          // round, so the next question had to be remembered rather than
-          // written. The table sends it the moment the round ends.
-          if (team.busy) {
-            team.queue(body.instruction.trim(), body.seatIds);
-            res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-            res.end(JSON.stringify({ queued: true }));
-            return;
-          }
-          const quotes = quotesFrom(team.transcript(), body.quoteIds ?? []);
-          // Cleared BEFORE the round, not after it. The round takes minutes,
-          // and a selection still showing as ticked throughout is a selection
-          // a person will reasonably re-use — while it has in fact already
-          // gone out with this message.
+          const quoteIds = body.quoteIds ?? [];
+          const quotes = quotesFrom(team.transcript(), quoteIds);
+          // Answered at once, busy or not. The command is in the record and
+          // each named seat takes it up when it is free; the answers land in
+          // the discussion, and holding this request open for them is what
+          // used to keep the box locked for the length of a round.
+          const sent = team.submit(body.instruction.trim(), body.seatIds, quotes, body.materialIds, quoteIds);
+          // Cleared once the message has gone in, not before: a refusal above
+          // leaves the selection where the person put it.
           team.clearSelection();
-          const replies = await team.ask(body.instruction.trim(), body.seatIds, quotes, body.materialIds);
+          void sent.done.catch((error: Error) => ctx.logger.warn(`命令没跑成：${error.message}`));
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-          res.end(JSON.stringify({ replies: replies.map((reply) => ({ ...reply })) }));
+          res.end(JSON.stringify({ commandId: sent.commandId }));
           return;
         }
-        if (suffix === "/queued" && req.method === "DELETE") {
-          const body = await readJson<{ teamId: string }>(req);
-          teamOf(ctx, body.teamId).unqueue();
+        if (suffix === "/command/cancel" && req.method === "POST") {
+          // Stop one command, or withdraw it before any seat started — the
+          // same act, named by what it did.
+          const body = await readJson<{ teamId: string; commandId: string }>(req);
+          teamOf(ctx, body.teamId).cancel(body.commandId);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/command/resend" && req.method === "POST") {
+          const body = await readJson<{ teamId: string; commandId: string }>(req);
+          const sent = teamOf(ctx, body.teamId).resend(body.commandId);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(sent));
           return;
         }
         if (suffix === "/selection" && req.method === "POST") {
