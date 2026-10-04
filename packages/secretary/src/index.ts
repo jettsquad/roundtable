@@ -51,6 +51,7 @@ export {
   CHECKPOINT_HEADINGS,
   CHECKPOINT_HEADING_LIST,
   buildCheckpointPrompt,
+  normalizeCheckpoint,
   validateCheckpoint,
 } from "./checkpoint.ts";
 export type { CheckpointPromptInput, CheckpointSourceTurn, CheckpointValidation } from "./checkpoint.ts";
