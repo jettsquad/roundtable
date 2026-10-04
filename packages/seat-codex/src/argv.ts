@@ -65,6 +65,14 @@ export interface CodexArgvInput {
    */
   readonly webAccess?: boolean | undefined;
   /**
+   * Whether this seat may spawn subagents of its own.
+   *
+   * Codex can: its `multi_agent` feature is stable and on by default, so a
+   * seat with nothing said here could fan its work out to helpers nobody at
+   * the table sees. Off unless the agent was created allowing it.
+   */
+  readonly subagents?: boolean | undefined;
+  /**
    * Continue this thread instead of starting one.
    *
    * A SUBCOMMAND here, not a flag: `codex exec resume <id> <prompt>`. That is
@@ -166,6 +174,12 @@ export function buildCodexArgv(input: CodexArgvInput): readonly string[] {
     argv.push("-c", "sandbox_workspace_write.network_access=true");
   }
   argv.push("-c", `tools.web_search=${web}`);
+  // Delegation, likewise written on every run and both ways round, so a host
+  // config cannot decide it for the seat. Off also turns off the second
+  // implementation, in case a host has switched that one on.
+  const sub = input.subagents === true;
+  argv.push("-c", `features.multi_agent=${sub}`);
+  if (!sub) argv.push("-c", "features.multi_agent_v2=false");
   if (input.endpoint !== undefined && input.endpoint.trim() !== "") argv.push(...providerArgs(input.endpoint.trim()));
   if (input.reasoningEffort !== undefined) argv.push("-c", `model_reasoning_effort="${input.reasoningEffort}"`);
   if (input.model !== undefined && input.model.trim() !== "") argv.push("--model", input.model.trim());

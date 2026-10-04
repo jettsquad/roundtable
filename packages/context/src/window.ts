@@ -146,6 +146,32 @@ export const tailForSeat = (events: readonly SelectableEvent[], displayName: str
 };
 
 /**
+ * The tail for a continuing seat, cut where it last LOOKED rather than where
+ * it last spoke.
+ *
+ * Seats run in parallel now, so another seat can answer while this one is
+ * still working. That answer lands before this seat's own reply, and
+ * `tailForSeat` — which cuts at the last reply — would hand it over never.
+ * Cutting at the last entry the seat's previous window was taken against
+ * keeps it, and the seat's own lines after that point are dropped because
+ * its conversation already holds them.
+ *
+ * Falls back to `tailForSeat` when the entry is no longer in the window (a
+ * checkpoint moved past it) or was never known (the table restarted).
+ */
+export const tailSince = (
+  events: readonly SelectableEvent[],
+  seenUpTo: string,
+  displayName: string,
+): readonly SelectableEvent[] => {
+  const at = events.findIndex((event) => event.turnId === seenUpTo);
+  if (at < 0) return tailForSeat(events, displayName);
+  return events
+    .slice(at + 1)
+    .filter((event) => !(typeof event.text === "string" && event.text.startsWith(`【${displayName}】`)));
+};
+
+/**
  * Assemble what this turn sees: the previous round, plus any quoted replies
  * the host chose, in transcript order, each appearing once.
  *

@@ -104,6 +104,16 @@ export interface ArgvInput {
 export const DELEGATION_TOOLS: readonly string[] = ["Task", "Agent"];
 
 /**
+ * The floor of denied tools for one seat.
+ *
+ * The delegation tools come off it only for an agent created allowing
+ * subagents; anything else the deployment denies stays denied regardless.
+ */
+export function seatDenials(alwaysDeny: readonly string[], subagents: boolean): readonly string[] {
+  return subagents ? alwaysDeny.filter((tool) => !DELEGATION_TOOLS.includes(tool)) : alwaysDeny;
+}
+
+/**
  * Build the argv for one seat turn.
  *
  * `allow` and `deny` both travel when both are given. `--allowed-tools` is

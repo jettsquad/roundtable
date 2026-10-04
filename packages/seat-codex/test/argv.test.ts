@@ -205,3 +205,28 @@ describe("续接已有 thread", () => {
     expect(argv[argv.length - 1]).toBe(base.prompt);
   });
 });
+
+describe("派生子 agent", () => {
+  // codex 的 multi_agent 是 stable、默认开着的。不写这个参数，席位就能自己
+  // 派一队子 agent 去干活，桌上谁都看不见。
+  const pair = (argv: readonly string[], value: string): boolean =>
+    argv.some((arg, index) => arg === "-c" && argv[index + 1] === value);
+
+  it("默认关掉，新开和续接两条命令行都关", () => {
+    for (const argv of [buildCodexArgv(base), buildCodexArgv({ ...base, resumeSessionId: "t1" })]) {
+      expect(pair(argv, "features.multi_agent=false")).toBe(true);
+      expect(pair(argv, "features.multi_agent_v2=false")).toBe(true);
+    }
+  });
+
+  it("创建时允许了才打开，而且明确写成 true，不交给本机配置决定", () => {
+    const argv = buildCodexArgv({ ...base, subagents: true });
+    expect(pair(argv, "features.multi_agent=true")).toBe(true);
+    expect(argv).not.toContain("features.multi_agent=false");
+  });
+
+  it("提示词仍然是最后一个参数", () => {
+    const argv = buildCodexArgv({ ...base, subagents: false });
+    expect(argv[argv.length - 1]).toBe(base.prompt);
+  });
+});

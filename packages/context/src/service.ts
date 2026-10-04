@@ -19,7 +19,7 @@ import { SQUAD_TEAMS_DOMAIN, type CheckpointRecord } from "./domain.ts";
 import { mergeCheckpoints } from "./merge.ts";
 import { planFold } from "./plan.ts";
 import { renderTimeline } from "./timeline.ts";
-import { CHECKPOINT_KIND, selectContextEvents, tailForSeat, type SelectableEvent } from "./window.ts";
+import { CHECKPOINT_KIND, selectContextEvents, tailForSeat, tailSince, type SelectableEvent } from "./window.ts";
 import { forgetSeatSessions } from "@squad/seat-runtime";
 
 declare module "@deepseek-ai/cordis" {
@@ -90,7 +90,7 @@ export class TeamContextService extends Service {
       await domain.close();
     });
     const release = this.ctx.teams.useAssembler({
-      windowFor: (teamId, seatId, continuingAs) => this.windowFor(teamId, seatId, continuingAs),
+      windowFor: (teamId, seatId, continuingAs, options) => this.windowFor(teamId, seatId, continuingAs, options),
       roundEnded: (teamId) => this.onRoundEnded(teamId),
       artifactWritten: (teamId, path) => this.onArtifactWritten(teamId, path),
       beforeFreshStart: (teamId) => this.beforeFreshStart(teamId),
@@ -110,10 +110,25 @@ export class TeamContextService extends Service {
    * The caller decides, not this service, because only the caller knows
    * whether a conversation actually survived — an id that failed to resume was
    * dropped, and that seat must be handed the whole window again.
+   *
+   * `options` carries what parallel seats need: where this seat last looked,
+   * and the entries it must not be shown. See `WindowOptions` in the table.
    */
-  async windowFor(teamId: string, _seatId: string, continuingAs?: string): Promise<readonly string[]> {
+  async windowFor(
+    teamId: string,
+    _seatId: string,
+    continuingAs?: string,
+    options?: { readonly seenUpTo?: string | undefined; readonly exclude?: readonly string[] | undefined },
+  ): Promise<readonly string[]> {
     const selected = selectContextEvents(this.mergedStream(teamId));
-    const events = continuingAs === undefined || continuingAs === "" ? selected : tailForSeat(selected, continuingAs);
+    const tail =
+      continuingAs === undefined || continuingAs === ""
+        ? selected
+        : options?.seenUpTo === undefined
+          ? tailForSeat(selected, continuingAs)
+          : tailSince(selected, options.seenUpTo, continuingAs);
+    const exclude = new Set(options?.exclude ?? []);
+    const events = exclude.size === 0 ? tail : tail.filter((event) => !exclude.has(String(event.turnId)));
     return renderTimeline(events);
   }
 

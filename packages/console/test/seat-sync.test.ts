@@ -95,3 +95,17 @@ describe("读取本机配置这个勾", () => {
     expect(seatMatches(sat, { ...template, hostCustomizations: true })).toBe(true);
   });
 });
+
+describe("派生子 agent 这个勾", () => {
+  it("在库里取消，已经坐着的席位也跟着取消", () => {
+    const sat: SyncableSeat = { ...seat, subagents: true };
+    expect(syncSeat(sat, { ...template, subagents: false }).subagents).toBe(false);
+    expect(seatMatches(sat, { ...template, subagents: false })).toBe(false);
+  });
+
+  it("没有这个字段的旧席位算作关着，不因此被判成漂移", () => {
+    const synced = syncSeat(seat, template);
+    const { subagents: _dropped, ...old } = synced;
+    expect(seatMatches(old, template)).toBe(true);
+  });
+});

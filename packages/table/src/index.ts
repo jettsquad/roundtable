@@ -13,11 +13,15 @@ export type {
   AgendaOutcome,
   RoundEndedEvent,
   AgendaTermination,
+  CommandSeatState,
+  CommandState,
+  CommandView,
   CreateTeamInput,
   SeatReply,
   TeamAssembler,
   Team,
   TranscriptEvent,
+  WindowOptions,
 } from "./service.ts";
 export { outstandingWork, planPhase, pausesAfter, roundsOf, windowPolicyOf } from "./agenda.ts";
 export type { PlannedRun, WindowPolicy } from "./agenda.ts";

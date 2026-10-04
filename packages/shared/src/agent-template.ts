@@ -122,6 +122,21 @@ export interface AgentTemplate {
    */
   readonly hostCustomizations?: boolean | undefined;
   /**
+   * Let this agent spawn subagents of its own.
+   *
+   * Off by default, on every backend. 1.x had no fence, and a secretary that
+   * did not know the roster invented a team of its own to do the work —
+   * bypassing the people at the table. All three backends can do it when
+   * left alone (Claude Code's `Task`/`Agent`, Codex's `multi_agent` feature,
+   * dsh's `subagent` tools), so the fence is spelled out for each.
+   *
+   * Turn it on for an agent that does hands-on work and benefits from fanning
+   * it out — reading many files, researching in parallel. The subagents'
+   * own steps do not enter the discussion; only this agent's answer does, and
+   * their cost is counted as this agent's.
+   */
+  readonly subagents?: boolean | undefined;
+  /**
    * Soft delete.
    *
    * A template a team was built from is not removed outright: the team holds

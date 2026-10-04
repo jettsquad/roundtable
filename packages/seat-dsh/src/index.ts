@@ -26,7 +26,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildDshArgv } from "./argv.ts";
-import { buildDshPatch, heartbeatRows, COMPAT_API_KEY_ENV } from "./patch.ts";
+import { buildDshPatch, delegationOffRows, heartbeatRows, COMPAT_API_KEY_ENV } from "./patch.ts";
 import { readDshOutput } from "./stream.ts";
 import { fileURLToPath } from "node:url";
 
@@ -97,7 +97,11 @@ export class SquadSeatDsh extends Service {
   }
 
   async [Service.init](): Promise<void> {
-    this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider()));
+    // Twice: delegation is decided by the profile patch, which is fixed when
+    // the child is spawned, so it can only be selected by provider name.
+    for (const sub of [false, true]) {
+      this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, sub)));
+    }
     this.syncConnections();
     this.ctx.effect(() => this.ctx.seatConnections.watch(() => this.syncConnections()));
     this.ctx.effect(() => () => {
@@ -118,10 +122,12 @@ export class SquadSeatDsh extends Service {
     const wanted = new Set<string>();
     for (const connection of this.ctx.seatConnections.list()) {
       if (connection.backend !== "dsh") continue;
-      const key = providerName(base, connection.connectionId);
-      wanted.add(key);
-      if (this.perConnection.has(key)) continue;
-      this.perConnection.set(key, this.ctx.subagents.registerProvider(this.provider(connection)));
+      for (const sub of [false, true]) {
+        const key = providerName(base, connection.connectionId, undefined, false, false, sub);
+        wanted.add(key);
+        if (this.perConnection.has(key)) continue;
+        this.perConnection.set(key, this.ctx.subagents.registerProvider(this.provider(connection, sub)));
+      }
     }
     for (const [key, dispose] of [...this.perConnection]) {
       if (wanted.has(key)) continue;
@@ -130,12 +136,12 @@ export class SquadSeatDsh extends Service {
     }
   }
 
-  private provider(connection?: SeatConnection): SubagentProvider {
+  private provider(connection?: SeatConnection, subagents = false): SubagentProvider {
     const config = this.config;
     const ctx = this.ctx;
     const base = config.provider ?? DEFAULTS.provider;
     return {
-      name: providerName(base, connection?.connectionId),
+      name: providerName(base, connection?.connectionId, undefined, false, false, subagents),
       capabilities: { ...NO_START_CAPABILITIES, toolFilter: false, persona: false, agentOptions: true },
       inheritsParentContext: false,
 
@@ -164,7 +170,14 @@ export class SquadSeatDsh extends Service {
         // named a model. The heartbeat has to be mounted on every run — a
         // seat on the profile's own default model is exactly as invisible to
         // the watchdog as one on a configured endpoint.
-        const patch = [heartbeatRows(HEARTBEAT_MODULE).join("\n"), ...(model === undefined ? [] : [model])].join("\n");
+        //
+        // The delegation fence rides the same patch: off unless this agent
+        // was created allowing subagents. See `delegationOffRows`.
+        const patch = [
+          heartbeatRows(HEARTBEAT_MODULE).join("\n"),
+          ...(model === undefined ? [] : [model]),
+          ...(subagents ? [] : [delegationOffRows().join("\n")]),
+        ].join("\n");
         const patchDir = await mkdtemp(join(tmpdir(), "squad-dsh-"));
         const patchPath = join(patchDir, "seat.patch.yml");
         // 0600: the file names an env var rather than carrying the secret,
@@ -211,5 +224,12 @@ export function apply(ctx: Context, config?: Config): void {
 }
 
 export { buildDshArgv } from "./argv.ts";
-export { buildDshPatch, COMPAT_API_KEY_ENV, COMPAT_ROUTE, isDeepSeekModel } from "./patch.ts";
+export {
+  buildDshPatch,
+  COMPAT_API_KEY_ENV,
+  COMPAT_ROUTE,
+  DELEGATION_PLUGINS,
+  delegationOffRows,
+  isDeepSeekModel,
+} from "./patch.ts";
 export { readDshOutput } from "./stream.ts";

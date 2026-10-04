@@ -73,6 +73,18 @@ import { appendAudit, type AuditEntry, type AuditKind } from "./audit.ts";
 import { agendaHash } from "./hash.ts";
 import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "./roster.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
+import {
+  excerpt,
+  excludedFor,
+  isOpen,
+  replyTag as tagFor,
+  settled,
+  startable,
+  type CommandSeatState,
+  type CommandState,
+} from "./commands.ts";
+
+export type { CommandSeatState, CommandState } from "./commands.ts";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -260,12 +272,37 @@ export interface Team {
   select(kind: "quote" | "material", id: string, on: boolean): void;
   /** Drop the lot. Called when the message it belongs to goes out. */
   clearSelection(): void;
-  /** The message waiting for the running round, if any. */
-  readonly queued: QueuedCommand | undefined;
-  /** Hold one message until the round ends. Replaces whatever was waiting. */
-  queue(instruction: string, seatIds?: readonly string[]): void;
-  /** Drop what is waiting. */
-  unqueue(): void;
+  /**
+   * The commands this sitting has been given, oldest first, with where each
+   * one stands for every seat it named.
+   *
+   * Finished ones stay for a while so the line in the discussion can still
+   * say how it ended; only unfinished ones survive a restart.
+   */
+  readonly commands: readonly CommandView[];
+  /**
+   * Send a command and return at once.
+   *
+   * It is written into the record now and each named seat takes it up as
+   * soon as that seat is free: different seats work in parallel, one seat
+   * works through its own commands in the order they were sent. `done`
+   * settles when every named seat has answered, failed or been stopped.
+   */
+  submit(
+    instruction: string,
+    seatIds?: readonly string[],
+    quotes?: readonly { readonly speaker: string; readonly text: string }[],
+    materialIds?: readonly string[],
+    quoteIds?: readonly string[],
+  ): { readonly commandId: string; readonly done: Promise<readonly SeatReply[]> };
+  /**
+   * Stop one command — the seats still answering it, and the ones that had
+   * not started yet. Nothing else is touched: commands queued behind it on
+   * the same seat go ahead as usual.
+   */
+  cancel(commandId: string): void;
+  /** Send an interrupted command again, as a new command. */
+  resend(commandId: string): { readonly commandId: string };
   /**
    * Add a seat. Refused while a round is running — see `addSeat`.
    *
@@ -345,10 +382,13 @@ export interface Team {
    */
   stopAgenda(reason: string): AgendaTermination;
   /**
-   * Stop whatever is running — an agenda, or a plain round.
+   * Stop whatever is running — an agenda, or every unfinished command.
    *
-   * `undefined` when it was a round: a round has no termination document, and
-   * an empty one would be a hand-off nobody wrote.
+   * The panel stops one command at a time through `cancel`; this is for the
+   * callers that only know "the team", such as a slash command.
+   *
+   * `undefined` when it was commands: a command has no termination document,
+   * and an empty one would be a hand-off nobody wrote.
    */
   stop(reason: string): AgendaTermination | undefined;
   /**
@@ -427,6 +467,49 @@ export interface AgendaProgress {
   readonly completedPhases: number;
 }
 
+/** One command, as the panel shows it under its line in the discussion. */
+export interface CommandView {
+  /** The turn id of the command's own line in the record. */
+  readonly commandId: string;
+  readonly instruction: string;
+  readonly at: number;
+  readonly state: CommandState;
+  readonly seats: readonly {
+    readonly seatId: string;
+    readonly displayName: string;
+    readonly state: CommandSeatState;
+  }[];
+  /** Why it is interrupted, when it is. */
+  readonly note?: string | undefined;
+  /** Stopped before any seat had started on it. */
+  readonly withdrawn?: boolean | undefined;
+}
+
+/**
+ * What else shapes a seat's window, now that seats run in parallel.
+ *
+ * Both exist because "everything after this seat last spoke" stopped being
+ * the same thing as "everything this seat has not seen" the moment another
+ * seat could answer while this one was still working.
+ */
+export interface WindowOptions {
+  /**
+   * The last record entry this seat was shown, the previous time its window
+   * was taken. A continuing seat is handed what came after it — minus its
+   * own lines, which its conversation already holds. Without it the tail is
+   * cut at the seat's last reply, which misses whatever another seat said
+   * while this one was answering.
+   */
+  readonly seenUpTo?: string | undefined;
+  /**
+   * Record entries to leave out: the command this seat is about to answer
+   * (it reaches the seat as this round's instruction, and finding it again
+   * in the discussion would be reading it twice) and any later command
+   * still waiting for it (which it must not start answering early).
+   */
+  readonly exclude?: readonly string[] | undefined;
+}
+
 /** One recorded event of a team, in the flat shape assembly reads. */
 export interface TranscriptEvent {
   /** The dsh event type verbatim — `user/message`, `turn/start`, … */
@@ -465,8 +548,10 @@ export interface TeamAssembler {
    * @param continuingAs the display name of a seat that is continuing its own
    *   CLI conversation, and so already holds everything up to its last reply.
    *   Absent means hand it the whole window.
+   * @param options what else shapes the window now that seats run in
+   *   parallel. See `WindowOptions`.
    */
-  windowFor(teamId: string, seatId: string, continuingAs?: string): Promise<readonly string[]>;
+  windowFor(teamId: string, seatId: string, continuingAs?: string, options?: WindowOptions): Promise<readonly string[]>;
   /**
    * A round just finished and this team is idle.
    *
@@ -662,7 +747,14 @@ export class TeamsService extends Service {
       handle,
       roundsInFlight: 0,
       running: undefined,
-      roundAbort: undefined,
+      agendaWaiting: false,
+      idleWaiters: [],
+      preparing: false,
+      commands: [],
+      commandSeq: 0,
+      seatBusy: new Set(),
+      seenUpTo: new Map(),
+      handed: new Map(),
       artifacts: [],
       // Carried across the restart: it is the user's money, and a total that
       // resets to zero only ever says "cheap".
@@ -700,13 +792,6 @@ export class TeamsService extends Service {
         quoteIds: [...(saved.selection?.quoteIds ?? [])],
         materialIds: [...(saved.selection?.materialIds ?? [])],
       },
-      // Survives a restart, and comes back HELD rather than pending: the
-      // round it was waiting behind died with the process, so the condition
-      // it was waiting for can never arrive.
-      queued:
-        saved.queued === undefined
-          ? undefined
-          : { ...saved.queued, held: saved.queued.held ?? "上一次这个进程停了，这条没有发出去。" },
       confirmed:
         saved.confirmed === undefined
           ? undefined
@@ -723,6 +808,53 @@ export class TeamsService extends Service {
       audit: (saved.audit ?? []) as readonly AuditEntry[],
       disposed: false,
     });
+    const record = this.teams.get(saved.teamId);
+    if (record !== undefined) this.restoreCommands(record, saved);
+  }
+
+  /**
+   * Bring back the commands that had not finished, as interrupted.
+   *
+   * Never resumed by themselves: the process died under them, nobody is
+   * watching a restart, and work that starts without being asked is work
+   * nobody decided to do. The line under each says so and offers to resend.
+   *
+   * A row from before commands existed carries one waiting message instead.
+   * That message was never written into the record — the old queue wrote a
+   * line only when it went out — so it is written now, or there would be
+   * nothing in the discussion to hang the resend on.
+   */
+  private restoreCommands(record: TeamRecord, saved: TeamPersisted): void {
+    const rows = [...(saved.commands ?? [])];
+    if (saved.queued !== undefined) {
+      const commandId = newTurnId();
+      recordSpoken(record.handle.agent, record.input.hostDisplayName, saved.queued.instruction, commandId);
+      rows.push({
+        commandId,
+        instruction: saved.queued.instruction,
+        seatIds: saved.queued.seatIds ?? record.seats.map((seat) => seat.seatId),
+        quoteIds: saved.queued.quoteIds,
+        materialIds: saved.queued.materialIds,
+        at: saved.queued.at,
+      });
+    }
+    for (const row of rows) {
+      const command = this.newCommand(record, {
+        commandId: row.commandId,
+        instruction: row.instruction,
+        seatIds: row.seatIds,
+        quotes: [],
+        quoteIds: row.quoteIds,
+        materialIds: row.materialIds,
+        at: row.at,
+      });
+      command.state = "interrupted";
+      command.note = row.note ?? "上一次这个进程停了，这条没有执行完。";
+      for (const seatId of command.seatIds) command.seats.set(seatId, "stopped");
+      command.settle([]);
+      record.commands.push(command);
+    }
+    if (saved.queued !== undefined) this.persist(record);
   }
 
   /**
@@ -769,22 +901,24 @@ export class TeamsService extends Service {
       ...(record.selection.quoteIds.length === 0 && record.selection.materialIds.length === 0
         ? {}
         : { selection: { quoteIds: record.selection.quoteIds, materialIds: record.selection.materialIds } }),
-      ...(record.queued === undefined
-        ? {}
-        : {
-            // Built field by field rather than spread: the record holds
-            // readonly arrays and the schema wants plain ones, and a spread
-            // would carry the readonly types through. Copying also stops a
-            // later write reaching into what was already persisted.
-            queued: {
-              instruction: record.queued.instruction,
-              quoteIds: [...record.queued.quoteIds],
-              materialIds: [...record.queued.materialIds],
-              at: record.queued.at,
-              ...(record.queued.seatIds === undefined ? {} : { seatIds: [...record.queued.seatIds] }),
-              ...(record.queued.held === undefined ? {} : { held: record.queued.held }),
-            },
-          }),
+      // Only the unfinished ones, and only what it takes to send them again.
+      // Written only when there are some, so a quiet record keeps the shape
+      // it had before this field existed.
+      ...((): { commands?: TeamPersisted["commands"] } => {
+        const open = record.commands.filter((command) => isOpen(command) || command.state === "interrupted");
+        if (open.length === 0) return {};
+        return {
+          commands: open.map((command) => ({
+            commandId: command.commandId,
+            instruction: command.instruction,
+            seatIds: [...command.seatIds],
+            quoteIds: [...command.quoteIds],
+            materialIds: [...command.materialIds],
+            at: command.at,
+            ...(command.note === undefined ? {} : { note: command.note }),
+          })),
+        };
+      })(),
       ...(record.confirmed === undefined
         ? {}
         : {
@@ -861,7 +995,8 @@ export class TeamsService extends Service {
       answered: replies.length,
       failed: replies.filter((reply) => reply.failed).length,
       ...(good === undefined ? {} : { last: { speaker: good.displayName, text: good.text } }),
-      moreQueued: record.queued !== undefined && record.queued.held === undefined && !stopped,
+      // Another command still running or waiting is not a stopping point.
+      moreQueued: record.commands.some(isOpen),
       waitingForHost,
     };
     for (const listener of this.roundEndedListeners) {
@@ -918,7 +1053,14 @@ export class TeamsService extends Service {
       handle,
       roundsInFlight: 0,
       running: undefined,
-      roundAbort: undefined,
+      agendaWaiting: false,
+      idleWaiters: [],
+      preparing: false,
+      commands: [],
+      commandSeq: 0,
+      seatBusy: new Set(),
+      seenUpTo: new Map(),
+      handed: new Map(),
       artifacts: [],
       usage: EMPTY_TOTALS,
       perSeat: new Map(),
@@ -930,7 +1072,6 @@ export class TeamsService extends Service {
       audit: [],
       materials: [],
       selection: { quoteIds: [], materialIds: [] },
-      queued: undefined,
       disposed: false,
     };
     this.teams.set(teamId, record);
@@ -1055,7 +1196,14 @@ export class TeamsService extends Service {
       handle,
       roundsInFlight: 0,
       running: undefined,
-      roundAbort: undefined,
+      agendaWaiting: false,
+      idleWaiters: [],
+      preparing: false,
+      commands: [],
+      commandSeq: 0,
+      seatBusy: new Set(),
+      seenUpTo: new Map(),
+      handed: new Map(),
       artifacts: [],
       // Usage starts at zero and stays this sitting's own: a new piece of
       // work has its own cost, and rolling it into the team's total would
@@ -1073,7 +1221,6 @@ export class TeamsService extends Service {
       // material into a discussion that never asked for it.
       materials: [],
       selection: { quoteIds: [], materialIds: [] },
-      queued: undefined,
       disposed: false,
     };
     this.teams.set(sittingId, record);
@@ -1494,37 +1641,19 @@ export class TeamsService extends Service {
         record.selection.materialIds = [];
         this.persist(record);
       },
-      get queued() {
-        return record.queued;
+      get commands() {
+        return record.commands.map((command) => viewOfCommand(record, command));
       },
-      /**
-       * Hold one message until the running round ends.
-       *
-       * Depth one: a second call replaces the first. The whole request is
-       * frozen here — including what was ticked — because the selection
-       * belongs to the message, not to the moment it leaves.
-       */
-      queue: (instruction, seatIds) => {
-        record.queued = {
-          instruction,
-          ...(seatIds === undefined || seatIds.length === 0 ? {} : { seatIds: [...seatIds] }),
-          quoteIds: [...record.selection.quoteIds],
-          materialIds: [...record.selection.materialIds],
-          at: Date.now(),
-        };
-        record.selection.quoteIds = [];
-        record.selection.materialIds = [];
-        this.persist(record);
-      },
-      unqueue: () => {
-        record.queued = undefined;
-        this.persist(record);
-      },
+      submit: (instruction, seatIds, quotes, materialIds, quoteIds) =>
+        this.submit(record, instruction, seatIds, quotes, materialIds, quoteIds),
+      cancel: (commandId) => this.cancel(record, commandId),
+      resend: (commandId) => this.resend(record, commandId),
       addSeat: (seat, options) => this.addSeat(record, seat, options),
       removeSeat: (seatId, options) => this.removeSeat(record, seatId, options),
       rename: (displayName) => this.rename(record, displayName),
       checkpointCoefficient: record.input.checkpointCoefficient,
-      ask: (instruction, seatIds, quotes, materialIds) => this.ask(record, instruction, seatIds, quotes, materialIds),
+      ask: (instruction, seatIds, quotes, materialIds) =>
+        this.submit(record, instruction, seatIds, quotes, materialIds).done,
       transcript: () => transcriptOf(record.handle.agent),
       recordSpoken: (speaker, text, turnId) => recordSpoken(record.handle.agent, speaker, text, turnId),
       runAgenda: (agenda) => this.runAgenda(record, agenda),
@@ -1535,89 +1664,286 @@ export class TeamsService extends Service {
   }
 
   /**
-   * One round.
+   * Send one command.
    *
-   * The instruction lands in the host's session first, so the record shows what
-   * was asked even if every seat then fails. Each seat runs as a one-shot
-   * subagent — a fresh process that keeps nothing — and its reply is injected
+   * The instruction lands in the host's session first — at once, even when
+   * every seat it names is busy — so the record shows what was asked even if
+   * every seat then fails, and the panel has a line to hang the command's
+   * status on. Each seat runs as a one-shot subagent and its reply is injected
    * back into the host session, which is what makes the discussion durable
    * rather than a runtime detail nobody wrote down.
+   *
+   * Nothing here waits for a seat. Different seats take the command up in
+   * parallel; a seat already answering something takes it up when it is free
+   * (see `pump`). It used to be one round per table: a second message waited
+   * for every seat of the first, even a seat it never named.
    */
-  private async ask(
+  private submit(
     record: TeamRecord,
     instruction: string,
     seatIds?: readonly string[],
     quotes?: readonly { readonly speaker: string; readonly text: string }[],
     materialIds?: readonly string[],
-  ): Promise<readonly SeatReply[]> {
+    quoteIds?: readonly string[],
+  ): { readonly commandId: string; readonly done: Promise<readonly SeatReply[]> } {
     if (record.disposed) throw new Error("团队已销毁。");
-    // One round at a time. Two rounds on one table interleave their
-    // instructions and replies into a single log — the record then shows two
-    // 「主持人」 lines in a row with nobody having answered either — and the
-    // second round's abort controller replaces the first's, so 「叫停」 stops
-    // only whichever started last. `runAgenda` had this guard from the start;
-    // a plain round never did.
-    if (record.running !== undefined) throw new Error("这支团队正在跑议程，等它结束或者叫停。");
-    if (record.roundsInFlight > 0) throw new Error("上一轮还没结束。等它答完，或者按「叫停」。");
     const seats =
       seatIds === undefined || seatIds.length === 0
         ? record.seats
         : record.seats.filter((seat) => seatIds.includes(seat.seatId));
     if (seats.length === 0) throw new Error("点名的席位都不在这支团队里。");
 
-    const host = record.handle.agent;
-
-    // Windows are taken BEFORE the instruction is recorded. The instruction
-    // reaches a seat as 「本轮指令」; a seat that then also finds the same
-    // sentence inside the carried discussion is reading it twice and has to
-    // guess which copy it is answering. The snapshot is also what
-    // `contextMode: independent` means — every seat sees the discussion as it
-    // stood when the round opened, not as the seats ahead of it left it.
-    // (Cumulative mode will need this taken per seat, mid-loop, instead.)
-    this.refreshAuthModes(record);
-    await this.prepareFreshStarts(record, host, seats);
-    const windows = new Map<string, WindowAttempt>();
-    for (const seat of seats) {
-      windows.set(seat.seatId, await this.windowForSeat(record, host, seat));
-    }
-
-    // Decided once for the whole round, so every seat in it sees the same
-    // documents — a round where the first seat read the spec and the second
+    // Decided once for the whole command, so every seat in it sees the same
+    // documents — a command where the first seat read the spec and the second
     // did not would produce two answers nobody can compare.
     const materials = materialsForRound(record.materials, materialIds);
     const note = attachmentNote(materials);
-    recordSpoken(host, record.input.hostDisplayName, note === undefined ? instruction : `${instruction}\n${note}`);
+    const commandId = newTurnId();
+    recordSpoken(
+      record.handle.agent,
+      record.input.hostDisplayName,
+      note === undefined ? instruction : `${instruction}\n${note}`,
+      commandId,
+    );
+    const command = this.newCommand(record, {
+      commandId,
+      instruction,
+      seatIds: seats.map((seat) => seat.seatId),
+      quotes: quotes ?? [],
+      quoteIds: quoteIds ?? [],
+      materialIds: materialIds ?? [],
+      at: Date.now(),
+      materials,
+    });
+    record.commands.push(command);
+    this.persist(record);
+    this.pump(record);
+    return { commandId, done: command.done };
+  }
 
-    const replies: SeatReply[] = [];
-    // A plain round is cancellable too. It was not: `stop` only reached a
-    // running AGENDA, so 「叫停」 during an ordinary round threw 「这支团队现在
-    // 没有在跑议程」 — and the button swallowed it, which is why it looked
-    // like nothing happened at all.
-    const abort = new AbortController();
-    record.roundAbort = abort;
-    record.roundsInFlight += 1;
-    try {
-      for (const seat of seats) {
-        if (abort.signal.aborted) break;
-        const window = windows.get(seat.seatId) ?? { lines: [] };
-        replies.push(await this.runSeat(record, host, seat, instruction, window, abort.signal, quotes, materials));
+  private newCommand(
+    record: TeamRecord,
+    input: {
+      readonly commandId: string;
+      readonly instruction: string;
+      readonly seatIds: readonly string[];
+      readonly quotes: readonly { readonly speaker: string; readonly text: string }[];
+      readonly quoteIds: readonly string[];
+      readonly materialIds: readonly string[];
+      readonly at: number;
+      readonly materials?: readonly Material[];
+    },
+  ): Command {
+    let settle: (replies: readonly SeatReply[]) => void = () => undefined;
+    const done = new Promise<readonly SeatReply[]>((resolve) => {
+      settle = resolve;
+    });
+    record.commandSeq += 1;
+    return {
+      commandId: input.commandId,
+      seq: record.commandSeq,
+      instruction: input.instruction,
+      at: input.at,
+      seatIds: [...input.seatIds],
+      names: new Map(
+        input.seatIds.map((seatId) => [
+          seatId,
+          record.seats.find((seat) => seat.seatId === seatId)?.displayName ?? seatId,
+        ]),
+      ),
+      quotes: input.quotes,
+      quoteIds: [...input.quoteIds],
+      materialIds: [...input.materialIds],
+      materials: input.materials ?? materialsForRound(record.materials, input.materialIds),
+      abort: new AbortController(),
+      seats: new Map(input.seatIds.map((seatId) => [seatId, "queued" as CommandSeatState])),
+      replies: [],
+      state: "queued",
+      settle,
+      done,
+    };
+  }
+
+  /**
+   * Start every seat turn that can start now.
+   *
+   * A seat takes the oldest command still waiting for it, and only when it is
+   * not already answering one: its CLI conversation is continued turn after
+   * turn, and two turns resuming the same conversation at once would each
+   * miss the other, with only one of them remembered afterwards. Different
+   * seats are independent and run side by side.
+   *
+   * Nothing starts while an agenda runs or is waiting to — it would never get
+   * the table — or while a fold is preparing fresh conversations.
+   *
+   * @param folded the fold for this batch already ran (or was tried), so it
+   *   is not tried again — a fold that failed would otherwise retry forever.
+   */
+  private pump(record: TeamRecord, folded = false): void {
+    if (record.disposed || record.running !== undefined || record.agendaWaiting || record.preparing) return;
+    const batch: { readonly command: Command; readonly seat: SeatSpec }[] = [];
+    for (const turn of startable(record.commands, record.seatBusy)) {
+      const command = record.commands.find((candidate) => candidate.commandId === turn.commandId);
+      if (command === undefined) continue;
+      const seat = record.seats.find((candidate) => candidate.seatId === turn.seatId);
+      if (seat === undefined) {
+        this.seatGone(record, command, turn.seatId);
+        continue;
       }
-    } finally {
-      record.roundsInFlight -= 1;
-      record.roundAbort = undefined;
+      batch.push({ command, seat });
     }
+    if (batch.length === 0) return;
 
-    // Signalled AFTER the count drops, so an assembler that asks whether the
-    // team is busy gets the answer this round's end actually created. And
-    // signalled outside the caller's await path — the round is already
-    // finished; whatever this starts must not make anyone wait for it.
-    this.signalRoundEnded(record);
-    this.emitRoundEnded(record, "round", replies, abort.signal.aborted, false);
-    // Whatever was waiting goes out now — unless this round was stopped, in
-    // which case it is held. `aborted` is read after the fact rather than
-    // caught, because a stop breaks the loop rather than throwing.
-    this.drainQueue(record, abort.signal.aborted ? "上一轮被叫停，这条没有发出去。" : undefined);
-    return replies;
+    // A fold discards every seat's conversation, so it may only run while
+    // nothing is running — and it is the one chance to make a fresh
+    // conversation start small. Everything in the batch waits for it.
+    const host = record.handle.agent;
+    const seats = batch.map((entry) => entry.seat);
+    this.dropStaleSessions(record, host, seats);
+    const fresh = seats.some((seat) => seatSessionId(host.session.id, seat.displayName) === undefined);
+    if (!folded && fresh && record.roundsInFlight === 0 && this.assembler?.beforeFreshStart !== undefined) {
+      record.preparing = true;
+      void this.prepareFreshStarts(record, host, seats).finally(() => {
+        record.preparing = false;
+        this.pump(record, true);
+      });
+      return;
+    }
+    for (const { command, seat } of batch) this.launch(record, command, seat);
+  }
+
+  /** A seat named by a command left the roster before its turn came. */
+  private seatGone(record: TeamRecord, command: Command, seatId: string): void {
+    const displayName = command.names.get(seatId) ?? seatId;
+    const text = `⚠️ ${displayName} 已经不在团队里，这条命令没有交给它。`;
+    recordSpoken(record.handle.agent, "系统", text);
+    command.seats.set(seatId, "failed");
+    command.replies.push({ seatId, displayName, text, failed: true, contextLines: 0 });
+    this.finishIfDone(record, command);
+  }
+
+  /** Mark one seat turn started — synchronously, so no second pump can take the seat. */
+  private launch(record: TeamRecord, command: Command, seat: SeatSpec): void {
+    record.seatBusy.add(seat.seatId);
+    command.seats.set(seat.seatId, "running");
+    if (command.state === "queued") command.state = "running";
+    record.roundsInFlight += 1;
+    void this.runTurn(record, command, seat);
+  }
+
+  private async runTurn(record: TeamRecord, command: Command, seat: SeatSpec): Promise<void> {
+    const host = record.handle.agent;
+    let reply: SeatReply;
+    try {
+      this.refreshAuthModes(record);
+      const window = await this.windowForSeat(record, host, seat, command.commandId);
+      reply = await this.runSeat(
+        record,
+        host,
+        seat,
+        command.instruction,
+        window,
+        command.abort.signal,
+        command.quotes,
+        command.materials,
+        command,
+      );
+    } catch (error) {
+      // `runSeat` reports its own failures; this is whatever broke before it
+      // ran. Reported the same way, because a seat that quietly drops out of
+      // a command looks exactly like one that had nothing to say.
+      const text = `⚠️ 该席位未能执行：${error instanceof Error ? error.message : String(error)}`;
+      recordSpoken(host, seat.displayName, `${replyTag(record, command)}${text}`);
+      reply = { seatId: seat.seatId, displayName: seat.displayName, text, failed: true, contextLines: 0 };
+    } finally {
+      record.seatBusy.delete(seat.seatId);
+      record.roundsInFlight -= 1;
+    }
+    command.replies.push(reply);
+    command.seats.set(
+      seat.seatId,
+      command.abort.signal.aborted && reply.failed ? "stopped" : reply.failed ? "failed" : "answered",
+    );
+    this.finishIfDone(record, command);
+    if (record.roundsInFlight === 0) {
+      for (const waiter of record.idleWaiters.splice(0)) waiter();
+    }
+    this.pump(record);
+  }
+
+  /**
+   * Close a command once no seat in it is waiting or running.
+   *
+   * The round-end signal goes out only when the whole team has gone quiet:
+   * the assembler folds on it, and a fold with a seat still running would
+   * record a boundary in the middle of that seat's work.
+   */
+  private finishIfDone(record: TeamRecord, command: Command): void {
+    if (!isOpen(command) || !settled(command.seats)) return;
+    const stopped = command.abort.signal.aborted;
+    command.state = stopped ? "stopped" : "done";
+    // In the order the seats were named, not the order they happened to finish.
+    const replies = command.seatIds.flatMap((seatId) => command.replies.filter((reply) => reply.seatId === seatId));
+    command.settle(replies);
+    this.trimCommands(record);
+    this.persist(record);
+    if (record.roundsInFlight === 0) this.signalRoundEnded(record);
+    this.emitRoundEnded(record, "round", replies, stopped, false);
+  }
+
+  /** Keep every unfinished command and a bounded tail of finished ones. */
+  private trimCommands(record: TeamRecord): void {
+    const finished = record.commands.filter((command) => command.state === "done" || command.state === "stopped");
+    if (finished.length <= FINISHED_COMMANDS_KEPT) return;
+    const drop = new Set(finished.slice(0, finished.length - FINISHED_COMMANDS_KEPT));
+    // Reassigned, never spliced: a pump may be iterating the old array.
+    record.commands = record.commands.filter((command) => !drop.has(command));
+  }
+
+  /**
+   * Stop one command.
+   *
+   * The seats answering it are cancelled through its own signal; the seats
+   * that had not started never will. Every other command — including ones
+   * waiting behind it on the same seat — goes ahead: a stop says this command
+   * was wrong, and says nothing about the next one.
+   */
+  private cancel(record: TeamRecord, commandId: string): void {
+    const command = record.commands.find((candidate) => candidate.commandId === commandId);
+    if (command === undefined) throw new Error("没有这条命令。");
+    if (!isOpen(command)) throw new Error("这条命令已经结束了。");
+    let started = false;
+    for (const [seatId, state] of command.seats) {
+      if (state === "queued") command.seats.set(seatId, "stopped");
+      else started = true;
+    }
+    command.abort.abort(new Error("已叫停"));
+    if (!started) command.withdrawn = true;
+    recordSpoken(
+      record.handle.agent,
+      "系统",
+      started
+        ? `⏹ 主持人叫停了「${excerpt(command.instruction)}」`
+        : `↩ 主持人撤回了「${excerpt(command.instruction)}」`,
+    );
+    // Ends here when nothing was running; otherwise the running seats end it
+    // as they stop.
+    this.finishIfDone(record, command);
+    this.persist(record);
+  }
+
+  /** Send an interrupted command again. The old entry gives way to the new one. */
+  private resend(record: TeamRecord, commandId: string): { readonly commandId: string } {
+    const command = record.commands.find((candidate) => candidate.commandId === commandId);
+    if (command === undefined || command.state !== "interrupted") {
+      throw new Error("只有没执行完的命令可以重发。");
+    }
+    const seatIds = command.seatIds.filter((seatId) => record.seats.some((seat) => seat.seatId === seatId));
+    if (seatIds.length === 0) throw new Error("这条命令点名的席位都已经不在团队里了。");
+    const quotes = quotesFrom(transcriptOf(record.handle.agent), command.quoteIds);
+    record.commands = record.commands.filter((candidate) => candidate !== command);
+    const sent = this.submit(record, command.instruction, seatIds, quotes, command.materialIds, command.quoteIds);
+    return { commandId: sent.commandId };
   }
 
   /**
@@ -1677,15 +2003,40 @@ export class TeamsService extends Service {
    * failed resume means the next turn opens a fresh conversation, and a fresh
    * conversation must be handed everything.
    */
-  private async windowForSeat(record: TeamRecord, host: Agent, seat: SeatSpec): Promise<WindowAttempt> {
+  private async windowForSeat(
+    record: TeamRecord,
+    host: Agent,
+    seat: SeatSpec,
+    answering?: string,
+  ): Promise<WindowAttempt> {
     const continuing = seatSessionId(host.session.id, seat.displayName) !== undefined;
-    return this.contextFor(record.teamId, seat.seatId, continuing ? seat.displayName : undefined);
+    // Left out: the command being answered, and every later one still waiting
+    // for this seat. See `WindowOptions.exclude`.
+    const exclude = [...excludedFor(record.commands, seat.seatId, answering)];
+    const handed = record.handed.get(seat.seatId);
+    if (continuing && handed !== undefined) exclude.push(handed);
+    const seenUpTo = continuing ? record.seenUpTo.get(seat.seatId) : undefined;
+    // Taken BEFORE the window, which the assembler builds from the record as
+    // it stands at the call: anything landing after this is what the next
+    // continuing turn is handed.
+    const last = transcriptOf(host).at(-1)?.turnId;
+    const attempt = await this.contextFor(record.teamId, seat.seatId, continuing ? seat.displayName : undefined, {
+      ...(seenUpTo === undefined ? {} : { seenUpTo }),
+      ...(exclude.length === 0 ? {} : { exclude }),
+    });
+    if (last !== undefined) record.seenUpTo.set(seat.seatId, last);
+    return attempt;
   }
 
-  private async contextFor(teamId: string, seatId: string, continuingAs?: string): Promise<WindowAttempt> {
+  private async contextFor(
+    teamId: string,
+    seatId: string,
+    continuingAs?: string,
+    options?: WindowOptions,
+  ): Promise<WindowAttempt> {
     if (this.assembler === undefined) return { lines: [] };
     try {
-      return { lines: await this.assembler.windowFor(teamId, seatId, continuingAs) };
+      return { lines: await this.assembler.windowFor(teamId, seatId, continuingAs, options) };
     } catch (error) {
       return { error: error instanceof Error ? error : new Error(String(error)) };
     }
@@ -1702,6 +2053,21 @@ export class TeamsService extends Service {
   private async runAgenda(record: TeamRecord, agenda: AgendaSpec, startFrom = 0): Promise<AgendaOutcome> {
     if (record.disposed) throw new Error("团队已销毁。");
     if (record.running !== undefined) throw new Error("这支团队已经在跑一个议程了。");
+    // Commands still running finish first; nothing new starts meanwhile
+    // (`pump` holds off while `agendaWaiting`), or the agenda might never get
+    // the table. They are not stopped: the person sent them, and confirming a
+    // plan is not taking them back.
+    if (record.roundsInFlight > 0) {
+      if (record.agendaWaiting) throw new Error("已经有一个议程在等手上的命令答完了。");
+      record.agendaWaiting = true;
+      try {
+        await new Promise<void>((resolve) => record.idleWaiters.push(resolve));
+      } finally {
+        record.agendaWaiting = false;
+      }
+      if (record.disposed) throw new Error("团队已销毁。");
+      if (record.running !== undefined) throw new Error("这支团队已经在跑一个议程了。");
+    }
     // Written down BEFORE the first phase runs. A crash between confirmation
     // and the first turn used to leave nothing at all — no plan, no record
     // that one was confirmed.
@@ -1834,7 +2200,9 @@ export class TeamsService extends Service {
               ? (opening.get(seat.seatId) ?? { lines: [] })
               : await this.windowForSeat(record, host, seat);
 
-          recordSpoken(host, record.input.hostDisplayName, `（${phase.title}）${run.task.instruction}`);
+          const instructionId = newTurnId();
+          recordSpoken(host, record.input.hostDisplayName, `（${phase.title}）${run.task.instruction}`, instructionId);
+          record.handed.set(seat.seatId, instructionId);
           const reply = await this.runSeat(record, host, seat, run.task.instruction, window, running.abort.signal);
           replies.push(reply);
           if (!reply.failed) running.completedTasks.push(run.task.instruction);
@@ -1907,13 +2275,11 @@ export class TeamsService extends Service {
 
     this.signalRoundEnded(record);
     this.emitRoundEnded(record, "agenda", replies, running.reason !== undefined, pausedAfter !== undefined);
-    // Same rule as a plain round, and the reason an agenda holds the count for
-    // its whole run: a message queued during phase two waits for phase five,
-    // not for phase two. Stopping the agenda holds it rather than sending it.
-    this.drainQueue(
-      record,
-      running.reason === undefined ? undefined : `议程被中止（${running.reason}），这条没有发出去。`,
-    );
+    // The reason an agenda holds the count for its whole run: a command sent
+    // during phase two waits for phase five, not for phase two. It goes out
+    // now however the agenda ended — a stop says the agenda was wrong, not
+    // the commands sent while it ran.
+    this.pump(record);
     return {
       replies,
       ...(running.reason === undefined ? {} : { stoppedBecause: running.reason }),
@@ -1935,20 +2301,19 @@ export class TeamsService extends Service {
   /**
    * Stop whatever this team is doing.
    *
-   * An agenda when one is running, otherwise the round in flight. Two things
-   * can be stopped and only one of them could be, which made the button a
-   * coin flip: during an agenda it worked, during an ordinary round it threw.
+   * An agenda when one is running, otherwise every unfinished command. The
+   * panel stops commands one at a time through `cancel`; this is for callers
+   * that only know the team.
    *
-   * Returns `undefined` when a plain round was stopped — there is no
-   * termination document for a round, and inventing an empty one would put a
-   * hand-off in the record that nobody wrote.
+   * Returns `undefined` when commands were stopped — there is no termination
+   * document for a command, and inventing an empty one would put a hand-off
+   * in the record that nobody wrote.
    */
   private stop(record: TeamRecord, reason: string): AgendaTermination | undefined {
     if (record.running !== undefined) return this.stopAgenda(record, reason);
-    const abort = record.roundAbort;
-    if (abort === undefined) throw new Error("这支团队现在没有在跑任何东西。");
-    abort.abort(new Error(`已叫停：${reason}`));
-    recordSpoken(record.handle.agent, "系统", `⏹ 主持人叫停了这一轮：${reason}`);
+    const open = record.commands.filter(isOpen);
+    if (open.length === 0) throw new Error("这支团队现在没有在跑任何东西。");
+    for (const command of open) this.cancel(record, command.commandId);
     return undefined;
   }
 
@@ -2046,43 +2411,6 @@ export class TeamsService extends Service {
    * failure would be the round disappearing for a reason unrelated to the
    * round. Reported, not propagated.
    */
-  /**
-   * Send what was waiting, now that the round has ended.
-   *
-   * `held` rather than dispatched when the round did not end normally: you
-   * queued it expecting an answer to arrive first, and that expectation is
-   * exactly what a stop or a failure broke. It stays on the record with the
-   * reason, and the panel offers to send or drop it — which is the same
-   * choice you would have had, just later.
-   *
-   * Fire-and-forget, deliberately. The caller is the round that just
-   * finished, and its HTTP request has a person waiting on it; making that
-   * response wait for a SECOND round would turn one slow answer into two.
-   * A failure here reaches the discussion the same way any round's does.
-   */
-  private drainQueue(record: TeamRecord, held: string | undefined): void {
-    const queued = record.queued;
-    if (queued === undefined || queued.held !== undefined) return;
-    if (held !== undefined) {
-      record.queued = { ...queued, held };
-      this.persist(record);
-      return;
-    }
-    record.queued = undefined;
-    this.persist(record);
-    const quotes = quotesFrom(transcriptOf(record.handle.agent), queued.quoteIds);
-    void this.ask(record, queued.instruction, queued.seatIds, quotes, queued.materialIds).catch((error: unknown) => {
-      // Recorded where the person is looking. A queued message that failed in
-      // the background with nothing on screen would be indistinguishable from
-      // one that was never sent.
-      recordSpoken(
-        record.handle.agent,
-        record.input.hostDisplayName,
-        `（排队的这条没跑成：${error instanceof Error ? error.message : String(error)}）`,
-      );
-    });
-  }
-
   private signalRoundEnded(record: TeamRecord): void {
     if (this.assembler === undefined || record.disposed) return;
     try {
@@ -2233,6 +2561,7 @@ export class TeamsService extends Service {
     signal?: AbortSignal,
     quotes?: readonly { readonly speaker: string; readonly text: string }[],
     materials: readonly Material[] = [],
+    command?: Command,
   ): Promise<SeatReply> {
     const provider = this.providerFor(seat);
     try {
@@ -2381,7 +2710,7 @@ export class TeamsService extends Service {
           contextTokens: usage?.contextTokens,
         });
       }
-      recordSpoken(host, seat.displayName, text);
+      recordSpoken(host, seat.displayName, `${replyTag(record, command)}${text}`);
       // Counted before the reply is returned, and counted on failures too:
       // a turn that burned tokens and then errored still cost what it cost.
       record.usage = addUsage(record.usage, usage);
@@ -2410,7 +2739,7 @@ export class TeamsService extends Service {
       // nothing to say.
       const detail = error instanceof Error ? error.message : String(error);
       const text = `⚠️ 该席位未能执行：${detail}`;
-      recordSpoken(host, seat.displayName, text);
+      recordSpoken(host, seat.displayName, `${replyTag(record, command)}${text}`);
       return {
         seatId: seat.seatId,
         displayName: seat.displayName,
@@ -2468,6 +2797,7 @@ export class TeamsService extends Service {
   private async dispose(record: TeamRecord): Promise<void> {
     if (record.disposed) return;
     record.disposed = true;
+    for (const command of record.commands) command.abort.abort(new Error("团队已销毁。"));
     await record.handle.dispose();
     this.teams.delete(record.teamId);
     this.forget(record.teamId);
@@ -2581,19 +2911,49 @@ interface TeamRecord {
   /** Mutable: a team can be renamed, and the record is what gets persisted. */
   input: CreateTeamInput;
   readonly handle: AgentHandle;
-  /** Rounds currently running. Folding starts only at zero. */
+  /**
+   * Seat turns currently running, plus one for a running agenda. Folding
+   * starts only at zero.
+   */
   roundsInFlight: number;
   /** Set while an agenda is running; aborting it is how the host stops one. */
   running: RunningAgenda | undefined;
   /**
-   * Set while a plain round is running.
-   *
-   * Separate from `running` because a round is not an agenda: it has no
-   * phases, no completion account and no termination document. Both are
-   * stoppable and only the agenda used to be, which made 「叫停」 work or throw
-   * depending on which one you happened to be in.
+   * An agenda was confirmed while commands were still running, and is waiting
+   * for them to finish. No new seat turn starts meanwhile, or it would never
+   * get its turn.
    */
-  roundAbort: AbortController | undefined;
+  agendaWaiting: boolean;
+  /** Called, and emptied, the moment `roundsInFlight` drops to zero. */
+  idleWaiters: (() => void)[];
+  /**
+   * A fold is running before a batch of seat turns starts. Nothing else
+   * starts meanwhile: the fold discards every seat's conversation, and a
+   * seat already running would come back holding the history it replaced.
+   */
+  preparing: boolean;
+  /** Commands, oldest first. Unfinished ones plus a bounded tail of finished. */
+  commands: Command[];
+  /**
+   * Bumped for every command sent. A reply is tagged with the command it
+   * answers when a later command was sent in between.
+   */
+  commandSeq: number;
+  /** Seats answering a command right now. A seat takes one at a time. */
+  readonly seatBusy: Set<string>;
+  /**
+   * seatId → the last record entry that seat's window was taken against.
+   *
+   * Not persisted: after a restart a continuing seat falls back to "after its
+   * last reply", which is what it got before seats ran in parallel.
+   */
+  readonly seenUpTo: Map<string, string>;
+  /**
+   * seatId → the agenda instruction it was last handed, which an agenda
+   * writes AFTER taking the window — so it sits past `seenUpTo` and would be
+   * handed again as discussion on the seat's next continuing turn.
+   */
+  readonly handed: Map<string, string>;
   /** Project-relative paths this team has written, in order. */
   readonly artifacts: string[];
   /** Everything this team's seats have consumed. */
@@ -2657,8 +3017,6 @@ interface TeamRecord {
   materials: Material[];
   /** What the host has ticked for the next message. See the schema. */
   selection: { quoteIds: string[]; materialIds: string[] };
-  /** One message waiting for the running round to end. See the schema. */
-  queued: QueuedCommand | undefined;
   /** Where it sits in the list, once somebody has arranged one. */
   order?: number | undefined;
   disposed: boolean;
@@ -2687,16 +3045,39 @@ interface LiveSession {
   append(type: string, data: unknown, options?: unknown): void;
 }
 
-/** One message waiting for the running round to end. */
-interface QueuedCommand {
+/**
+ * One command, and the bookkeeping that runs it.
+ *
+ * Everything the message carried is frozen here at send time — who was
+ * named, which quotes and documents were ticked — because those belong to
+ * the message, not to the moment a busy seat gets round to it.
+ */
+interface Command {
+  readonly commandId: string;
+  readonly seq: number;
   readonly instruction: string;
-  readonly seatIds?: readonly string[] | undefined;
+  readonly at: number;
+  /** In roster order at send time. */
+  readonly seatIds: readonly string[];
+  /** seatId → its display name when the command was sent. */
+  readonly names: ReadonlyMap<string, string>;
+  readonly quotes: readonly { readonly speaker: string; readonly text: string }[];
   readonly quoteIds: readonly string[];
   readonly materialIds: readonly string[];
-  readonly at: number;
-  /** Why it was not sent automatically. Absent while it is still waiting. */
-  readonly held?: string | undefined;
+  readonly materials: readonly Material[];
+  readonly abort: AbortController;
+  readonly seats: Map<string, CommandSeatState>;
+  readonly replies: SeatReply[];
+  state: CommandState;
+  note?: string | undefined;
+  /** Stopped before any seat started on it. */
+  withdrawn?: boolean | undefined;
+  readonly settle: (replies: readonly SeatReply[]) => void;
+  readonly done: Promise<readonly SeatReply[]>;
 }
+
+/** How many finished commands a sitting keeps for the panel to label. */
+const FINISHED_COMMANDS_KEPT = 200;
 
 /** The agenda currently executing, and the handle that stops it. */
 interface RunningAgenda {
@@ -2776,6 +3157,35 @@ export function sessionMarkEvents(
  * the bug survived is that this package's writer and reader agreed with each
  * other and neither agreed with storage.
  */
+/** A fresh id for one line of the record. */
+function newTurnId(): string {
+  return `squad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** The tag naming the command a reply answers, when one is needed. See `commands.ts`. */
+function replyTag(record: TeamRecord, command: Command | undefined): string {
+  return command === undefined ? "" : tagFor(command, record.commandSeq);
+}
+
+function viewOfCommand(record: TeamRecord, command: Command): CommandView {
+  return {
+    commandId: command.commandId,
+    instruction: command.instruction,
+    at: command.at,
+    state: command.state,
+    seats: command.seatIds.map((seatId) => ({
+      seatId,
+      // The current name when the seat is still here: a renamed seat is the
+      // same member, and the old name would point at nobody on screen.
+      displayName:
+        record.seats.find((seat) => seat.seatId === seatId)?.displayName ?? command.names.get(seatId) ?? seatId,
+      state: command.seats.get(seatId) ?? "queued",
+    })),
+    ...(command.note === undefined ? {} : { note: command.note }),
+    ...(command.withdrawn === true ? { withdrawn: true } : {}),
+  };
+}
+
 export function spokenMessage(speaker: string, text: string, turnId?: string): Record<string, unknown> {
   return {
     // For `user/message` the event's data IS the message — `data.id`,
@@ -2789,7 +3199,7 @@ export function spokenMessage(speaker: string, text: string, turnId?: string): R
     // (`assistant/message` and `tool/result` DO nest under `.message`.
     // `user/message` is the exception, and copying its neighbours is what
     // produced the bug.)
-    id: turnId ?? `squad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    id: turnId ?? newTurnId(),
     role: "user",
     // `host` is not a legal source kind — the map is user/plugin/model/tool.
     // `user` is the truthful one: every line here is input arriving at the

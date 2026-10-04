@@ -49,11 +49,13 @@ not a merge.
 
 ## Seat backends
 
-| Backend       | Runs                             | Tool fence                            |
-| ------------- | -------------------------------- | ------------------------------------- |
-| `claude-code` | your machine's Claude Code login | yes (Task/Agent denied by default)    |
-| `codex`       | `codex exec`                     | none — codex has no tools to delegate |
-| `dsh`         | `dsh --profile headless`         | none                                  |
+| Backend       | Runs                             | Subagent fence                                      |
+| ------------- | -------------------------------- | --------------------------------------------------- |
+| `claude-code` | your machine's Claude Code login | Task/Agent denied by default                        |
+| `codex`       | `codex exec`                     | `-c features.multi_agent=false` by default          |
+| `dsh`         | `dsh --profile headless`         | subagent and five related plugins disabled by patch |
+
+No backend can spawn subagents unless the agent was created with "Allow spawning subagents" ticked.
 
 Seats are **child processes** using logins you already have. Squad neither creates
 nor modifies them. A dsh seat emits a heartbeat on stderr so the watchdog can tell

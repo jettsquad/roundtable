@@ -73,6 +73,7 @@ export interface TeamSummary {
     /** Pre-approved for the web tools. Claude Code only. */
     readonly webAccess?: boolean | undefined;
     readonly hostCustomizations?: boolean | undefined;
+    readonly subagents?: boolean | undefined;
     readonly reasoningEffort?: ReasoningEffort | undefined;
     /**
      * How a running seat's run is going, while it is going.
@@ -140,22 +141,24 @@ export interface TeamSummary {
     readonly materialIds: readonly string[];
   };
   /**
-   * The message waiting for the running round to end.
-   *
-   * Shown, always. A message that was accepted and is not visible is
-   * indistinguishable from one that was dropped.
+   * The commands this sitting has been given, with where each stands for
+   * every seat it named. The discussion draws this under each command's own
+   * line, with the button that stops or withdraws it.
    */
-  readonly queued?:
-    | {
-        readonly instruction: string;
-        readonly seatIds?: readonly string[] | undefined;
-        readonly quoteIds: readonly string[];
-        readonly materialIds: readonly string[];
-        readonly at: number;
-        /** Why it was not sent automatically, when it was not. */
-        readonly held?: string | undefined;
-      }
-    | undefined;
+  readonly commands: readonly {
+    /** The turn id of the command's line in the transcript. */
+    readonly commandId: string;
+    readonly instruction: string;
+    readonly at: number;
+    readonly state: "queued" | "running" | "done" | "stopped" | "interrupted";
+    readonly seats: readonly {
+      readonly seatId: string;
+      readonly displayName: string;
+      readonly state: "queued" | "running" | "answered" | "failed" | "stopped";
+    }[];
+    readonly note?: string | undefined;
+    readonly withdrawn?: boolean | undefined;
+  }[];
   readonly sessionId: string;
   /** The team this is a sitting of, absent when this IS the team. */
   readonly baseTeamId?: string | undefined;

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildDshPatch, COMPAT_API_KEY_ENV, COMPAT_ROUTE, isDeepSeekModel } from "../src/patch.ts";
+import {
+  buildDshPatch,
+  COMPAT_API_KEY_ENV,
+  COMPAT_ROUTE,
+  DELEGATION_PLUGINS,
+  delegationOffRows,
+  isDeepSeekModel,
+} from "../src/patch.ts";
 
 describe("buildDshPatch", () => {
   it("没配模型就不写 patch", () => {
@@ -45,5 +52,17 @@ describe("isDeepSeekModel", () => {
     expect(isDeepSeekModel("DeepSeek-V4")).toBe(true);
     expect(isDeepSeekModel("MiniMax-M3")).toBe(false);
     expect(isDeepSeekModel("")).toBe(false);
+  });
+});
+
+describe("delegationOffRows", () => {
+  it("把 headless 剖面里能派生子 agent 的插件全部标成 disabled", () => {
+    // 六个都要关：subagent / subagent_fork 直接派，ralph 和 workflow 拿子 agent
+    // 当工人，剩下两个是管理它们的工具。漏一个，围栏就有一个缺口。
+    const rows = delegationOffRows().join("\n");
+    for (const id of DELEGATION_PLUGINS) {
+      expect(rows).toContain(`- id: ${id}\n  disabled: true`);
+    }
+    expect(DELEGATION_PLUGINS).toHaveLength(6);
   });
 });
