@@ -113,11 +113,36 @@ export const buildCheckpointPrompt = (input: CheckpointPromptInput): string => {
 export type CheckpointValidation = { readonly ok: true } | { readonly ok: false; readonly missing: readonly string[] };
 
 /**
+ * A heading LINE naming this section, at any level.
+ *
+ * The four sections are siblings and nothing reads them by level: the
+ * checkpoint travels into later windows whole. `##` is a convention, and
+ * holding a model to it exactly cost a real fold — a secretary that opened
+ * with `# 当前目标` had a complete checkpoint thrown away over one `#`. The
+ * old check was a substring match, which let `###` through by accident and
+ * refused `#`; it never enforced a level, only happened to refuse one.
+ *
+ * A line, not a mention: 「当前目标」 inside a sentence is not the section.
+ */
+const headingLine = (heading: string): RegExp =>
+  new RegExp(`^#{1,6}[ \t]+${heading.replace(/^#+\s*/, "")}[ \t]*#*[ \t]*\r?$`, "gm");
+
+/**
  * A checkpoint becomes the basis of every later turn, so a malformed one is
  * not a cosmetic problem — it silently degrades everything downstream.
- * Missing headings are reported rather than accepted.
+ * Missing sections are reported rather than accepted; what is lenient is
+ * only how many `#` a section heading carries.
  */
 export const validateCheckpoint = (text: string): CheckpointValidation => {
-  const missing = CHECKPOINT_HEADING_LIST.filter((headingText) => !text.includes(headingText));
+  const missing = CHECKPOINT_HEADING_LIST.filter((heading) => !headingLine(heading).test(text));
   return missing.length === 0 ? { ok: true } : { ok: false, missing };
 };
+
+/**
+ * Rewrite the four section headings as the canonical `##`.
+ *
+ * So every stored checkpoint has one shape, and the four sections read as
+ * the siblings they are whatever level the secretary happened to use.
+ */
+export const normalizeCheckpoint = (text: string): string =>
+  CHECKPOINT_HEADING_LIST.reduce((current, heading) => current.replace(headingLine(heading), heading), text);

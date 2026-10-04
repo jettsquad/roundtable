@@ -40,16 +40,28 @@ export interface FoldPlan {
  * Returns `undefined` when there is nothing to fold — a team can cross the
  * threshold on a record whose entries carry no identity, and folding that
  * would store a checkpoint covering a boundary nobody can find later.
+ *
+ * @param openCommands the commands still waiting for an answer. The fold
+ *   stops just before the first of them. A command is written into the
+ *   record the moment it is sent, so one that has not been answered yet can
+ *   already be sitting at the end of the record when a fold runs — and the
+ *   secretary, finding 「总结一下……」 as the last line it is given, reads it
+ *   as its own task. It also must not vanish into a checkpoint before the
+ *   seat it is addressed to has seen it. Everything from it on travels whole.
  */
 export function planFold(
   pending: readonly SelectableEvent[],
   previousCheckpoint?: string | undefined,
+  openCommands: readonly string[] = [],
 ): FoldPlan | undefined {
-  const coversUpTo = lastIdentity(pending);
+  const open = new Set(openCommands);
+  const cut = pending.findIndex((event) => typeof event.turnId === "string" && open.has(event.turnId));
+  const covered = cut < 0 ? pending : pending.slice(0, cut);
+  const coversUpTo = lastIdentity(covered);
   if (coversUpTo === undefined) return undefined;
   return {
     coversUpTo,
-    turns: pending.map(plannedTurn),
+    turns: covered.map(plannedTurn),
     ...(previousCheckpoint === undefined ? {} : { previousCheckpoint }),
   };
 }

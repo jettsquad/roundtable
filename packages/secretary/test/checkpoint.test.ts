@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCheckpointPrompt,
+  normalizeCheckpoint,
   validateCheckpoint,
   CHECKPOINT_HEADINGS,
   CHECKPOINT_HEADING_LIST,
@@ -111,5 +112,34 @@ describe("检查点带上主持人的判断标准", () => {
   it("没有判据时不留空段落", () => {
     const prompt = buildCheckpointPrompt({ hostGoal: "目标", turns: [] });
     expect(prompt).not.toContain("主持人自己定下的判断标准");
+  });
+});
+
+describe("检查点标题的级别", () => {
+  const sections = (marks: readonly string[]): string =>
+    ["当前目标", "已定事项", "未决分歧", "产出索引"].map((name, index) => `${marks[index]} ${name}\n内容`).join("\n\n");
+
+  it("一级、三级标题也认，四节齐全就通过", () => {
+    // 真实的一次折叠：dsh 秘书第一节写成了 `# 当前目标`，一份完整的检查点就为
+    // 一个 `#` 被整份丢掉。四节是平级的，没有代码按级别读它们。
+    expect(validateCheckpoint(sections(["#", "##", "##", "##"]))).toEqual({ ok: true });
+    expect(validateCheckpoint(sections(["###", "###", "###", "###"]))).toEqual({ ok: true });
+  });
+
+  it("放宽的只是 # 的个数，少了哪一节照样拒收", () => {
+    const result = validateCheckpoint(sections(["#", "##", "##", "##"]).replace("## 未决分歧\n内容", ""));
+    expect(result).toEqual({ ok: false, missing: [CHECKPOINT_HEADINGS.open] });
+  });
+
+  it("正文里提到这几个字不算这一节", () => {
+    const text = sections(["##", "##", "##", "##"]).replace("## 未决分歧", "这里没有未决分歧");
+    expect(validateCheckpoint(text)).toEqual({ ok: false, missing: [CHECKPOINT_HEADINGS.open] });
+  });
+
+  it("存之前统一改成二级标题，别的标题不动", () => {
+    const text = `# 当前目标\n内容\n\n### 已定事项\n- 一\n\n#### 细节\n\n## 未决分歧\n内容\n\n# 产出索引 #\n内容`;
+    expect(normalizeCheckpoint(text)).toBe(
+      `## 当前目标\n内容\n\n## 已定事项\n- 一\n\n#### 细节\n\n## 未决分歧\n内容\n\n## 产出索引\n内容`,
+    );
   });
 });

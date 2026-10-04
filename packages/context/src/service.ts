@@ -361,7 +361,14 @@ export class TeamContextService extends Service {
       // in the table — which would produce an index saying 「无」 next to a
       // file the team can see.
       await this.artifactWrites;
-      const plan = planFold(this.sinceLastCheckpoint(teamId), this.liveCheckpoint(teamId)?.text);
+      const plan = planFold(
+        this.sinceLastCheckpoint(teamId),
+        this.liveCheckpoint(teamId)?.text,
+        // Unanswered commands stay out of the fold. See `planFold`.
+        team.commands
+          .filter((command) => command.state === "queued" || command.state === "running")
+          .map((command) => command.commandId),
+      );
       if (plan === undefined) throw new Error(`团队 ${teamId} 没有可折叠的记录。`);
 
       // The host's own standards for this kind of work, fetched here because

@@ -64,3 +64,27 @@ describe("planFold", () => {
     expect(plan?.turns).toEqual([{ speaker: "记录", text: "没有前缀的一句" }]);
   });
 });
+
+describe("planFold with unanswered commands", () => {
+  it("stops just before the first command still waiting for an answer", () => {
+    // A command is in the record the moment it is sent. Fed to the secretary
+    // as the last line, 「总结一下……」 reads as the secretary's own task — it
+    // was, in a real run, and the checkpoint came back as meeting minutes.
+    const plan = planFold(
+      [said("t1", "甲", "一"), said("t2", "乙", "二"), said("c1", "主持人", "总结一下"), said("t3", "丙", "三")],
+      undefined,
+      ["c1"],
+    );
+    expect(plan?.coversUpTo).toBe("t2");
+    expect(plan?.turns.map((turn) => turn.text)).toEqual(["一", "二"]);
+  });
+
+  it("folds everything when no command is waiting", () => {
+    const plan = planFold([said("t1", "甲", "一"), said("c1", "主持人", "已答完的命令")], undefined, []);
+    expect(plan?.coversUpTo).toBe("c1");
+  });
+
+  it("has nothing to fold when the waiting command is the first entry", () => {
+    expect(planFold([said("c1", "主持人", "总结一下"), said("t1", "甲", "一")], undefined, ["c1"])).toBeUndefined();
+  });
+});

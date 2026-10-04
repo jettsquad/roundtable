@@ -41,6 +41,10 @@ const terminationInput = {
 describe("writeCheckpointWith", () => {
   it("returns the checkpoint when every heading is there", async () => {
     await expect(writeCheckpointWith(answering(wholeCheckpoint), checkpointInput)).resolves.toBe(wholeCheckpoint);
+    // Stored with the canonical headings whatever level the secretary used.
+    await expect(
+      writeCheckpointWith(answering(wholeCheckpoint.replace("## 当前目标", "# 当前目标")), checkpointInput),
+    ).resolves.toBe(wholeCheckpoint);
   });
 
   it("refuses a checkpoint with a missing heading, and names it", async () => {

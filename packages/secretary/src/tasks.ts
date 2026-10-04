@@ -9,7 +9,12 @@
  */
 import type { AgendaSpec } from "@squad/shared";
 import { assertPublicHostCommand, buildAgendaPrompt, parseAgendaReply, type AgendaDraftInput } from "./agenda.ts";
-import { buildCheckpointPrompt, validateCheckpoint, type CheckpointPromptInput } from "./checkpoint.ts";
+import {
+  buildCheckpointPrompt,
+  normalizeCheckpoint,
+  validateCheckpoint,
+  type CheckpointPromptInput,
+} from "./checkpoint.ts";
 import { buildTeamAgendaTerminationPrompt, validateTeamAgendaTerminationSummary } from "./termination.ts";
 import { buildAssistPrompt, validateAssist, type AssistInput } from "./assist.ts";
 import { buildProjectMemoryPrompt, validateProjectMemory, type ProjectMemoryPromptInput } from "./project-memory.ts";
@@ -50,7 +55,7 @@ export async function writeCheckpointWith(run: TextTaskRunner, input: Checkpoint
         `检查点是后续每一轮的历史，残缺的那一节会被当成「这方面没有内容」，而不是「这里丢了」。`,
     );
   }
-  return text;
+  return normalizeCheckpoint(text);
 }
 
 /**
