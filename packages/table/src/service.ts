@@ -67,7 +67,7 @@ import {
 } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
 import { reopenReason } from "./reopen.ts";
-import { baseForFolder, recordForSession, restoreOrder, unclaimed } from "./sitting.ts";
+import { baseForFolder, nextHostId, recordForSession, restoreOrder, unclaimed } from "./sitting.ts";
 import { appendAudit, type AuditEntry, type AuditKind } from "./audit.ts";
 import { agendaHash } from "./hash.ts";
 import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "./roster.ts";
@@ -760,9 +760,45 @@ export class TeamsService extends Service {
     this.exports.set(record.teamId, next);
   }
 
+  /**
+   * The host node for a saved team: its own session resumed, or — when dsh
+   * can no longer open that session — a fresh one.
+   *
+   * A fresh one only when Squad's own file already holds the record. Then the
+   * host node is what it was always meant to be, an anchor: it supplies a
+   * cwd and a parent for the seats, and the discussion is not in it. Without
+   * that file the old log is the ONLY copy, and replacing its session would
+   * bring the team back empty with nothing to say why — so the original
+   * failure stands, and the team is reported as not restored.
+   *
+   * This is what carries a team across a dsh upgrade whose format migration
+   * refuses a host node's log (messages with no step before them), which is
+   * every host log written before 0.2.
+   */
+  private async hostFor(saved: TeamPersisted): Promise<AgentHandle> {
+    const hostId = saved.hostSessionId ?? saved.teamId;
+    try {
+      return await this.ctx.agents.resume({ resumeSessionId: hostId as never });
+    } catch (error) {
+      if (!existsSync(recordPath(saved.teamId))) throw error;
+      const freshId = nextHostId(saved.teamId, hostId);
+      const handle = await this.ctx.agents.create({
+        sessionId: freshId as never,
+        meta: { cwd: saved.projectFolder },
+      });
+      const line =
+        `团队「${saved.displayName}」（${saved.teamId}）原来的主持节点会话 ${hostId} 打不开了，` +
+        `换成了 ${freshId}。讨论记录在 Squad 自己的文件里，不受影响。原因：` +
+        `${error instanceof Error ? error.message : String(error)}`;
+      this.ctx.logger.info(line);
+      console.warn(`[squad] ${line}`);
+      return handle;
+    }
+  }
+
   /** Rebuild one saved team, log and all. */
   private async restore(saved: TeamPersisted): Promise<void> {
-    const handle = await this.ctx.agents.resume({ resumeSessionId: saved.teamId as never });
+    const handle = await this.hostFor(saved);
     // Rehydrates the module-level map `seatSessionId` reads — empty on every
     // fresh process — so the FIRST turn after a restart still resumes each
     // seat's own conversation rather than opening a new one. A row naming a
@@ -856,6 +892,9 @@ export class TeamsService extends Service {
     });
     const record = this.teams.get(saved.teamId);
     if (record !== undefined) {
+      // A team given a fresh host node has to remember which, or the next
+      // start would try the unreadable one again and mint another.
+      if (String(handle.agent.session.id) !== (saved.hostSessionId ?? saved.teamId)) this.persist(record);
       this.restoreCommands(record, saved);
       // Brings a project's copies up to date with whatever was said before
       // this build existed, and puts back any that were deleted.
@@ -922,6 +961,11 @@ export class TeamsService extends Service {
     const row: TeamPersisted = {
       teamId: record.teamId,
       ...(record.sessionId === record.teamId ? {} : { sessionId: record.sessionId }),
+      // Only once the host node is no longer the session named after the
+      // team — see `hostFor`.
+      ...(String(record.handle.agent.session.id) === record.teamId
+        ? {}
+        : { hostSessionId: String(record.handle.agent.session.id) }),
       ...(record.baseTeamId === undefined ? {} : { baseTeamId: record.baseTeamId }),
       displayName: record.input.displayName,
       projectFolder: record.input.projectFolder,

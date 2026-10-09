@@ -108,3 +108,16 @@ export function restoreOrder<T extends SittingLike>(rows: readonly T[]): readonl
 export function unclaimed(record: SittingLike): boolean {
   return record.baseTeamId === undefined && (record.sessionId ?? record.teamId) === record.teamId;
 }
+
+/**
+ * The id for a team's next host node, when its current one cannot be opened.
+ *
+ * Keeps the team id as its prefix: Squad tells its own host nodes from a
+ * person's sessions by the `team-` / `sit-` they start with, and a host node
+ * mistaken for a person's session would be marked and shown in the sidebar.
+ * Numbered, so a second replacement does not collide with the first.
+ */
+export function nextHostId(teamId: string, currentHostId: string): string {
+  const generation = /-h(\d+)$/.exec(currentHostId.slice(teamId.length))?.[1];
+  return `${teamId}-h${generation === undefined ? 2 : Number(generation) + 1}`;
+}
