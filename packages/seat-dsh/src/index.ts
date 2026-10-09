@@ -19,7 +19,7 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "@deepseek-ai/dsh-subagent";
 // Imported for the `Context.subprocess` declaration merging it carries.
 import type {} from "@deepseek-ai/dsh-subprocess";
-import { providerName, reasoningEffortsFor, type SeatConnection } from "@squad/shared";
+import { liveConnection, providerName, reasoningEffortsFor, type SeatConnection } from "@squad/shared";
 import { requestedEffort, runCliSeat, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -136,16 +136,19 @@ export class SquadSeatDsh extends Service {
     }
   }
 
-  private provider(connection?: SeatConnection, subagents = false): SubagentProvider {
+  private provider(registered?: SeatConnection, subagents = false): SubagentProvider {
     const config = this.config;
     const ctx = this.ctx;
     const base = config.provider ?? DEFAULTS.provider;
     return {
-      name: providerName(base, connection?.connectionId, undefined, false, false, subagents),
+      name: providerName(base, registered?.connectionId, undefined, false, false, subagents),
       capabilities: { ...NO_START_CAPABILITIES, toolFilter: false, persona: false, agentOptions: true },
       inheritsParentContext: false,
 
       async start(request): Promise<SubagentRun> {
+        // As it stands now, not as it stood at registration, so an edited
+        // model or endpoint reaches the next turn. See `liveConnection`.
+        const connection = liveConnection(registered, (id) => ctx.seatConnections.get(id));
         // The connection's model and endpoint, as a one-shot profile patch.
         // dsh has no environment variable for either, so this is the only
         // way they can take effect — and without it a MiniMax key goes to

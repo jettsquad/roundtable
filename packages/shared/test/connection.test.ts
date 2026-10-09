@@ -12,6 +12,7 @@ import {
   checkConnection,
   envForConnection,
   isOwnModel,
+  liveConnection,
   meaningfulCaps,
   type SeatConnection,
 } from "../src/connection.ts";
@@ -282,5 +283,25 @@ describe("authHeader：密钥放哪个头", () => {
   it("其它后端不受影响", () => {
     expect(envForConnection(of({ backend: "codex", authHeader: "bearer" }), "k")["CODEX_API_KEY"]).toBe("k");
     expect(envForConnection(of({ backend: "dsh", authHeader: "bearer" }), "k")["DEEPSEEK_API_KEY"]).toBe("k");
+  });
+});
+
+describe("liveConnection", () => {
+  const registered = { connectionId: "c1", modelId: "gpt-6.1-sol" };
+
+  it("用连接现在的样子，不用注册时抓下来的那份", () => {
+    // 真实发生过：连接的模型从 gpt-6.1-sol 改成了 gpt-6-sol，存储里也是新的，
+    // 席位照旧报 gpt-6.1-sol 不支持——provider 注册一次、活到进程结束，它手里
+    // 那份跟进程一样老。
+    const edited = { connectionId: "c1", modelId: "gpt-6-sol" };
+    expect(liveConnection(registered, () => edited)).toBe(edited);
+  });
+
+  it("查不到了就用注册时那份，让这一轮按自己的原因失败", () => {
+    expect(liveConnection(registered, () => undefined)).toBe(registered);
+  });
+
+  it("没有连接的席位还是没有连接", () => {
+    expect(liveConnection(undefined, () => registered)).toBeUndefined();
   });
 });

@@ -27,7 +27,13 @@ import { Service, type Context } from "@deepseek-ai/cordis";
 import { NO_START_CAPABILITIES, type SubagentProvider, type SubagentRun } from "@deepseek-ai/dsh-subagent";
 // Imported for the `Context.subprocess` declaration merging it carries.
 import type {} from "@deepseek-ai/dsh-subprocess";
-import { CODEX_PERMISSION_MODES, modelArgumentFor, providerName, type SeatConnection } from "@squad/shared";
+import {
+  CODEX_PERMISSION_MODES,
+  liveConnection,
+  modelArgumentFor,
+  providerName,
+  type SeatConnection,
+} from "@squad/shared";
 import { requestedEffort, runCliSeat, seatSessionId, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { buildCodexArgv, isCodexMode } from "./argv.ts";
 import { readCodexStream } from "./stream.ts";
@@ -133,7 +139,7 @@ export class SquadSeatCodex extends Service {
   }
 
   private provider(
-    connection?: SeatConnection,
+    registered?: SeatConnection,
     permissionMode?: string,
     webAccess = false,
     subagents = false,
@@ -147,9 +153,9 @@ export class SquadSeatCodex extends Service {
     };
     return {
       name:
-        connection === undefined && permissionMode === undefined && !webAccess && !subagents
+        registered === undefined && permissionMode === undefined && !webAccess && !subagents
           ? (config.provider ?? DEFAULTS.provider)
-          : providerName(BASE, connection?.connectionId, permissionMode, webAccess, false, subagents),
+          : providerName(BASE, registered?.connectionId, permissionMode, webAccess, false, subagents),
       // Declared honestly. `codex exec` has no per-tool filter and no
       // system-prompt argument, so the seam should REFUSE a request asking
       // for either rather than accept one and ignore it.
@@ -157,6 +163,10 @@ export class SquadSeatCodex extends Service {
       inheritsParentContext: false,
 
       async start(request): Promise<SubagentRun> {
+        // As it stands now, not as it stood at registration: the model and
+        // endpoint ride on argv, and an edit has to reach the next turn.
+        // See `liveConnection`.
+        const connection = liveConnection(registered, (id) => ctx.seatConnections.get(id));
         const mode = isCodexMode(permissionMode) ? permissionMode : (config.permissionMode ?? DEFAULTS.permissionMode);
         return runCliSeat({
           ctx,
