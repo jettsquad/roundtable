@@ -22,7 +22,7 @@
  * guaranteed runtime throw, so the rule is: table entries stay external,
  * everything else inlines.
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,7 +52,21 @@ const PLATFORM_MODULES = [
   "@deepseek-ai/dsh-client-store",
   "@deepseek-ai/dsh-client-ui-slots",
   "@deepseek-ai/dsh-client-ui-primitives",
+  // Joined in dsh 0.2 (the dockable panes). See `SINCE_0_2`.
+  "@deepseek-ai/dsh-client-ui-dockkit",
 ];
+
+/**
+ * Entries a shell older than 0.2 does not have.
+ *
+ * Tolerated as "ours, not theirs" so one table serves both sides of an
+ * upgrade — the build has to pass against the dsh being tried AND against
+ * the one a rollback returns to. Safe because nothing here imports them:
+ * marking an unimported specifier external changes no byte of the bundle.
+ * The day something does import one, 0.1.x stops being a version this can
+ * be rolled back to, and this set should go.
+ */
+const SINCE_0_2 = new Set(["@deepseek-ai/dsh-client-ui-dockkit"]);
 
 /**
  * Fail the build if our copy of the table no longer matches the harness's.
@@ -74,7 +88,7 @@ async function checkPlatformTable(harness) {
   const body = text.slice(text.indexOf("PLATFORM_MODULES = ["));
   const theirs = [...body.slice(0, body.indexOf("]")).matchAll(/'([^']+)'/g)].map((m) => m[1]);
   const missing = theirs.filter((name) => !PLATFORM_MODULES.includes(name));
-  const extra = PLATFORM_MODULES.filter((name) => !theirs.includes(name));
+  const extra = PLATFORM_MODULES.filter((name) => !theirs.includes(name) && !SINCE_0_2.has(name));
   if (missing.length > 0 || extra.length > 0) {
     throw new Error(
       "平台模块表和 DSH 的不一致了。\n" +
@@ -204,6 +218,9 @@ async function emit(id, options, result) {
     text = text.slice(0, at + marker.length) + injector + text.slice(at + marker.length);
   }
 
+  // The output folder is build output and not tracked, so on a fresh checkout
+  // — or the copy a dsh trial builds in — it is not there yet.
+  await mkdir(dirname(options.outfile), { recursive: true });
   await writeFile(options.outfile, text, "utf8");
   if (map !== undefined) await writeFile(`${options.outfile}.map`, map.text, "utf8");
   const kb = (Buffer.byteLength(text) / 1024).toFixed(1);

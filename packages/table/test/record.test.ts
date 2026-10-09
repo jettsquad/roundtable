@@ -17,7 +17,12 @@ import { describe, expect, it } from "vitest";
 import { adoptSessionEvent } from "@deepseek-ai/dsh-session";
 import { sessionMarkEvents, spokenMessage } from "../src/service.ts";
 
-const asEvent = (data: unknown) => ({ type: "user/message", seq: 3, time: Date.now(), data }) as never;
+// With the marker `recordSpoken` passes when it appends, which is how the
+// event sits in the log. dsh 0.2's validator checks for it before anything
+// else, so an event built here without one fails for THAT and never reaches
+// the shape this file is about.
+const asEvent = (data: unknown) =>
+  ({ type: "user/message", seq: 3, time: Date.now(), surfaceOp: "append", data }) as never;
 
 describe("spokenMessage", () => {
   it("is accepted by the harness's own event validator", () => {
@@ -73,7 +78,9 @@ describe("the shape that broke", () => {
  * reachable validator does cover, is checked properly.
  */
 describe("sessionMarkEvents", () => {
-  const asEventOf = (type: string, data: unknown) => ({ type, seq: 3, time: Date.now(), data }) as never;
+  // The marker on the message only, as `markLiveSession` appends it.
+  const asEventOf = (type: string, data: unknown) =>
+    ({ type, seq: 3, time: Date.now(), ...(type === "user/message" ? { surfaceOp: "append" } : {}), data }) as never;
 
   it("每一条都能被 dsh 自己的事件校验器收下", () => {
     for (const event of sessionMarkEvents("樱木军团")) {

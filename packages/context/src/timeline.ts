@@ -62,10 +62,17 @@ export const TIMELINE_IGNORED_KINDS: ReadonlySet<string> = new Set([
   "compaction/prune",
   "compaction/start",
   "compaction/summary",
+  // dsh 0.2: a person's thumbs-up or -down on a message. About a line of the
+  // discussion, never one of its lines.
+  "feedback/message-delete",
+  "feedback/message-put",
   "feedback/record",
   "goal/change",
   "hook/invoked",
   "hook/result",
+  // dsh 0.2: compaction moving an image out of context. Bookkeeping, like the
+  // `compaction/*` rows above.
+  "image/offload",
   "llm/retry",
   "llm/retry-started",
   // Which model was picked, and the policy a subagent inherits. Both are
@@ -81,10 +88,18 @@ export const TIMELINE_IGNORED_KINDS: ReadonlySet<string> = new Set([
   "session/end-seed",
   "session/title",
   "session/title-llm-request",
+  // dsh 0.2 writes this on the PARENT every time a subagent starts — and the
+  // host node is the parent of every seat. So it is on every host log, once
+  // per seat turn, and filing it anywhere but here would fail every window.
+  "subagent/catalog",
   "subagent/descriptor",
   "subagent/model-selection-policy",
   "todo/write",
   "web/deepseek-search-llm-request",
+  // dsh 0.2: which files a turn changed. Recorded only around a turn, which a
+  // host node never has — but it is a summary, not something the anchor said,
+  // and `turn/start` already convicts a host that ran one.
+  "workspace/changes",
 ]);
 
 /**
@@ -93,10 +108,19 @@ export const TIMELINE_IGNORED_KINDS: ReadonlySet<string> = new Set([
  * spoke.
  */
 export const HOST_TURN_KINDS: ReadonlySet<string> = new Set([
+  // dsh 0.2: one model attempt inside a step. Written by the agent loop.
+  "assistant/attempt",
   "assistant/chunk",
   "assistant/message",
+  // dsh 0.2: a file a tool the model called put in front of the person.
+  "deliverables/presented",
+  // dsh 0.2: instructions the agent loop adds to its own request. A host that
+  // has one built a request, which is the anchor taking a turn.
+  "developer/message",
   "step/end",
   "step/start",
+  // dsh 0.2: the system prompt, written per step by the agent loop.
+  "system/message",
   "tool-workflow/agent-end",
   "tool-workflow/agent-start",
   "tool-workflow/run-end",
@@ -104,6 +128,9 @@ export const HOST_TURN_KINDS: ReadonlySet<string> = new Set([
   "tool/call",
   "tool/code-dispatch",
   "tool/code-dispatch-start",
+  // dsh 0.2: programmatic tool calling.
+  "tool/ptc-dispatch",
+  "tool/ptc-dispatch-start",
   "tool/result",
   // dsh 0.1.2's own Agent Teams. Every one of these is written by a tool the
   // LEAD's model called — creating a teammate, mailing one, moving a task —
