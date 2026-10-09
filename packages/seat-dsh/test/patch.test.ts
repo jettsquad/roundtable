@@ -6,6 +6,7 @@ import {
   DELEGATION_PLUGINS,
   delegationOffRows,
   isDeepSeekModel,
+  isDeepSeekPublicEndpoint,
 } from "../src/patch.ts";
 
 describe("buildDshPatch", () => {
@@ -26,7 +27,7 @@ describe("buildDshPatch", () => {
   });
 
   it("DeepSeek 的模型走它自己的 provider", () => {
-    const patch = buildDshPatch({ model: "deepseek-v4-pro", baseUrl: "https://api.deepseek.com/v1" })!;
+    const patch = buildDshPatch({ model: "deepseek-v4-pro", baseUrl: "https://gateway.example.com/deepseek" })!;
     expect(patch).toContain("provider: deepseek-official");
     expect(patch).toContain("llm-deepseek");
     expect(patch).not.toContain(COMPAT_ROUTE);
@@ -64,5 +65,45 @@ describe("delegationOffRows", () => {
       expect(rows).toContain(`- id: ${id}\n  disabled: true`);
     }
     expect(DELEGATION_PLUGINS).toHaveLength(6);
+  });
+});
+
+describe("DeepSeek 官方地址交给 dsh 自己定", () => {
+  it("连接里填的是官方地址，就不往 patch 里写 baseURL", () => {
+    // 真实发生的：连接存的是 https://api.deepseek.com（0.1.x 的 chat/completions 用它），
+    // dsh 升到 0.2 后改走 Messages API，官方地址成了 …/anthropic。原样传进去拼出
+    // …/v1/messages，用 DeepSeek 自家模型的席位全部 404。
+    for (const endpoint of ["https://api.deepseek.com", "https://api.deepseek.com/", "https://api.deepseek.com/v1"]) {
+      const patch = buildDshPatch({ model: "deepseek-v4-pro", baseUrl: endpoint })!;
+      expect(patch, endpoint).not.toContain("baseURL");
+      expect(patch).toContain('model: "deepseek-v4-pro"');
+    }
+  });
+
+  it("思考强度照样带上", () => {
+    const patch = buildDshPatch({ model: "deepseek-v4-pro", baseUrl: "https://api.deepseek.com", effort: "high" })!;
+    expect(patch).toContain("reasoningEffort: high");
+    expect(patch).not.toContain("baseURL");
+  });
+
+  it("网关和别的路径原样传", () => {
+    const gateway = buildDshPatch({ model: "deepseek-v4-pro", baseUrl: "https://gw.example.com/v1" })!;
+    expect(gateway).toContain('baseURL: "https://gw.example.com/v1"');
+    // 人已经明确写了新路径，那就是他要的。
+    const explicit = buildDshPatch({ model: "deepseek-v4-pro", baseUrl: "https://api.deepseek.com/anthropic" })!;
+    expect(explicit).toContain('baseURL: "https://api.deepseek.com/anthropic"');
+  });
+
+  it("兼容线路上的模型不受影响", () => {
+    const patch = buildDshPatch({ model: "MiniMax-M3", baseUrl: "https://api.minimaxi.com/v1" })!;
+    expect(patch).toContain('baseURL: "https://api.minimaxi.com/v1"');
+  });
+
+  it("认得出官方地址的几种写法，认不出的不乱认", () => {
+    expect(isDeepSeekPublicEndpoint("https://api.deepseek.com")).toBe(true);
+    expect(isDeepSeekPublicEndpoint(" https://api.deepseek.com/v1/ ")).toBe(true);
+    expect(isDeepSeekPublicEndpoint("https://api.deepseek.com/anthropic")).toBe(false);
+    expect(isDeepSeekPublicEndpoint("https://api.deepseek.com.evil.example/v1")).toBe(false);
+    expect(isDeepSeekPublicEndpoint("")).toBe(false);
   });
 });
