@@ -86,6 +86,7 @@ import {
 export { spokenMessage } from "./log.ts";
 export type { RecordCheck, TranscriptEvent } from "./log.ts";
 import {
+  cutShort,
   excerpt,
   excludedFor,
   isOpen,
@@ -2822,7 +2823,10 @@ export class TeamsService extends Service {
           contextTokens: usage?.contextTokens,
         });
       }
-      record.log.append(seat.displayName, `${replyTag(record, command)}${text}`);
+      // Stopped before it finished, as opposed to finishing just as the stop
+      // arrived: what it had said so far is recorded as unfinished.
+      const spoken = signal?.aborted === true && failed ? cutShort(text) : text;
+      record.log.append(seat.displayName, `${replyTag(record, command)}${spoken}`);
       // Counted before the reply is returned, and counted on failures too:
       // a turn that burned tokens and then errored still cost what it cost.
       record.usage = addUsage(record.usage, usage);
@@ -2835,7 +2839,7 @@ export class TeamsService extends Service {
       // nothing to say" — the one reading that sends a person to look at the
       // prompt for a decision they made themselves.
       const stopped = signal?.aborted === true && text.trim() === "";
-      const answer = stopped ? `⏹ ${seat.displayName} 被叫停，这一轮没有答复。` : text;
+      const answer = stopped ? `⏹ ${seat.displayName} 被叫停，这一轮没有答复。` : spoken;
       if (stopped) record.log.append("系统", answer);
       return {
         seatId: seat.seatId,

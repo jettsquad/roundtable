@@ -7,6 +7,8 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  CUT_SHORT_MARK,
+  cutShort,
   excerpt,
   excludedFor,
   replyTag,
@@ -149,5 +151,22 @@ describe("replyTag", () => {
       "一二三四五六七八九十一二三四五六七八九十…",
     );
     expect(excerpt("换行\n\n也  压成一行")).toBe("换行 也 压成一行");
+  });
+});
+
+describe("cutShort", () => {
+  it("被叫停时已经说了半句的，标明没答完", () => {
+    // 真实的一次：叫停后记录里留下「我先读两份文档的实际内容再评审。」，
+    // 看上去像这位成员就这么一句话的意见。
+    expect(cutShort("我先读两份文档的实际内容再评审。")).toBe(`我先读两份文档的实际内容再评审。\n\n${CUT_SHORT_MARK}`);
+  });
+
+  it("末尾的空白不夹在正文和标注之间", () => {
+    expect(cutShort("说到一半\n\n  ")).toBe(`说到一半\n\n${CUT_SHORT_MARK}`);
+  });
+
+  it("一个字都没说的不标——那种情况另有一行「被叫停，没有答复」", () => {
+    expect(cutShort("")).toBe("");
+    expect(cutShort("  \n")).toBe("  \n");
   });
 });
