@@ -9,11 +9,19 @@
  * Takes several minutes and makes a dozen real model calls.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const harness = join(homedir(), ".local/share/roundtable/deepseek-harness/apps/cli/lib/bin.js");
+// The dsh this checkout is bound to, as `ui.mjs` reads it — not the
+// conventional path, which stops being the one in use after a switch.
+const stampPath = join(dirname(fileURLToPath(import.meta.url)), "..", ".dsh-link.json");
+const bound = existsSync(stampPath) ? JSON.parse(readFileSync(stampPath, "utf8")).harnessRoot : undefined;
+const harness = join(
+  process.env.DSH_SOURCE ?? bound ?? join(homedir(), ".local/share/roundtable/deepseek-harness"),
+  "apps/cli/lib/bin.js",
+);
 const dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh-squad-dev");
 const projectFolder = process.env.SQUAD_SMOKE_FOLDER ?? "/tmp/squad-smoke";
 
