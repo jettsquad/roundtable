@@ -17,6 +17,7 @@ export type {
   CommandState,
   CommandView,
   CreateTeamInput,
+  RecordCheck,
   SeatReply,
   TeamAssembler,
   Team,

@@ -12,8 +12,11 @@
  * is every log a host node has ever written. A record that has to move needs
  * one door, not thirty.
  */
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
+import { dshHome } from "@squad/seat-runtime";
 
 /** One recorded event of a team, in the flat shape assembly reads. */
 export interface TranscriptEvent {
@@ -165,3 +168,200 @@ export const textOf = (blocks: readonly ContentBlock[]): string =>
     )
     .join("")
     .trim();
+
+// ── Squad's own copy of the record ──────────────────────────────────────────
+
+/** The dsh event type one line of discussion is recorded as. */
+const SPEECH = "user/message";
+
+/**
+ * Where one team's record is kept.
+ *
+ * Under dsh's home but in Squad's own folder, in Squad's own format: one
+ * JSON object per line, appended and never rewritten. Not in the storage
+ * domain the rest of Squad uses — that one rewrites its whole file on every
+ * save, and a record grows by a line a minute for as long as a team works.
+ */
+export function recordPath(teamId: string): string {
+  return join(dshHome(), "squad-records", `${teamId}.jsonl`);
+}
+
+/** Read a record file. Throws on a line that is not an event, naming it. */
+export function readRecordFile(path: string): TranscriptEvent[] {
+  const events: TranscriptEvent[] = [];
+  for (const [index, line] of readFileSync(path, "utf8").split("\n").entries()) {
+    if (line.trim() === "") continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      throw new Error(`${path} 第 ${index + 1} 行不是 JSON。`);
+    }
+    const event = parsed as Partial<TranscriptEvent>;
+    if (
+      typeof event.kind !== "string" ||
+      typeof event.text !== "string" ||
+      typeof event.turnId !== "string" ||
+      typeof event.at !== "number"
+    ) {
+      throw new Error(`${path} 第 ${index + 1} 行不是一条记录。`);
+    }
+    events.push({ kind: event.kind, text: event.text, turnId: event.turnId, at: event.at });
+  }
+  return events;
+}
+
+const lineOf = (event: TranscriptEvent): string =>
+  `${JSON.stringify({ turnId: event.turnId, kind: event.kind, at: event.at, text: event.text })}\n`;
+
+/**
+ * What to append to the file so it holds everything the dsh session does.
+ *
+ * Only lines of DISCUSSION are caught up on. A session's other events are
+ * numbered rather than named (`seq-12`), and once a host node is replaced by
+ * a fresh one those numbers start again — matching on them would either skip
+ * a line that is new or copy one that is not.
+ *
+ * Pure, so the rule is tested without a disk.
+ */
+export function missingFromFile(
+  file: readonly TranscriptEvent[],
+  session: readonly TranscriptEvent[],
+): readonly TranscriptEvent[] {
+  const have = new Set(file.map((event) => event.turnId));
+  return session.filter((event) => event.kind === SPEECH && !have.has(event.turnId));
+}
+
+/** How the file and the dsh session compare, for one team. */
+export interface RecordCheck {
+  /** Lines of discussion in Squad's own file. */
+  readonly lines: number;
+  /** Lines of discussion in the dsh session, when it could be read. */
+  readonly sessionLines: number;
+  /** Session lines the file does not have. Should always be empty. */
+  readonly missing: readonly string[];
+  /** Lines both have whose text differs. Should always be empty. */
+  readonly different: readonly string[];
+  /** Which one the team is reading from right now. */
+  readonly source: "file" | "session";
+  /** Why it fell back to the session, when it did. */
+  readonly problem?: string | undefined;
+}
+
+/** Compare the two copies. Pure. */
+export function compareRecords(
+  file: readonly TranscriptEvent[],
+  session: readonly TranscriptEvent[],
+): Pick<RecordCheck, "lines" | "sessionLines" | "missing" | "different"> {
+  const byId = new Map(file.filter((event) => event.kind === SPEECH).map((event) => [event.turnId, event.text]));
+  const spoken = session.filter((event) => event.kind === SPEECH);
+  return {
+    lines: byId.size,
+    sessionLines: spoken.length,
+    missing: spoken.filter((event) => !byId.has(event.turnId)).map((event) => event.turnId),
+    different: spoken
+      .filter((event) => byId.has(event.turnId) && byId.get(event.turnId) !== event.text)
+      .map((event) => event.turnId),
+  };
+}
+
+/** A `TeamLog` that can also say how its two copies compare. */
+export interface StoredTeamLog extends TeamLog {
+  check(): RecordCheck;
+}
+
+/**
+ * The team's record, kept in Squad's own file — with the dsh session still
+ * written alongside.
+ *
+ * The FILE is what is read. It is filled from the session the first time a
+ * team is opened under this code, every event in order, so a checkpoint that
+ * names the entry it covers up to still finds it; after that each line goes
+ * to both. Writing the session as well costs nothing today and is what lets
+ * the previous build be gone back to with nothing missing.
+ *
+ * Why the record moved at all: a dsh session is an agent's conversation, and
+ * dsh keeps changing what one must look like. A host node is not an agent,
+ * and its log has broken dsh's expectations twice. Squad's record should not
+ * be something a dsh upgrade can make unreadable.
+ *
+ * Anything going wrong with the file falls back to the session and SAYS so —
+ * `check().problem` — because a team that silently read a stale copy would
+ * look fine and be missing its newest lines.
+ */
+export function storedTeamLog(host: Agent, path: string, report: (message: string) => void): StoredTeamLog {
+  const session = sessionTeamLog(host);
+  let events: TranscriptEvent[] | undefined;
+  let problem: string | undefined;
+  try {
+    if (existsSync(path)) {
+      events = readRecordFile(path);
+      // Lines the session got that the file did not: a build from before this
+      // file existed ran in between, or the process died between the two writes.
+      const behind = missingFromFile(events, session.events());
+      if (behind.length > 0) {
+        appendFileSync(path, behind.map(lineOf).join(""), "utf8");
+        events.push(...behind);
+      }
+    } else {
+      // The first time. Written beside the final name and renamed into place,
+      // so a crash halfway leaves no file — which is tried again — rather
+      // than half of one, which would be taken for the whole record.
+      const all = [...session.events()];
+      mkdirSync(dirname(path), { recursive: true });
+      const partial = `${path}.partial`;
+      writeFileSync(partial, all.map(lineOf).join(""), "utf8");
+      renameSync(partial, path);
+      events = all;
+    }
+  } catch (error) {
+    problem = error instanceof Error ? error.message : String(error);
+    report(`讨论记录文件 ${path} 用不了，这一场改从 dsh 会话读：${problem}`);
+    events = undefined;
+  }
+
+  return {
+    append(speaker, text, turnId) {
+      let id = turnId ?? newTurnId();
+      // The session first, and not fatally: it is the copy that keeps the
+      // previous build usable, not the one this build reads.
+      try {
+        id = session.append(speaker, text, id);
+      } catch (error) {
+        if (events === undefined) throw error;
+        report(`这条发言没能写进 dsh 会话（记录文件里有）：${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (events !== undefined) {
+        // Trimmed, as the session's own reader trims — the two copies are
+        // compared line for line, and trailing whitespace is not a difference.
+        const event: TranscriptEvent = {
+          kind: SPEECH,
+          text: `【${speaker}】${text}`.trim(),
+          turnId: id,
+          at: Date.now(),
+        };
+        try {
+          appendFileSync(path, lineOf(event), "utf8");
+          events.push(event);
+        } catch (error) {
+          // The session has the line; read from there from now on rather
+          // than from a file that is now one line short.
+          problem = error instanceof Error ? error.message : String(error);
+          report(`讨论记录文件 ${path} 写不进去，这一场改从 dsh 会话读：${problem}`);
+          events = undefined;
+        }
+      }
+      return id;
+    },
+    events: () => events ?? session.events(),
+    size: () => (events ?? session.events()).length,
+    check() {
+      const compared = compareRecords(events ?? [], session.events());
+      return {
+        ...compared,
+        source: events === undefined ? "session" : "file",
+        ...(problem === undefined ? {} : { problem }),
+      };
+    },
+  };
+}

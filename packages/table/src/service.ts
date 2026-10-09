@@ -72,10 +72,19 @@ import { appendAudit, type AuditEntry, type AuditKind } from "./audit.ts";
 import { agendaHash } from "./hash.ts";
 import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "./roster.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
-import { newTurnId, sessionTeamLog, textOf, type TeamLog, type TranscriptEvent } from "./log.ts";
+import { renderDiscussion, writeDiscussion } from "./export.ts";
+import {
+  newTurnId,
+  recordPath,
+  storedTeamLog,
+  textOf,
+  type RecordCheck,
+  type StoredTeamLog,
+  type TranscriptEvent,
+} from "./log.ts";
 
 export { spokenMessage } from "./log.ts";
-export type { TranscriptEvent } from "./log.ts";
+export type { RecordCheck, TranscriptEvent } from "./log.ts";
 import {
   excerpt,
   excludedFor,
@@ -419,6 +428,13 @@ export interface Team {
    * would read them as checkpoints whose coverage is missing from the log.
    */
   recordSpoken(speaker: string, text: string, turnId?: string): void;
+  /**
+   * How Squad's own copy of the record compares with the dsh session's.
+   *
+   * For checking a migration rather than for everyday use: `missing` and
+   * `different` should both be empty, and `source` should be the file.
+   */
+  recordCheck(): RecordCheck;
   dispose(): Promise<void>;
 }
 
@@ -589,6 +605,8 @@ export class TeamsService extends Service {
   private domain: Domain<typeof SQUAD_TABLE_DOMAIN> | undefined;
   /** Serialises writes so two edits in one tick cannot lose one another. */
   private writes: Promise<void> = Promise.resolve();
+  /** teamId → its export in flight, so two never write one file at once. */
+  private readonly exports = new Map<string, Promise<void>>();
 
   constructor(ctx: Context) {
     super(ctx, "teams");
@@ -700,6 +718,48 @@ export class TeamsService extends Service {
     }
   }
 
+  /**
+   * Open a team's record. See `storedTeamLog`.
+   *
+   * Trouble with the file is said on `console` as well as the logger: this
+   * composition's `ctx.logger.warn` prints nothing, and a team quietly
+   * reading from its fallback is exactly what must not be quiet.
+   */
+  private openLog(host: Agent, teamId: string): StoredTeamLog {
+    return storedTeamLog(host, recordPath(teamId), (message) => {
+      this.ctx.logger.warn(`团队 ${teamId}：${message}`);
+      console.warn(`[squad] 团队 ${teamId}：${message}`);
+    });
+  }
+
+  /**
+   * Refresh the readable copy of this discussion in its project folder.
+   *
+   * Never awaited and never fatal: it is a convenience written into somebody
+   * else's folder, and a full disk or a read-only mount there must not cost
+   * a round its answer. See `export.ts`.
+   */
+  private exportRecord(record: TeamRecord): void {
+    if (record.disposed) return;
+    const events = record.log.events();
+    if (!events.some((event) => event.kind === "user/message")) return;
+    const markdown = renderDiscussion({
+      teamName: record.input.displayName,
+      teamId: record.teamId,
+      events,
+      exportedAt: Date.now(),
+    });
+    const folder = record.input.projectFolder;
+    const next = (this.exports.get(record.teamId) ?? Promise.resolve())
+      .then(() => writeDiscussion(folder, record.teamId, markdown))
+      .catch((error: unknown) => {
+        this.ctx.logger.warn(
+          `团队 ${record.teamId}：讨论副本没能写进 ${folder}：${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    this.exports.set(record.teamId, next);
+  }
+
   /** Rebuild one saved team, log and all. */
   private async restore(saved: TeamPersisted): Promise<void> {
     const handle = await this.ctx.agents.resume({ resumeSessionId: saved.teamId as never });
@@ -730,7 +790,7 @@ export class TeamsService extends Service {
       ...(saved.order === undefined ? {} : { order: saved.order }),
       input,
       handle,
-      log: sessionTeamLog(handle.agent),
+      log: this.openLog(handle.agent, saved.teamId),
       roundsInFlight: 0,
       running: undefined,
       agendaWaiting: false,
@@ -795,7 +855,12 @@ export class TeamsService extends Service {
       disposed: false,
     });
     const record = this.teams.get(saved.teamId);
-    if (record !== undefined) this.restoreCommands(record, saved);
+    if (record !== undefined) {
+      this.restoreCommands(record, saved);
+      // Brings a project's copies up to date with whatever was said before
+      // this build existed, and puts back any that were deleted.
+      this.exportRecord(record);
+    }
   }
 
   /**
@@ -1037,7 +1102,7 @@ export class TeamsService extends Service {
       baseTeamId: undefined,
       input: { ...input, projectFolder },
       handle,
-      log: sessionTeamLog(handle.agent),
+      log: this.openLog(handle.agent, teamId),
       roundsInFlight: 0,
       running: undefined,
       agendaWaiting: false,
@@ -1177,7 +1242,7 @@ export class TeamsService extends Service {
       // The base's own objects, on purpose. See `TeamRecord.baseTeamId`.
       input: base.input,
       handle,
-      log: sessionTeamLog(handle.agent),
+      log: this.openLog(handle.agent, sittingId),
       roundsInFlight: 0,
       running: undefined,
       agendaWaiting: false,
@@ -1639,6 +1704,7 @@ export class TeamsService extends Service {
         this.submit(record, instruction, seatIds, quotes, materialIds).done,
       transcript: () => record.log.events(),
       recordSpoken: (speaker, text, turnId) => record.log.append(speaker, text, turnId),
+      recordCheck: () => record.log.check(),
       runAgenda: (agenda) => this.runAgenda(record, agenda),
       stopAgenda: (reason) => this.stopAgenda(record, reason),
       stop: (reason) => this.stop(record, reason),
@@ -1871,6 +1937,7 @@ export class TeamsService extends Service {
     this.persist(record);
     if (record.roundsInFlight === 0) this.signalRoundEnded(record);
     this.emitRoundEnded(record, "round", replies, stopped, false);
+    this.exportRecord(record);
   }
 
   /** Keep every unfinished command and a bounded tail of finished ones. */
@@ -2255,6 +2322,7 @@ export class TeamsService extends Service {
 
     this.signalRoundEnded(record);
     this.emitRoundEnded(record, "agenda", replies, running.reason !== undefined, pausedAfter !== undefined);
+    this.exportRecord(record);
     // The reason an agenda holds the count for its whole run: a command sent
     // during phase two waits for phase five, not for phase two. It goes out
     // now however the agenda ended — a stop says the agenda was wrong, not
@@ -2893,7 +2961,7 @@ interface TeamRecord {
   input: CreateTeamInput;
   readonly handle: AgentHandle;
   /** What was said. The only way anything here reads or writes the record. */
-  readonly log: TeamLog;
+  readonly log: StoredTeamLog;
   /**
    * Seat turns currently running, plus one for a running agenda. Folding
    * starts only at zero.
