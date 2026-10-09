@@ -20,7 +20,6 @@ import { existsSync, statSync } from "node:fs";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import type { SubagentResult, SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
-import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Domain } from "@deepseek-ai/dsh-storage-domain";
@@ -73,6 +72,10 @@ import { appendAudit, type AuditEntry, type AuditKind } from "./audit.ts";
 import { agendaHash } from "./hash.ts";
 import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "./roster.ts";
 import { composeSeatPrompt, type SeatSpec } from "./seat.ts";
+import { newTurnId, sessionTeamLog, textOf, type TeamLog, type TranscriptEvent } from "./log.ts";
+
+export { spokenMessage } from "./log.ts";
+export type { TranscriptEvent } from "./log.ts";
 import {
   excerpt,
   excludedFor,
@@ -146,7 +149,7 @@ export interface Team {
   readonly teamId: string;
   readonly displayName: string;
   readonly projectFolder: string;
-  /** What the host is called in the record — the name `recordSpoken` writes. */
+  /** What the host is called in the record — the name the record is written under. */
   readonly hostDisplayName: string;
   readonly seats: readonly SeatSpec[];
   /** The host node's session id — the team's durable record. */
@@ -510,24 +513,6 @@ export interface WindowOptions {
   readonly exclude?: readonly string[] | undefined;
 }
 
-/** One recorded event of a team, in the flat shape assembly reads. */
-export interface TranscriptEvent {
-  /** The dsh event type verbatim — `user/message`, `turn/start`, … */
-  readonly kind: string;
-  /** Text carried by the event, or empty for the ones that carry none. */
-  readonly text: string;
-  /** Stable identity of this entry, used to cut windows at a checkpoint. */
-  readonly turnId: string;
-  /**
-   * When the log recorded it, in Unix epoch milliseconds.
-   *
-   * From the session event's own `time`, not stamped on read: a transcript
-   * restored from disk must show when a thing was SAID, not when the page
-   * was opened.
-   */
-  readonly at: number;
-}
-
 /**
  * The collaborator that decides what seats see, and folds the record when it
  * grows too large.
@@ -745,6 +730,7 @@ export class TeamsService extends Service {
       ...(saved.order === undefined ? {} : { order: saved.order }),
       input,
       handle,
+      log: sessionTeamLog(handle.agent),
       roundsInFlight: 0,
       running: undefined,
       agendaWaiting: false,
@@ -828,7 +814,7 @@ export class TeamsService extends Service {
     const rows = [...(saved.commands ?? [])];
     if (saved.queued !== undefined) {
       const commandId = newTurnId();
-      recordSpoken(record.handle.agent, record.input.hostDisplayName, saved.queued.instruction, commandId);
+      record.log.append(record.input.hostDisplayName, saved.queued.instruction, commandId);
       rows.push({
         commandId,
         instruction: saved.queued.instruction,
@@ -1051,6 +1037,7 @@ export class TeamsService extends Service {
       baseTeamId: undefined,
       input: { ...input, projectFolder },
       handle,
+      log: sessionTeamLog(handle.agent),
       roundsInFlight: 0,
       running: undefined,
       agendaWaiting: false,
@@ -1149,11 +1136,7 @@ export class TeamsService extends Service {
     readonly sessionId: string;
   }): Promise<Team | undefined> {
     const records = [...this.teams.values()];
-    const existing = recordForSession(
-      records,
-      input.sessionId,
-      (record) => record.handle.agent.session.snapshotEvents().length,
-    );
+    const existing = recordForSession(records, input.sessionId, (record) => record.log.size());
     if (existing !== undefined) {
       // Marked here too. The session may be one dsh reused after discarding
       // its events, and an unmarked session disappears on reload whether or
@@ -1194,6 +1177,7 @@ export class TeamsService extends Service {
       // The base's own objects, on purpose. See `TeamRecord.baseTeamId`.
       input: base.input,
       handle,
+      log: sessionTeamLog(handle.agent),
       roundsInFlight: 0,
       running: undefined,
       agendaWaiting: false,
@@ -1558,8 +1542,7 @@ export class TeamsService extends Service {
         // the earlier attempt was the alternative and it is worse: what was
         // said was said, the correction only makes sense next to it, and a
         // re-run that cannot see the criticism repeats the mistake.
-        recordSpoken(
-          record.handle.agent,
+        record.log.append(
           "系统",
           `⏪ 主持人把议程退回到第 ${phaseIndex + 1} 阶段「${title}」。` +
             `之前说过的话都留着——重跑这一阶段的席位看得见它们，包括为什么要重来。`,
@@ -1654,8 +1637,8 @@ export class TeamsService extends Service {
       checkpointCoefficient: record.input.checkpointCoefficient,
       ask: (instruction, seatIds, quotes, materialIds) =>
         this.submit(record, instruction, seatIds, quotes, materialIds).done,
-      transcript: () => transcriptOf(record.handle.agent),
-      recordSpoken: (speaker, text, turnId) => recordSpoken(record.handle.agent, speaker, text, turnId),
+      transcript: () => record.log.events(),
+      recordSpoken: (speaker, text, turnId) => record.log.append(speaker, text, turnId),
       runAgenda: (agenda) => this.runAgenda(record, agenda),
       stopAgenda: (reason) => this.stopAgenda(record, reason),
       stop: (reason) => this.stop(record, reason),
@@ -1699,8 +1682,7 @@ export class TeamsService extends Service {
     const materials = materialsForRound(record.materials, materialIds);
     const note = attachmentNote(materials);
     const commandId = newTurnId();
-    recordSpoken(
-      record.handle.agent,
+    record.log.append(
       record.input.hostDisplayName,
       note === undefined ? instruction : `${instruction}\n${note}`,
       commandId,
@@ -1816,7 +1798,7 @@ export class TeamsService extends Service {
   private seatGone(record: TeamRecord, command: Command, seatId: string): void {
     const displayName = command.names.get(seatId) ?? seatId;
     const text = `⚠️ ${displayName} 已经不在团队里，这条命令没有交给它。`;
-    recordSpoken(record.handle.agent, "系统", text);
+    record.log.append("系统", text);
     command.seats.set(seatId, "failed");
     command.replies.push({ seatId, displayName, text, failed: true, contextLines: 0 });
     this.finishIfDone(record, command);
@@ -1853,7 +1835,7 @@ export class TeamsService extends Service {
       // ran. Reported the same way, because a seat that quietly drops out of
       // a command looks exactly like one that had nothing to say.
       const text = `⚠️ 该席位未能执行：${error instanceof Error ? error.message : String(error)}`;
-      recordSpoken(host, seat.displayName, `${replyTag(record, command)}${text}`);
+      record.log.append(seat.displayName, `${replyTag(record, command)}${text}`);
       reply = { seatId: seat.seatId, displayName: seat.displayName, text, failed: true, contextLines: 0 };
     } finally {
       record.seatBusy.delete(seat.seatId);
@@ -1919,8 +1901,7 @@ export class TeamsService extends Service {
     }
     command.abort.abort(new Error("已叫停"));
     if (!started) command.withdrawn = true;
-    recordSpoken(
-      record.handle.agent,
+    record.log.append(
       "系统",
       started
         ? `⏹ 主持人叫停了「${excerpt(command.instruction)}」`
@@ -1940,7 +1921,7 @@ export class TeamsService extends Service {
     }
     const seatIds = command.seatIds.filter((seatId) => record.seats.some((seat) => seat.seatId === seatId));
     if (seatIds.length === 0) throw new Error("这条命令点名的席位都已经不在团队里了。");
-    const quotes = quotesFrom(transcriptOf(record.handle.agent), command.quoteIds);
+    const quotes = quotesFrom(record.log.events(), command.quoteIds);
     record.commands = record.commands.filter((candidate) => candidate !== command);
     const sent = this.submit(record, command.instruction, seatIds, quotes, command.materialIds, command.quoteIds);
     return { commandId: sent.commandId };
@@ -2019,7 +2000,7 @@ export class TeamsService extends Service {
     // Taken BEFORE the window, which the assembler builds from the record as
     // it stands at the call: anything landing after this is what the next
     // continuing turn is handed.
-    const last = transcriptOf(host).at(-1)?.turnId;
+    const last = record.log.events().at(-1)?.turnId;
     const attempt = await this.contextFor(record.teamId, seat.seatId, continuing ? seat.displayName : undefined, {
       ...(seenUpTo === undefined ? {} : { seenUpTo }),
       ...(exclude.length === 0 ? {} : { exclude }),
@@ -2102,8 +2083,7 @@ export class TeamsService extends Service {
       // from the top and its instruction appears twice. That is the right
       // trade — we cannot know whether the interrupted seat's work landed —
       // but an unexplained duplicate reads like a bug.
-      recordSpoken(
-        host,
+      record.log.append(
         "系统",
         `▶ 从第 ${startFrom + 1} 阶段「${agenda.phases[startFrom]?.title ?? ""}」继续。` +
           `已跑完的阶段不重跑；上次中断在半途的那个阶段会从头再来一遍。`,
@@ -2184,7 +2164,7 @@ export class TeamsService extends Service {
             // failure rather than skipped: a task nobody ran and a seat with
             // nothing to say are the same silence.
             const text = `⚠️ 议程点名了不在名册上的席位「${run.task.seatId}」，本条未执行。`;
-            recordSpoken(host, "系统", text);
+            record.log.append("系统", text);
             replies.push({
               seatId: run.task.seatId,
               displayName: run.task.seatId,
@@ -2201,7 +2181,7 @@ export class TeamsService extends Service {
               : await this.windowForSeat(record, host, seat);
 
           const instructionId = newTurnId();
-          recordSpoken(host, record.input.hostDisplayName, `（${phase.title}）${run.task.instruction}`, instructionId);
+          record.log.append(record.input.hostDisplayName, `（${phase.title}）${run.task.instruction}`, instructionId);
           record.handed.set(seat.seatId, instructionId);
           const reply = await this.runSeat(record, host, seat, run.task.instruction, window, running.abort.signal);
           replies.push(reply);
@@ -2329,7 +2309,8 @@ export class TeamsService extends Service {
       completed: [...running.completedTasks],
       remaining: outstandingWork(running.agenda, running.completedPhases, running.completedTasks),
       artifacts: [...record.artifacts],
-      discussion: transcriptOf(record.handle.agent)
+      discussion: record.log
+        .events()
         .filter((entry) => entry.kind === "user/message" && entry.text.length > 0)
         .map((entry) => entry.text),
     };
@@ -2346,7 +2327,7 @@ export class TeamsService extends Service {
     const absolute = join(record.input.projectFolder, relative);
     await mkdir(dirname(absolute), { recursive: true });
     await writeFile(absolute, text, "utf8");
-    recordSpoken(record.handle.agent, "系统", `已写入 ${relative}`);
+    record.log.append("系统", `已写入 ${relative}`);
     // Told to the assembler as data, not left to be parsed back out of that
     // line. A checkpoint index rebuilt by reading the transcript would depend
     // on the wording of a log message never meant to be an interface.
@@ -2580,7 +2561,7 @@ export class TeamsService extends Service {
       const reached = capReached(record, seat);
       if (reached !== undefined) {
         const text = `⚠️ ${seat.displayName} ${reached}`;
-        recordSpoken(host, "系统", text);
+        record.log.append("系统", text);
         return {
           seatId: seat.seatId,
           displayName: seat.displayName,
@@ -2597,7 +2578,7 @@ export class TeamsService extends Service {
       // exists after the first one, so the notice cannot repeat.
       const memory = await this.projectMemoryFor(record, seat);
       if (memory?.kind === "missing") {
-        recordSpoken(host, "系统", memory.notice);
+        record.log.append("系统", memory.notice);
       }
       // Sent only when this seat is opening a FRESH conversation. A resumed
       // one is still carrying the copy it was handed, and re-sending it would
@@ -2710,7 +2691,7 @@ export class TeamsService extends Service {
           contextTokens: usage?.contextTokens,
         });
       }
-      recordSpoken(host, seat.displayName, `${replyTag(record, command)}${text}`);
+      record.log.append(seat.displayName, `${replyTag(record, command)}${text}`);
       // Counted before the reply is returned, and counted on failures too:
       // a turn that burned tokens and then errored still cost what it cost.
       record.usage = addUsage(record.usage, usage);
@@ -2724,7 +2705,7 @@ export class TeamsService extends Service {
       // prompt for a decision they made themselves.
       const stopped = signal?.aborted === true && text.trim() === "";
       const answer = stopped ? `⏹ ${seat.displayName} 被叫停，这一轮没有答复。` : text;
-      if (stopped) recordSpoken(host, "系统", answer);
+      if (stopped) record.log.append("系统", answer);
       return {
         seatId: seat.seatId,
         displayName: seat.displayName,
@@ -2739,7 +2720,7 @@ export class TeamsService extends Service {
       // nothing to say.
       const detail = error instanceof Error ? error.message : String(error);
       const text = `⚠️ 该席位未能执行：${detail}`;
-      recordSpoken(host, seat.displayName, `${replyTag(record, command)}${text}`);
+      record.log.append(seat.displayName, `${replyTag(record, command)}${text}`);
       return {
         seatId: seat.seatId,
         displayName: seat.displayName,
@@ -2911,6 +2892,8 @@ interface TeamRecord {
   /** Mutable: a team can be renamed, and the record is what gets persisted. */
   input: CreateTeamInput;
   readonly handle: AgentHandle;
+  /** What was said. The only way anything here reads or writes the record. */
+  readonly log: TeamLog;
   /**
    * Seat turns currently running, plus one for a running agenda. Folding
    * starts only at zero.
@@ -3092,30 +3075,6 @@ interface RunningAgenda {
 }
 
 /**
- * Write one line of the discussion into the team record.
- *
- * Appended to the host's log, never sent through its inbox. The inbox is how
- * an agent is given work: `followup` wakes it into a turn — which would put an
- * LLM in the chair — and `inject` parks the text until some later message
- * wakes it, so the record would lag the discussion and lose its tail entirely
- * when a team goes quiet. Both were tried; both were wrong.
- *
- * The host node runs no turns. Its log is the team's transcript, and what a
- * seat is shown next round is assembled from that log rather than from
- * anything queued on an agent.
- */
-function recordSpoken(host: Agent, speaker: string, text: string, turnId?: string): void {
-  host.session.append(
-    "user/message",
-    spokenMessage(speaker, text, turnId) as never,
-    // `SurfaceOp` is the literal 'append', not an object. Every
-    // surface-eligible event must declare how it joins the ordered surface
-    // that model history is derived from.
-    { surfaceOp: "append" } as never,
-  );
-}
-
-/**
  * The three events that make a session real to dsh.
  *
  * Extracted from `markSession` so a test can hand them to dsh's OWN
@@ -3148,20 +3107,6 @@ export function sessionMarkEvents(
   ];
 }
 
-/**
- * One line of the team record, in the shape storage requires.
- *
- * Exported so a test can hand it to dsh's own `adoptSessionEvent` — the
- * function whose validator rejected the earlier shape. Restating the
- * requirement in an assertion would have been worth nothing here: the reason
- * the bug survived is that this package's writer and reader agreed with each
- * other and neither agreed with storage.
- */
-/** A fresh id for one line of the record. */
-function newTurnId(): string {
-  return `squad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 /** The tag naming the command a reply answers, when one is needed. See `commands.ts`. */
 function replyTag(record: TeamRecord, command: Command | undefined): string {
   return command === undefined ? "" : tagFor(command, record.commandSeq);
@@ -3184,60 +3129,6 @@ function viewOfCommand(record: TeamRecord, command: Command): CommandView {
     ...(command.note === undefined ? {} : { note: command.note }),
     ...(command.withdrawn === true ? { withdrawn: true } : {}),
   };
-}
-
-export function spokenMessage(speaker: string, text: string, turnId?: string): Record<string, unknown> {
-  return {
-    // For `user/message` the event's data IS the message — `data.id`,
-    // `data.role`, `data.source`, `data.content` — not `data.message.*`.
-    // The nested shape was written here first and read back by this
-    // package's own transcript reader, so both halves agreed and the record
-    // looked correct for weeks. It was only unreadable from STORAGE:
-    // reloading threw "lacks an identified message", which nothing in
-    // process ever did, because nothing in process ever reloaded.
-    //
-    // (`assistant/message` and `tool/result` DO nest under `.message`.
-    // `user/message` is the exception, and copying its neighbours is what
-    // produced the bug.)
-    id: turnId ?? newTurnId(),
-    role: "user",
-    // `host` is not a legal source kind — the map is user/plugin/model/tool.
-    // `user` is the truthful one: every line here is input arriving at the
-    // host's session from outside any model, and who said it is already in
-    // the text.
-    source: { kind: "user" },
-    content: [{ type: "text", text: `【${speaker}】${text}` }],
-  };
-}
-
-/**
- * Flatten the host session log into the shape assembly reads.
- *
- * Every event, in order. `user/message` carries the discussion and gets its
- * text; everything else travels with empty text so the assembler still sees
- * the kind — which is the point, because one of its tables exists to catch
- * kinds that prove the host node ran a turn.
- */
-function transcriptOf(host: Agent): readonly TranscriptEvent[] {
-  // `snapshotEvents()`, not `.events`. 0.1.2 replaced the property with an
-  // explicit range snapshot; the no-argument call is the whole log, and it is
-  // frozen, which is what a reader wants anyway.
-  return host.session.snapshotEvents().map((event) => {
-    // Flat, matching what `recordSpoken` writes and what the persistence layer
-    // requires. Reading `.message` here is what let the wrong write shape go
-    // unnoticed: the reader agreed with the writer, and neither agreed with
-    // storage.
-    const data = event.data as { id?: unknown; content?: unknown } | undefined;
-    const content = Array.isArray(data?.content) ? (data.content as ContentBlock[]) : undefined;
-    return {
-      kind: event.type,
-      text: content === undefined ? "" : textOf(content),
-      // The message id when there is one; otherwise the sequence number, which
-      // is contiguous and unique by the log's own contract.
-      turnId: typeof data?.id === "string" ? data.id : `seq-${event.seq}`,
-      at: event.time,
-    };
-  });
 }
 
 /**
@@ -3266,16 +3157,6 @@ function capReached(record: TeamRecord, seat: SeatSpec): string | undefined {
     record.authModes.get(seat.seatId) ?? "subscription",
   );
 }
-
-const textOf = (blocks: readonly ContentBlock[]): string =>
-  blocks
-    .map((block) =>
-      typeof block === "object" && block !== null && "text" in block && typeof block.text === "string"
-        ? block.text
-        : "",
-    )
-    .join("")
-    .trim();
 
 /** How long one team may take to come back before it is skipped. */
 const RESTORE_TIMEOUT_MS = 20_000;
