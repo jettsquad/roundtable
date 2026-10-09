@@ -112,7 +112,40 @@ const NEEDED_UNSCOPED = ["zod"];
  * versions (`packages/client/runtime` became `packages/client/modules`, and
  * cordis lives under `vendor/`).
  */
-const sourceRoot = process.env.DSH_SOURCE;
+const explicitSource = process.env.DSH_SOURCE;
+
+/**
+ * The checkout this repository was last bound to, when that is no longer the
+ * one the farm points into.
+ *
+ * `switch-dsh` moves Squad onto another build by linking with `DSH_SOURCE`,
+ * and writes the binding down. But dsh 0.2 no longer keeps the farm at all —
+ * the old one is left where it was, still pointing at the build that was
+ * switched AWAY from. A plain `npm install` afterwards runs this script with
+ * no `DSH_SOURCE`, and reading the farm would quietly link the repository
+ * back to the old build while everything else ran the new one. So the
+ * recorded binding wins over a farm that disagrees with it.
+ */
+function boundElsewhere() {
+  const stampFile = join(repoRoot, ".dsh-link.json");
+  if (!existsSync(stampFile)) return undefined;
+  let bound;
+  try {
+    bound = JSON.parse(readFileSync(stampFile, "utf8")).harnessRoot;
+  } catch {
+    return undefined;
+  }
+  if (typeof bound !== "string" || !existsSync(join(bound, "apps/cli/lib/bin.js"))) return undefined;
+  const farmCordis = join(farm, "cordis");
+  if (!existsSync(farmCordis)) return bound;
+  try {
+    return readlinkSync(farmCordis).startsWith(`${bound}/`) ? undefined : bound;
+  } catch {
+    return bound;
+  }
+}
+
+const sourceRoot = explicitSource ?? boundElsewhere();
 
 /** name → package directory, built by scanning a source checkout once. */
 function indexSource(root) {
@@ -164,7 +197,9 @@ function inStore(root, name) {
 const sourceIndex = sourceRoot === undefined ? undefined : indexSource(sourceRoot);
 
 if (sourceIndex !== undefined) {
-  console.log(`DSH_SOURCE=${sourceRoot} —— 从源码 checkout 解析（找到 ${sourceIndex.size} 个包）。`);
+  console.log(
+    `${explicitSource === undefined ? "按 .dsh-link.json 记下的绑定" : "DSH_SOURCE"}=${sourceRoot} —— 从源码 checkout 解析（找到 ${sourceIndex.size} 个包）。`,
+  );
 } else if (!existsSync(farm)) {
   console.error(
     `找不到 DSH 的包农场：${farm}\n` +
