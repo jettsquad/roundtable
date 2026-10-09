@@ -2020,6 +2020,10 @@ export class TeamsService extends Service {
     const command = record.commands.find((candidate) => candidate.commandId === commandId);
     if (command === undefined) throw new Error("没有这条命令。");
     if (!isOpen(command)) throw new Error("这条命令已经结束了。");
+    // Already stopped, and its seats are still winding down. A second click
+    // in that second or two used to write a second 「叫停了」 line for the
+    // one stop.
+    if (command.abort.signal.aborted) return;
     let started = false;
     for (const [seatId, state] of command.seats) {
       if (state === "queued") command.seats.set(seatId, "stopped");

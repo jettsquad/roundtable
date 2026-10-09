@@ -98,9 +98,33 @@ const COMPAT_LEVELS: readonly ReasoningEffort[] = ["low", "medium", "high", "xhi
  * The patch rows for this connection, or nothing when the profile's own
  * defaults already say everything.
  */
+/**
+ * Whether an endpoint is DeepSeek's own public API, as opposed to a gateway.
+ *
+ * The bare host, with or without a trailing slash or `/v1` — the forms a
+ * person types when asked for "the DeepSeek address".
+ */
+export function isDeepSeekPublicEndpoint(endpoint: string): boolean {
+  try {
+    const url = new URL(endpoint.trim());
+    return url.hostname === "api.deepseek.com" && /^\/?(v1\/?)?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export function buildDshPatch(input: PatchInput): string | undefined {
   const model = input.model.trim();
-  const baseUrl = input.baseUrl.trim();
+  // DeepSeek's own endpoint is left for dsh to choose. Which path that is
+  // belongs to the dsh version, not to the connection: 0.1.x posted to
+  // `https://api.deepseek.com/chat/completions`, and 0.2 speaks the Messages
+  // API from `https://api.deepseek.com/anthropic`. A connection saved with
+  // the first address, handed to 0.2 as a `baseURL`, became
+  // `https://api.deepseek.com/v1/messages` — and every seat on DeepSeek's own
+  // model answered 「HTTP_404: DeepSeek Messages request failed」 the day dsh
+  // was upgraded. A gateway's address is still passed through as given.
+  const official = isDeepSeekModel(model) || model === "" ? isDeepSeekPublicEndpoint(input.baseUrl) : false;
+  const baseUrl = official ? "" : input.baseUrl.trim();
   const effort = input.effort;
   if (model === "" && effort === undefined) return undefined;
 
