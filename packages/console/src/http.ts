@@ -29,6 +29,7 @@
  *   would let a model decide who speaks, which is the one thing this product
  *   must not be, arriving by the back door after the front one was shut.
  */
+import { BACKEND_TOOLS, inspectTool, upgradeTool } from "./backend-tools.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
 
@@ -1415,6 +1416,34 @@ export function registerSquadApi(ctx: Context): () => void {
             res.end(JSON.stringify({ ok: true }));
             return;
           }
+        }
+        if (suffix === "/tools" && req.method === "GET") {
+          // Read on demand, never in the two-second snapshot: each row costs
+          // a `--version` spawn and a registry lookup.
+          const tools = await Promise.all(BACKEND_TOOLS.map((tool) => inspectTool(tool)));
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ tools }));
+          return;
+        }
+        if (suffix === "/tools/upgrade" && req.method === "POST") {
+          const body = await readJson<{ tool: string }>(req);
+          const tool = BACKEND_TOOLS.find((one) => one === body.tool);
+          if (tool === undefined) throw new Error(`没有这个后端工具：${body.tool}。`);
+          // Not under a seat that is running: the installer replaces the very
+          // program that seat's child is executing, and the turn it costs is
+          // one somebody is waiting on.
+          const busy = ctx.teams
+            .list()
+            .map((teamId) => ctx.teams.get(teamId))
+            .filter((team) => team?.busy === true)
+            .map((team) => team?.displayName ?? "");
+          if (busy.length > 0) {
+            throw new Error(`还有席位在答题（${[...new Set(busy)].join("、")}），等它们答完再升级。`);
+          }
+          const report = await upgradeTool(tool);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(report));
+          return;
         }
         if (suffix === "/agents/test" && req.method === "POST") {
           const body = await readJson<{ templateId: string }>(req);

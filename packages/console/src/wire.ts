@@ -14,6 +14,48 @@
  * waiting for a field rename.
  */
 import type { PromptBlock, TeamPrompts } from "@squad/shared";
+
+// The CLIs seats run on. The shapes live here, with every other shape both
+// halves share; the module that fills them in spawns processes and stays on
+// the server.
+export type BackendTool = "claude-code" | "codex" | "dsh";
+
+/**
+ * How a tool got onto this machine — which decides how it is upgraded.
+ *
+ * Detected, never assumed. `/opt/homebrew/bin/codex` looks like a Homebrew
+ * install and is an npm one; `brew upgrade codex` was the first thing tried
+ * on it and did nothing.
+ */
+export type InstallMethod = "npm-global" | "native" | "git-checkout" | "unknown";
+
+export interface ToolStatus {
+  readonly tool: BackendTool;
+  /** The executable's name, as a person would type it. */
+  readonly command: string;
+  /** Absent when the tool is not installed, or would not say. */
+  readonly installed?: string | undefined;
+  /** Absent when the registry could not be reached. */
+  readonly latest?: string | undefined;
+  readonly outdated: boolean;
+  readonly method: InstallMethod;
+  /** The upgrade as a command line, for showing — and for doing by hand. */
+  readonly upgradeCommand?: string | undefined;
+  /** Whether the button may run that command itself. */
+  readonly canUpgrade: boolean;
+  /** Why something above is missing, in a sentence a person can act on. */
+  readonly problem?: string | undefined;
+}
+
+export interface UpgradeReport {
+  readonly tool: BackendTool;
+  readonly ok: boolean;
+  readonly before?: string | undefined;
+  readonly after?: string | undefined;
+  /** What the commands printed, newest last. Shown when it did not work. */
+  readonly log: string;
+}
+
 import type {
   AgendaSpec,
   AgentTemplate,
