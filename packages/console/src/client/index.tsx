@@ -100,6 +100,32 @@ async function connectWorkspace(ctx: Context, workspaceId: string): Promise<stri
   return await ctx.sessions.create({ workspaceId: workspaceId as never });
 }
 
+/**
+ * Show a session — through whichever service this dsh keeps that act on.
+ *
+ * Up to 0.1.x it was `ctx.sessions.open`. 0.2 took selection off the sessions
+ * service (it now hands out retained references instead) and made opening a
+ * navigation act: `uiWorkspace.openSession`. Both are tried by looking, so
+ * one build runs on the dsh being upgraded to and on the one a rollback
+ * returns to.
+ *
+ * `reflect.get`, not a field read: `uiWorkspace` is not in this plugin's
+ * `inject`, and adding it there would leave the whole panel waiting forever
+ * on a dsh that does not publish it.
+ */
+function openSession(ctx: Context, sessionId: string): void {
+  const sessions = ctx.sessions as unknown as { open?: (id: string) => void };
+  if (typeof sessions.open === "function") {
+    sessions.open(sessionId);
+    return;
+  }
+  const navigation = ctx.reflect.get("uiWorkspace") as { openSession?: (target: string) => void } | undefined;
+  if (typeof navigation?.openSession !== "function") {
+    throw new Error("这个版本的 dsh 上找不到打开会话的入口（sessions.open 和 uiWorkspace.openSession 都没有）。");
+  }
+  navigation.openSession(sessionId);
+}
+
 export function apply(ctx: Context): void {
   // Dictionaries first: a slot that renders before they land would show the
   // fallback for one frame, and the registration is synchronous anyway.
@@ -119,9 +145,7 @@ export function apply(ctx: Context): void {
   // reuse a workspace's blank session instead of minting a second one.
   setShellSessions({
     connectWorkspace: (workspaceId: string) => connectWorkspace(ctx, workspaceId),
-    open: (sessionId: string) => {
-      ctx.sessions.open(sessionId as never);
-    },
+    open: (sessionId: string) => openSession(ctx, sessionId),
     // `workspaceId`, not `id`. The first version read `.id`, which is not a
     // field on `WorkspaceView` — so the lookup always answered "undefined"
     // and every team reported 「还没注册成 workspace」 while its workspace
