@@ -605,6 +605,14 @@ export class TeamsService extends Service {
   private domain: Domain<typeof SQUAD_TABLE_DOMAIN> | undefined;
   /** Serialises writes so two edits in one tick cannot lose one another. */
   private writes: Promise<void> = Promise.resolve();
+  /**
+   * Settles once every saved team has been brought back (or reported).
+   *
+   * Restoring runs after boot, and for a minute or two a team exists on disk
+   * and not in `get()`. Anything that would CREATE a record on finding none
+   * has to wait for this first — see `findOrCreateSitting`.
+   */
+  private restored: Promise<void> = Promise.resolve();
   /** teamId → its export in flight, so two never write one file at once. */
   private readonly exports = new Map<string, Promise<void>>();
 
@@ -679,7 +687,7 @@ export class TeamsService extends Service {
     // What this costs: for a moment after boot, a team exists on disk and not
     // in `get()`. Every surface polls, so it appears; and a team that is
     // slow to come back is visibly absent rather than invisibly blocking.
-    void this.restoreAll(domain).catch((error: unknown) => {
+    this.restored = this.restoreAll(domain).catch((error: unknown) => {
       this.ctx.logger.warn(`恢复团队时出错：${error instanceof Error ? error.message : String(error)}`);
     });
   }
@@ -1244,6 +1252,13 @@ export class TeamsService extends Service {
     readonly projectFolder: string;
     readonly sessionId: string;
   }): Promise<Team | undefined> {
+    // Not before the saved sittings are back. "No sitting for this session"
+    // is only true once restoring has finished; asked earlier, it is true of
+    // every session, and each one gets a second, empty sitting. dsh 0.2's
+    // shell mounts a view per session as the page loads and each view asks —
+    // forty-two empty twins were made that way in the two minutes one start
+    // took to bring eighty-four sittings back.
+    await this.restored;
     const records = [...this.teams.values()];
     const existing = recordForSession(records, input.sessionId, (record) => record.log.size());
     if (existing !== undefined) {
