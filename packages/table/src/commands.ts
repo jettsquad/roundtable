@@ -115,3 +115,22 @@ export function replyTag(
   const clock = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
   return `（答 ${clock}「${excerpt(command.instruction)}」）\n`;
 }
+
+/** What is appended to a reply that a stop cut short. */
+export const CUT_SHORT_MARK = "（被叫停，未答完）";
+
+/**
+ * A reply as it goes into the record, when a stop interrupted it.
+ *
+ * A seat that is stopped a few seconds in has usually said something — 「我先
+ * 读两份文档再评审。」 — and that opening line, recorded bare, reads as its
+ * whole answer: a member who looked at the question and had one sentence to
+ * offer. Marked, it reads as what it is. The next seat to read the record
+ * needs that as much as the person does.
+ *
+ * Nothing to mark when the seat had said nothing; that case gets its own
+ * line saying it was stopped.
+ */
+export function cutShort(text: string): string {
+  return text.trim() === "" ? text : `${text.trimEnd()}\n\n${CUT_SHORT_MARK}`;
+}
