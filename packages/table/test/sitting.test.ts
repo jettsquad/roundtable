@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { baseForFolder, recordForSession, restoreOrder, unclaimed } from "../src/sitting.ts";
+import { baseForFolder, recordForSession, restoreOrder, unclaimed, nextHostId } from "../src/sitting.ts";
 
 const team = { teamId: "t1", sessionId: "t1", projectFolder: "/w" };
 const sittingA = { teamId: "sit-a", sessionId: "sess-a", baseTeamId: "t1", projectFolder: "/w" };
@@ -90,5 +90,19 @@ describe("recordForSession with duplicates", () => {
   });
   it("keeps the first when they weigh the same", () => {
     expect(recordForSession([dup("a", 3), dup("b", 3)], "s", (row) => row.size)?.teamId).toBe("a");
+  });
+});
+
+describe("nextHostId", () => {
+  it("第一次换主持节点：团队 id 加 -h2", () => {
+    // 前缀留着：Squad 靠 team- / sit- 开头认出自己的主持节点，认不出来就会把它
+    // 当成人开的会话，标记后显示在侧边栏里。
+    expect(nextHostId("team-abc", "team-abc")).toBe("team-abc-h2");
+    expect(nextHostId("sit-xyz", "sit-xyz")).toBe("sit-xyz-h2");
+  });
+
+  it("再换一次接着往上数，不跟上一个撞", () => {
+    expect(nextHostId("team-abc", "team-abc-h2")).toBe("team-abc-h3");
+    expect(nextHostId("team-abc", "team-abc-h9")).toBe("team-abc-h10");
   });
 });

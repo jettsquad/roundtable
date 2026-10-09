@@ -86,6 +86,27 @@ if (back) {
   }
 }
 
+// ── Every discussion already in Squad's own file ────────────────────────────
+// A dsh from 0.1.5 on cannot open a host node's old log, and Squad then gives
+// the team a fresh host node — which is only safe when the discussion has
+// already been copied out of that log. The copy is made the first time a team
+// is opened by a build that has `storedTeamLog`, so it has to have run once on
+// the dsh being left. Checked here rather than discovered afterwards, as a
+// team that comes back with nothing in it.
+if (!back) {
+  const tablePath = join(dshHome, "storages", "squad_table.json");
+  if (existsSync(tablePath)) {
+    const teams = Object.keys(JSON.parse(readFileSync(tablePath, "utf8")).tables?.teams ?? {});
+    const without = teams.filter((teamId) => !existsSync(join(dshHome, "squad-records", `${teamId}.jsonl`)));
+    if (without.length > 0) {
+      fail(
+        `${without.length} / ${teams.length} 场讨论还没有搬进 Squad 自己的记录文件（例如 ${without[0]}）。\n` +
+          "先在现用的 dsh 上启动一次 Squad（npm run ui），等所有团队恢复出来，再停掉它、重新切换。",
+      );
+    }
+  }
+}
+
 const stamp = existsSync(stampPath) ? JSON.parse(readFileSync(stampPath, "utf8")) : undefined;
 const current = stamp?.harnessRoot;
 if (current === target) fail(`已经在用这份 dsh 了：${target}`);

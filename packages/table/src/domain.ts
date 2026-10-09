@@ -235,6 +235,16 @@ const teamRecord = z.object({
     )
     .optional(),
   /**
+   * The host node's dsh session, once it is no longer the one named after
+   * the team.
+   *
+   * It starts out as the team id and stays that way unless dsh can no longer
+   * open that session — a format upgrade that refuses the old log — in which
+   * case the team is given a fresh host node and this says which. Absent
+   * means "the team id", so every row written before this parses unchanged.
+   */
+  hostSessionId: z.string().optional(),
+  /**
    * Where this team sits in the list, when somebody has said.
    *
    * Absent means 「从没排过」, and that is not the same as first: a list that
