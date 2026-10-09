@@ -1417,6 +1417,17 @@ export function registerSquadApi(ctx: Context): () => void {
             return;
           }
         }
+        if (suffix === "/records/check" && req.method === "GET") {
+          // Every team's record, file against dsh session. For confirming a
+          // migration: nothing here is shown in the panel.
+          const checks = ctx.teams.list().flatMap((teamId) => {
+            const team = ctx.teams.get(teamId);
+            return team === undefined ? [] : [{ teamId, displayName: team.displayName, ...team.recordCheck() }];
+          });
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ checks }));
+          return;
+        }
         if (suffix === "/tools" && req.method === "GET") {
           // Read on demand, never in the two-second snapshot: each row costs
           // a `--version` spawn and a registry lookup.
