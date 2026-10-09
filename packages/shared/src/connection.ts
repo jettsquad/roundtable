@@ -229,6 +229,30 @@ export function modelArgumentFor(connection: SeatConnection): string | undefined
 }
 
 /**
+ * The connection a seat should run on NOW, given the one its provider was
+ * registered with.
+ *
+ * A provider is registered once per connection and lives until the
+ * connection is deleted, so whatever it captured at registration is as old
+ * as the process. Read from there, an edited model or endpoint was saved,
+ * shown in the library, and ignored until the next restart — a seat went on
+ * asking for the model the person had just replaced. Looked up per start,
+ * the edit reaches the very next turn, the same way a rotated key already
+ * did.
+ *
+ * Falls back to the registered copy when the lookup finds nothing: the
+ * registration is about to be withdrawn, and the turn already under way
+ * should fail on its own terms rather than on a missing record.
+ */
+export function liveConnection<T extends { readonly connectionId: string }>(
+  registered: T | undefined,
+  lookup: (connectionId: string) => T | undefined,
+): T | undefined {
+  if (registered === undefined) return undefined;
+  return lookup(registered.connectionId) ?? registered;
+}
+
+/**
  * A connection as a configuration screen may see it.
  *
  * Here rather than in the library because it crosses the wall: ④ the
