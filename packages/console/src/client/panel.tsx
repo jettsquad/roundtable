@@ -13,6 +13,7 @@ import { useT } from "./locale.ts";
 import type { SquadKey } from "./locales.ts";
 import { Agenda } from "./agenda.tsx";
 import { AgentsPage } from "./agents.tsx";
+import { BackendTools } from "./backend-tools.tsx";
 import { Connections } from "./connections.tsx";
 import { Discussion } from "./discussion.tsx";
 import { CriteriaPage } from "./criteria.tsx";
@@ -504,7 +505,10 @@ export function TeamPanel(): JSX.Element | null {
             <CreateForm agents={snapshot.data.agents} picker={snapshot.data.picker} onCreated={again} />
           </div>
         ) : page === "agents" ? (
-          <AgentsPage agents={snapshot.data.agents} connections={snapshot.data.connections} onChanged={again} />
+          <>
+            <BackendTools />
+            <AgentsPage agents={snapshot.data.agents} connections={snapshot.data.connections} onChanged={again} />
+          </>
         ) : page === "blocks" ? (
           <BlocksPage blocks={snapshot.data.blocks} onChanged={again} />
         ) : page === "criteria" ? (

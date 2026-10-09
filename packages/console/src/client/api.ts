@@ -14,7 +14,18 @@ import type {
   TeamPlan,
   TeamPrompts,
 } from "@squad/shared";
-import type { AgentRequest, DirectoryListing, NativePickResult, PickerKind, SquadSnapshot } from "../wire.ts";
+import type {
+  AgentRequest,
+  BackendTool,
+  DirectoryListing,
+  NativePickResult,
+  PickerKind,
+  SquadSnapshot,
+  ToolStatus,
+  UpgradeReport,
+} from "../wire.ts";
+
+export type { BackendTool, ToolStatus, UpgradeReport };
 
 export type { AgentCheckReport, AgentTemplate, DirectoryListing, PickerKind, SquadSnapshot };
 export type TeamSummary = SquadSnapshot["teams"][number];
@@ -175,6 +186,10 @@ export const api = {
     call("/team-plan/redraft", "POST", body),
   /** Put the designer's five phases up as a draft. `placed` is false for an ordinary team. */
   designerAgenda: (body: { teamId: string }): Promise<{ placed: boolean }> => call("/agenda/designer", "POST", body),
+  /** The CLIs seats run on: installed version, newest version, how to upgrade. */
+  tools: (): Promise<{ tools: readonly ToolStatus[] }> => call("/tools", "GET"),
+  /** Upgrade one of them, and report whether it still runs afterwards. */
+  upgradeTool: (body: { tool: BackendTool }): Promise<UpgradeReport> => call("/tools/upgrade", "POST", body),
   say: (body: {
     teamId: string;
     instruction: string;

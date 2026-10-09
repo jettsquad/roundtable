@@ -1192,3 +1192,48 @@
   background: #c0392b;
   color: #fff;
 }
+
+/* The CLIs seats run on. A quiet block: it matters on the day a seat fails
+   for a reason that is not the seat's, and should not compete with the
+   agents on the days it does not. */
+.toolsBlock {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--dsh-color-border, #34343a);
+}
+
+.toolsList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.toolRow {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.toolName {
+  min-width: 96px;
+  font-weight: 600;
+}
+
+/* A newer version exists. Amber, not red: nothing is broken yet. */
+.toolOutdated {
+  color: #e0a040;
+}
+
+.toolLog {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #00000040;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
