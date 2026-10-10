@@ -251,6 +251,15 @@ export interface Team {
    * starts without being asked is work nobody decided to do.
    */
   rewindAgenda(phaseIndex: number): void;
+  /**
+   * Give up the confirmed agenda, finished or not.
+   *
+   * Only the plan goes: nothing said is removed, and a seat's CLI session is
+   * left as it is. Refused while the agenda is running — stopping work and
+   * deciding the plan was wrong are two decisions, and the first has its own
+   * button.
+   */
+  abandonAgenda(): void;
   /** Where this team sits in the list, when it has been arranged. */
   readonly order: number | undefined;
   /**
@@ -1684,6 +1693,29 @@ export class TeamsService extends Service {
           "系统",
           `⏪ 主持人把议程退回到第 ${phaseIndex + 1} 阶段「${title}」。` +
             `之前说过的话都留着——重跑这一阶段的席位看得见它们，包括为什么要重来。`,
+        );
+        this.persist(record);
+      },
+      abandonAgenda: () => {
+        const held = record.confirmed;
+        if (held === undefined) throw new Error("这支团队没有确认过的议程，没有可放弃的。");
+        if (record.running !== undefined) throw new Error("议程正在跑，先叫停再放弃。");
+        const total = held.agenda.phases.length;
+        record.confirmed = undefined;
+        this.note(
+          record,
+          "agenda-abandoned",
+          `主持人放弃了这份议程，当时完成 ${held.done.length} / ${total} 个阶段。`,
+          held.hash,
+        );
+        // Said in the record for the seats' sake. Their instructions in the
+        // discussion still read 「（阶段 2：…）」, and without this line the
+        // next thing asked of them looks like part of a plan that no longer
+        // exists.
+        record.log.append(
+          "系统",
+          `🗑 主持人放弃了这份议程（已完成 ${held.done.length} / ${total} 个阶段）。` +
+            `之前说过的话都留着；后面不再按它的阶段往下走。`,
         );
         this.persist(record);
       },

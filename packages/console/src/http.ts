@@ -1710,6 +1710,13 @@ export function registerSquadApi(ctx: Context): () => void {
           res.end(JSON.stringify({ ok: true }));
           return;
         }
+        if (suffix === "/agenda/abandon" && req.method === "POST") {
+          const body = await readJson<{ teamId: string }>(req);
+          teamOf(ctx, body.teamId).abandonAgenda();
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
         if (suffix === "/agenda/resume" && req.method === "POST") {
           const body = await readJson<{ teamId: string }>(req);
           const team = teamOf(ctx, body.teamId);

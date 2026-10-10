@@ -154,6 +154,7 @@ export const api = {
     call("/agenda/rewind", "POST", body),
   /** Carry on an agenda that was stopped, paused, or cut short by a restart. */
   resumeAgenda: (body: { teamId: string }): Promise<{ ok: true }> => call("/agenda/resume", "POST", body),
+  abandonAgenda: (body: { teamId: string }): Promise<{ ok: true }> => call("/agenda/abandon", "POST", body),
   /** Point a seat at an agent in the library and take its settings. */
   relinkSeat: (body: { teamId: string; seatId: string; templateId: string }): Promise<{ ok: true }> =>
     call("/seats/relink", "POST", body),
