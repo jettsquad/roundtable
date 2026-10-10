@@ -21,12 +21,14 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { providerForSeat, SEAT_PROVIDER, stripReasoning, type ReasoningEffort } from "@squad/shared";
+import type { QuietJudgement, QuietJudgementInput } from "./quiet.ts";
 import type { CheckpointPromptInput } from "./checkpoint.ts";
 import type { AgendaSpec } from "@squad/shared";
 import type { AgendaDraftInput } from "./agenda.ts";
 import {
   agendaFromReplyWith,
   assistWith,
+  judgeQuietWith,
   compressProjectMemoryWith,
   draftAgendaWith,
   writeCheckpointWith,
@@ -102,6 +104,9 @@ export type AssistTaskInput = AssistInput & SecretaryRun;
  */
 export type AgendaFromReplyInput = AgendaDraftInput & SecretaryRun & { readonly reply: string };
 
+/** A command that has gone quiet, for the secretary to say whether to wait. */
+export type JudgeQuietInput = QuietJudgementInput & SecretaryRun;
+
 /** A project file to shrink back under its limit. */
 export type CompressProjectMemoryInput = ProjectMemoryPromptInput & SecretaryRun;
 
@@ -144,6 +149,11 @@ export class SecretaryService extends Service {
 
   async writeTermination(input: WriteTerminationInput): Promise<string> {
     return writeTerminationWith(this.runner(input), input);
+  }
+
+  /** Say whether a quiet command should be waited for. Decides nothing else. */
+  async judgeQuiet(input: JudgeQuietInput): Promise<QuietJudgement> {
+    return judgeQuietWith(this.runner(input), input);
   }
 
   /** A runner backed by one fresh one-shot subagent per task, thrown away after. */

@@ -24,6 +24,7 @@ import { shortHash } from "@squad/shared";
 import { createTeamFrom, registerSquadApi } from "./http.ts";
 import { TEAM_DESIGNER_PLAN, designerAgendaFor, instantiateTeamPlan, latestPlanOf } from "./team-designer.ts";
 import { parseSay } from "./parse.ts";
+import { watchQuietCommands } from "./quiet-watch.ts";
 import { bannerFor, presence, showBanner } from "./notify.ts";
 
 /**
@@ -112,6 +113,9 @@ export class SquadConsole extends Service {
     // The browser half reads through this; every mutation stays on the
     // commands, where a person typed it.
     this.ctx.effect(() => registerSquadApi(this.ctx));
+    // A seat's quiet command goes to the secretary from here — the one place
+    // that holds both the teams and the secretary.
+    this.ctx.effect(() => watchQuietCommands(this.ctx));
 
     // A finished round is the moment someone who looked away wants to hear
     // about. Skipped while the panel is in front of them and when they turned

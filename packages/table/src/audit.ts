@@ -35,7 +35,8 @@ export type AuditKind =
   | "material-added"
   | "material-removed"
   | "checkpoint-folded"
-  | "checkpoint-revoked";
+  | "checkpoint-revoked"
+  | "seat-quiet";
 
 /** One line of the audit. */
 export interface AuditEntry {

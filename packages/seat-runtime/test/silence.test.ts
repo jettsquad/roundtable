@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { SEAT_SILENCE_LIMITS, silenceMessage, silenceVerdict } from "../src/silence.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SEAT_SILENCE_LIMITS, silenceMessage, silenceVerdict, watchSilence } from "../src/silence.ts";
 
 const limits = { idleMs: 600_000, firstOutputMs: 90_000 };
 
@@ -59,5 +59,88 @@ describe("SEAT_SILENCE_LIMITS", () => {
     // 期限压到那个数字附近，迟早会杀掉一个正在正常工作的席位——
     // 而一个乱叫的看门狗，会在它真正叫对的那天被忽略。
     expect(SEAT_SILENCE_LIMITS.firstOutputMs).toBeGreaterThanOrEqual(100_000 * 2.5);
+  });
+});
+
+describe("watchSilence：有命令在跑的席位", () => {
+  const fast = { idleMs: 10_000, firstOutputMs: 5_000, pollMs: 1_000 };
+  afterEach(() => vi.useRealTimers());
+
+  it("安静满一个窗口但有命令在跑：不中止，报一次，重新计时", async () => {
+    // 就是那个跑全量测试的席位：十五分钟不出声，命令却一直在跑。
+    vi.useFakeTimers();
+    const verdicts: string[] = [];
+    const quiets: number[] = [];
+    watchSilence(
+      async () => 100,
+      fast,
+      (reason) => verdicts.push(reason),
+      {
+        running: () => true,
+        onQuiet: (quietFor) => quiets.push(quietFor),
+      },
+    );
+    await vi.advanceTimersByTimeAsync(11_500);
+    expect(verdicts).toEqual([]);
+    expect(quiets).toHaveLength(1);
+    expect(quiets[0]).toBeGreaterThanOrEqual(10_000);
+    // 每满一个窗口报一次，而不是报过就再也不管。
+    await vi.advanceTimersByTimeAsync(10_500);
+    expect(quiets).toHaveLength(2);
+    expect(verdicts).toEqual([]);
+  });
+
+  it("命令跑完之后还是不出声，照旧判卡死", async () => {
+    vi.useFakeTimers();
+    const verdicts: string[] = [];
+    let running = true;
+    watchSilence(
+      async () => 100,
+      fast,
+      (reason) => verdicts.push(reason),
+      {
+        running: () => running,
+        onQuiet: () => undefined,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(11_500);
+    running = false;
+    await vi.advanceTimersByTimeAsync(11_500);
+    expect(verdicts).toEqual(["silent"]);
+  });
+
+  it("一个字都没出过的席位，不因为「有命令」被放过", async () => {
+    // 没出过字节就不可能启动过命令；这条线管的是端点连不上。
+    vi.useFakeTimers();
+    const verdicts: string[] = [];
+    watchSilence(
+      async () => 0,
+      fast,
+      (reason) => verdicts.push(reason),
+      {
+        running: () => true,
+        onQuiet: () => undefined,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(6_500);
+    expect(verdicts).toEqual(["no-output"]);
+  });
+
+  it("不读输出流的后端，规则和以前一样", async () => {
+    vi.useFakeTimers();
+    const verdicts: string[] = [];
+    watchSilence(
+      async () => 100,
+      fast,
+      (reason) => verdicts.push(reason),
+    );
+    await vi.advanceTimersByTimeAsync(11_500);
+    expect(verdicts).toEqual(["silent"]);
+  });
+});
+
+describe("silenceMessage：命令在跑", () => {
+  it("说清有命令没跑完时不会被中止", () => {
+    expect(silenceMessage("silent", { idleMs: 900_000, firstOutputMs: 300_000 })).toMatch(/命令还没跑完.*不会被中止/);
   });
 });

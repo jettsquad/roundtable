@@ -27,6 +27,7 @@ export { SecretaryService } from "./service.ts";
 export {
   agendaFromReplyWith,
   assistWith,
+  judgeQuietWith,
   compressProjectMemoryWith,
   draftAgendaWith,
   writeCheckpointWith,
@@ -36,6 +37,7 @@ export type { TerminationInput, TextTaskResult, TextTaskRunner } from "./tasks.t
 export type {
   CompressProjectMemoryInput,
   DraftAgendaInput,
+  JudgeQuietInput,
   SecretaryRun,
   WriteCheckpointInput,
   WriteTerminationInput,
@@ -61,3 +63,5 @@ export {
   buildTeamAgendaTerminationPrompt,
   validateTeamAgendaTerminationSummary,
 } from "./termination.ts";
+export { QUIET_TAIL_CHARS, buildQuietPrompt, parseQuietReply } from "./quiet.ts";
+export type { QuietJudgement, QuietJudgementInput } from "./quiet.ts";

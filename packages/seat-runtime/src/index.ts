@@ -26,13 +26,32 @@ import type { SubprocessHandle } from "@deepseek-ai/dsh-subprocess";
 import type { Context } from "@deepseek-ai/cordis";
 import type { SeatUsage } from "@squad/shared";
 import { silenceMessage, watchSilence, type SilenceLimits } from "./silence.ts";
-import { activityKey, beginActivity, endActivity, reportActivity } from "./activity.ts";
+import {
+  activityKey,
+  beginActivity,
+  endActivity,
+  raiseQuiet,
+  reportActivity,
+  reportDoing,
+  type OpenCommand,
+} from "./activity.ts";
 import { withoutHeartbeats } from "./alive.ts";
 
 export { silenceVerdict, watchSilence, silenceMessage, SEAT_SILENCE_LIMITS } from "./silence.ts";
-export type { SilenceLimits, SilenceReason } from "./silence.ts";
-export { activityFor, activityKey, beginActivity, endActivity, reportActivity, resetActivity } from "./activity.ts";
-export type { SeatActivity } from "./activity.ts";
+export type { SilenceBusy, SilenceLimits, SilenceReason } from "./silence.ts";
+export {
+  activityFor,
+  activityKey,
+  beginActivity,
+  endActivity,
+  onQuietCommand,
+  raiseQuiet,
+  reportActivity,
+  reportDoing,
+  resetActivity,
+  setQuietVerdict,
+} from "./activity.ts";
+export type { OpenCommand, QuietCommand, QuietListener, QuietVerdict, SeatActivity } from "./activity.ts";
 export {
   SEAT_ALIVE_PREFIX,
   SEAT_USAGE_PREFIX,
@@ -53,9 +72,24 @@ export {
   snapshotSeatSessions,
   type SeatSession,
 } from "./sessions.ts";
+export { COMMAND_SHOWN_CHARS, jsonLineFeeder, shownCommand } from "./tracker.ts";
 export { dshHome, seatStateDir } from "./home.ts";
 export { requestedEffort } from "./effort.ts";
 export { downloadMcpConfig } from "./download-tool.ts";
+
+/**
+ * Follows a seat's output as it arrives and says what is still open.
+ *
+ * Fed in pieces, in order, and a piece may end mid-line — the watchdog reads
+ * whatever has been written since it last looked.
+ */
+export interface StreamTracker {
+  feed(chunk: string, at?: number): void;
+  /** What the stream says was started and not finished. */
+  open(): readonly OpenCommand[];
+  /** The last thing the seat said in words. */
+  lastWords(): string | undefined;
+}
 
 /** What a backend's parser makes of one run's output. */
 export interface SeatOutcome {
@@ -94,6 +128,14 @@ export interface SeatRunSpec {
    */
   readonly parse: (raw: string, stderr?: string) => SeatOutcome;
   readonly limits: SilenceLimits;
+  /**
+   * How to read this backend's output while it runs.
+   *
+   * With one, a quiet seat whose stream says a command is still running is
+   * left alone and reported, rather than cancelled as wedged. Without one the
+   * watchdog has only the byte count, which is the old rule.
+   */
+  readonly tracker?: (() => StreamTracker) | undefined;
   readonly disposeGraceMs: number;
   /**
    * Run after the child settles, whatever happened.
@@ -222,6 +264,12 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
 
   const attempt = async (): Promise<SubagentResult> => {
     let silence: "silent" | "no-output" | undefined;
+    const tracker = spec.tracker?.();
+    // Where the last tick stopped reading. Each tick takes only what was
+    // written since: re-reading a long run from the start every two seconds
+    // is megabytes copied to learn one number.
+    let outOffset = 0;
+    let errOffset = 0;
     const watch = watchSilence(
       async () => {
         // BOTH streams. A backend that cannot stream its answer says it is
@@ -229,13 +277,20 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
         // would leave that signal unread — which is exactly the state this
         // was in: a healthy dsh seat cancelled at five minutes for producing
         // no output, while its child was emitting an event every second.
-        const out = (await child.collected.stdout?.readFrom(0))?.nextOffset ?? 0;
-        const err = (await child.collected.stderr?.readFrom(0))?.nextOffset ?? 0;
-        const bytes = out + err;
+        const out = child.collected.stdout?.readFrom(outOffset);
+        if (out !== undefined) {
+          outOffset = out.nextOffset;
+          if (tracker !== undefined && out.text !== "") tracker.feed(out.text);
+        }
+        errOffset = child.collected.stderr?.readFrom(errOffset).nextOffset ?? errOffset;
+        const bytes = outOffset + errOffset;
         // The same number the watchdog judges on. Reading it twice from two
         // places is how a display comes to disagree with the decision it is
         // supposed to be explaining.
-        if (activity !== undefined) reportActivity(activity, bytes);
+        if (activity !== undefined) {
+          reportActivity(activity, bytes);
+          if (tracker !== undefined) reportDoing(activity, tracker.open(), tracker.lastWords());
+        }
         return bytes;
       },
       limits,
@@ -243,6 +298,15 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
         silence = reason;
         requestCancel();
       },
+      tracker === undefined
+        ? undefined
+        : {
+            running: () => tracker.open().length > 0,
+            onQuiet: (quietForMs) => {
+              if (activity === undefined || request.label === undefined) return;
+              raiseQuiet(activity, { parentSessionId: request.parent.session.id, label: request.label }, quietForMs);
+            },
+          },
     );
     try {
       const outcome = await child.done;

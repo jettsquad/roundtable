@@ -192,9 +192,29 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
       }),
     }))
     .filter((entry) => entry.status.phase !== "idle");
-  // The one line worth reading when something is wrong: the detail of the
-  // seat that is closest to being given up on.
-  const worry = statuses.find((entry) => entry.status.phase === "stalling")?.status.detail;
+  // The lines worth reading: what a seat is running, which one is about to be
+  // given up on, and — first — the one somebody has to look at.
+  const SAID = ["attention", "stalling", "working"];
+  const details = statuses
+    .filter((entry) => SAID.includes(entry.status.phase) && entry.status.detail !== undefined)
+    .sort((a, b) => SAID.indexOf(a.status.phase) - SAID.indexOf(b.status.phase));
+  // Stop whatever this seat is in the middle of. A seat answering a command
+  // is stopped through that command, so the rest of the table carries on; a
+  // seat running an agenda task has no command of its own, and stopping it
+  // means stopping the agenda.
+  const stopSeat = (seatId: string): void => {
+    const command = (current.commands ?? []).find(
+      (one) => one.state === "running" && one.seats.some((seat) => seat.seatId === seatId && seat.state === "running"),
+    );
+    setError(undefined);
+    void (
+      command === undefined
+        ? api.stop({ teamId: current.teamId })
+        : api.cancelCommand({ teamId: current.teamId, commandId: command.commandId })
+    )
+      .then(onSent)
+      .catch((failure: unknown) => setError(String((failure as Error).message ?? failure)));
+  };
 
   const importFiles = async (files: FileList): Promise<void> => {
     setError(undefined);
@@ -603,7 +623,22 @@ export function SquadComposer({ folder, sessionId }: SquadComposerProps): JSX.El
           ))}
         </div>
       )}
-      {worry === undefined ? null : <div className={styles.hint}>{worry}</div>}
+      {details.map((entry) => (
+        <div
+          key={entry.seatId}
+          className={`${styles.statusDetail} ${entry.status.phase === "attention" ? styles.attention : ""}`}
+        >
+          {entry.displayName}：{entry.status.detail}
+          {entry.status.phase === "attention" ? (
+            <>
+              {" "}
+              <Button size="sm" onClick={() => stopSeat(entry.seatId)}>
+                {t("composer.stopSeat")}
+              </Button>
+            </>
+          ) : null}
+        </div>
+      ))}
       {blocked.length === 0 ? null : (
         <div className={styles.error}>
           {allBlocked ? t("composer.allBlocked") : t("composer.someBlocked")}

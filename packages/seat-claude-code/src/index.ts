@@ -41,6 +41,7 @@ import {
   reasoningEffortsFor,
 } from "@squad/shared";
 import { DELEGATION_TOOLS, buildArgv, seatDenials, type PermissionMode } from "./argv.ts";
+import { claudeTracker } from "./doing.ts";
 import { claudeConfigDirFor } from "./config-dir.ts";
 import { readStream } from "./stream.ts";
 
@@ -215,6 +216,7 @@ export class FencedClaudeCodeSeats extends Service {
           who: name,
           request,
           command: "claude",
+          tracker: claudeTracker,
           argv: ({ prompt, cwd }) =>
             buildArgv({
               prompt,

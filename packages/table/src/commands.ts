@@ -134,3 +134,28 @@ export const CUT_SHORT_MARK = "（被叫停，未答完）";
 export function cutShort(text: string): string {
   return text.trim() === "" ? text : `${text.trimEnd()}\n\n${CUT_SHORT_MARK}`;
 }
+
+/** How much of a failure to quote where a whole reply would not fit. */
+const WHY_CHARS = 120;
+
+/**
+ * The first thing a failed reply says, for a line that has room for one.
+ *
+ * A failed seat's text is its own explanation — the watchdog's verdict, the
+ * CLI's refusal — and its opening line is the part that names the cause.
+ */
+export function firstLine(text: string): string {
+  const lines = text
+    .split("\n")
+    .map((one) =>
+      one
+        .trim()
+        .replace(/^⚠️\s*/, "")
+        .trim(),
+    )
+    .filter((one) => one !== "");
+  // A line that ends in a colon is announcing the cause, not giving it —
+  // 「该席位没有给出答复：」 says nothing by itself. The line after it does.
+  const line = lines.find((one, index) => !/[:：]$/.test(one) || index === lines.length - 1) ?? "没有给出原因";
+  return line.length <= WHY_CHARS ? line : `${line.slice(0, WHY_CHARS)}…`;
+}

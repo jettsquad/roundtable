@@ -83,6 +83,19 @@ export function silenceVerdict(
 }
 
 /**
+ * What lets a quiet seat keep running: its stream says a command is open.
+ *
+ * Only ever consulted for `silent`. A seat that has not produced a byte has
+ * not started a command either, so `no-output` is never excused by this.
+ */
+export interface SilenceBusy {
+  /** Whether the seat's own output says something it started is unfinished. */
+  readonly running: () => boolean;
+  /** Called each time a full window passes in silence with a command open. */
+  readonly onQuiet: (quietForMs: number) => void;
+}
+
+/**
  * Cancel a seat that has gone silent — not one that is merely slow.
  *
  * Watches the stream: bytes arriving reset the clock, silence does not. A CLI
@@ -93,6 +106,7 @@ export function watchSilence(
   read: () => Promise<number>,
   limits: SilenceLimits,
   onVerdict: (reason: SilenceReason) => void,
+  busy?: SilenceBusy,
 ): { stop(): void } {
   let seen = 0;
   let lastChange = Date.now();
@@ -105,8 +119,16 @@ export function watchSilence(
       seen = bytes;
       lastChange = Date.now();
     }
-    const verdict = silenceVerdict(seen, Date.now() - lastChange, limits);
-    if (verdict !== undefined) {
+    const quietFor = Date.now() - lastChange;
+    const verdict = silenceVerdict(seen, quietFor, limits);
+    // Quiet, but its own output says a command is still running: that is a
+    // seat waiting, not a seat gone. The window starts over and somebody is
+    // told, once per window — a full test suite and a command wedged on a
+    // dialog look the same from here, and telling them apart is a judgement.
+    if (verdict === "silent" && busy?.running() === true) {
+      lastChange = Date.now();
+      busy.onQuiet(quietFor);
+    } else if (verdict !== undefined) {
       stopped = true;
       onVerdict(verdict);
       return;
@@ -130,5 +152,5 @@ export function silenceMessage(reason: SilenceReason, limits: Pick<SilenceLimits
     ? `这个席位 ${Math.round(limits.firstOutputMs / 60_000)} 分钟内一个字都没输出，按连不上处理。` +
         `多半是它的连接端点没有响应——到 Agent 库点「测试」看接口地址那一项。`
     : `这个席位连续 ${Math.round(limits.idleMs / 60_000)} 分钟没有任何新输出，判定为卡死，已经中止。` +
-        `判据是静默：只要有输出（哪怕是思考过程）就重新计时，所以跑得久本身不会被中止。`;
+        `判据是静默：只要有输出（哪怕是思考过程）就重新计时；它自己的输出显示有命令还没跑完时，也不会被中止。`;
 }

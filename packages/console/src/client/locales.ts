@@ -264,6 +264,7 @@ export const zh = {
   "composer.unknownMention": "没有叫「{names}」的成员。名字打错的话这句话会发给全团，所以先改过来。",
   "composer.allBlocked": "这一轮问不出去：",
   "composer.someBlocked": "这几位跑不了，会被跳过：",
+  "composer.stopSeat": "叫停",
 
   // 朗读与听写
   "listen.head": "朗读设置",
@@ -626,6 +627,7 @@ export const en: Record<SquadKey, string> = {
     "There is no member called \u201c{names}\u201d. A misspelt name sends this to the whole team, so fix it first.",
   "composer.allBlocked": "Nothing can be asked this round:",
   "composer.someBlocked": "These cannot run and will be skipped:",
+  "composer.stopSeat": "Stop",
 
   // Read aloud and dictation
   "listen.head": "Read aloud",
