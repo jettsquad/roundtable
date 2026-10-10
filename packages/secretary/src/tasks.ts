@@ -18,6 +18,7 @@ import {
 import { buildTeamAgendaTerminationPrompt, validateTeamAgendaTerminationSummary } from "./termination.ts";
 import { buildAssistPrompt, validateAssist, type AssistInput } from "./assist.ts";
 import { buildProjectMemoryPrompt, validateProjectMemory, type ProjectMemoryPromptInput } from "./project-memory.ts";
+import { buildQuietPrompt, parseQuietReply, type QuietJudgement, type QuietJudgementInput } from "./quiet.ts";
 
 /** What one finished text task produced. */
 export interface TextTaskResult {
@@ -197,4 +198,15 @@ export async function agendaFromReplyWith(
   // own words being handed back to it.
   assertPublicHostCommand(input.command);
   return runDraft(run, { ...input, command });
+}
+
+/**
+ * Judge whether a quiet command should be waited for.
+ *
+ * Never throws for an unreadable answer — `parseQuietReply` turns that into
+ * `ask` — but does throw when the secretary could not be run at all, so the
+ * caller can say WHY nobody judged instead of inventing a verdict.
+ */
+export async function judgeQuietWith(run: TextTaskRunner, input: QuietJudgementInput): Promise<QuietJudgement> {
+  return parseQuietReply(await settled(run, "秘书 · 静默判断", buildQuietPrompt(input)));
 }

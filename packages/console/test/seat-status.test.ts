@@ -57,7 +57,7 @@ describe("席位状态判读", () => {
     expect(status.detail).toContain("4.0 KB");
   });
 
-  it("说过话但停了一阵，是思考中而不是卡死", () => {
+  it("说过话但停了一阵，是安静而不是卡死", () => {
     // 模型思考期间本来就会安静几十秒；把这段叫卡死会让真正的卡死没人信。
     const status = describeSeat({
       running: true,
@@ -147,5 +147,90 @@ describe("整队一行", () => {
     });
     expect(status.phase).toBe("stalling");
     expect(status.detail).toContain("连不上");
+  });
+});
+
+describe("describeSeat：读了输出流之后", () => {
+  const command = { command: "scripts/rb-exit.sh RB0 --commit", startedAt: now - 14 * 60_000 };
+  const quiet = { startedAt: now - 20 * 60_000, bytes: 229_000, lastOutputAt: now - 13 * 60_000 };
+
+  it("有命令在跑就说在跑命令，并把命令写出来，不叫思考中", () => {
+    // 那天屏幕上写的是「思考中 13 分 25 秒」，而它其实在等测试跑完。
+    const status = describeSeat({ running: true, activity: { ...quiet, doing: [command] }, silence, now });
+    expect(status.phase).toBe("working");
+    expect(status.label).toBe("在跑命令 14 分钟");
+    expect(status.detail).toBe("scripts/rb-exit.sh RB0 --commit");
+    expect(status.label).not.toContain("思考");
+  });
+
+  it("在跑命令时不倒计时——这个状态下看门狗不会中止它", () => {
+    const status = describeSeat({ running: true, activity: { ...quiet, doing: [command] }, silence, now });
+    expect(status.detail).not.toMatch(/判定卡死/);
+  });
+
+  it("同时开着几条命令，说最早的那条，并说还有几条", () => {
+    const status = describeSeat({
+      running: true,
+      activity: { ...quiet, doing: [{ command: "后来的", startedAt: now - 60_000 }, command] },
+      silence,
+      now,
+    });
+    expect(status.detail).toBe("scripts/rb-exit.sh RB0 --commit（另有 1 条）");
+  });
+
+  it("秘书说继续等：把她的理由挂出来，状态仍是在跑", () => {
+    const status = describeSeat({
+      running: true,
+      activity: {
+        ...quiet,
+        doing: [command],
+        verdict: { verdict: "wait", reason: "在跑全量测试，进度 47%。", by: "secretary" },
+      },
+      silence,
+      now,
+    });
+    expect(status.phase).toBe("working");
+    expect(status.detail).toContain("秘书：在跑全量测试，进度 47%。");
+    expect(status.detail).toContain("13 分钟没有新输出");
+  });
+
+  it("秘书说要问：变成需要你看一眼，写明不会自动中止", () => {
+    const status = describeSeat({
+      running: true,
+      activity: {
+        ...quiet,
+        doing: [command],
+        verdict: { verdict: "ask", reason: "命令像在等授权。", by: "secretary" },
+      },
+      silence,
+      now,
+    });
+    expect(status.phase).toBe("attention");
+    expect(status.label).toContain("需要你看一眼");
+    expect(status.detail).toContain("scripts/rb-exit.sh RB0 --commit");
+    expect(status.detail).toContain("秘书：命令像在等授权。");
+    expect(status.detail).toContain("不会被自动中止");
+  });
+
+  it("没人判断时，说是系统让你看的，不冒充秘书", () => {
+    const status = describeSeat({
+      running: true,
+      activity: { ...quiet, doing: [command], verdict: { verdict: "ask", reason: "这支团队没有秘书。", by: "system" } },
+      silence,
+      now,
+    });
+    expect(status.detail).toContain("系统：这支团队没有秘书。");
+  });
+
+  it("流读过了、什么都没开着：是在等模型回话，照旧倒计时", () => {
+    const status = describeSeat({ running: true, activity: { ...quiet, doing: [] }, silence, now });
+    expect(status.label).toContain("等模型回话");
+    expect(status.detail).toMatch(/也没有命令在跑；再静默.*会判定卡死/);
+  });
+
+  it("没读流的后端，只说没有新输出，不猜它在干什么", () => {
+    const status = describeSeat({ running: true, activity: quiet, silence, now });
+    expect(status.label).toContain("没有新输出");
+    expect(status.label).not.toContain("思考");
   });
 });

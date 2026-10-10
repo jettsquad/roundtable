@@ -36,6 +36,7 @@ import {
 } from "@squad/shared";
 import { requestedEffort, runCliSeat, seatSessionId, SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { buildCodexArgv, isCodexMode } from "./argv.ts";
+import { codexTracker } from "./doing.ts";
 import { readCodexStream } from "./stream.ts";
 
 export const name = "squad-seat-codex";
@@ -173,6 +174,7 @@ export class SquadSeatCodex extends Service {
           who: name,
           request,
           command: "codex",
+          tracker: codexTracker,
           argv: ({ prompt, cwd }) =>
             buildCodexArgv({
               prompt,

@@ -908,6 +908,36 @@
   color: #f88;
 }
 
+/* A command of its own is running. Not a warning — the same green as output,
+   because it is the seat doing what it was asked. */
+.working {
+  border-color: #4c8;
+  color: #6c9;
+}
+
+/* A command somebody should look at. Filled, where the rest are outlined:
+   this is the one chip that is asking for something. */
+.attention {
+  border-color: #d9a54a;
+  background: #d9a54a;
+  color: #1b1b1f;
+  font-weight: 600;
+}
+
+.statusDetail {
+  margin: 4px 0;
+  font-size: 12px;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
+}
+
+.statusDetail.attention {
+  padding: 6px 9px;
+  border-radius: 6px;
+  opacity: 1;
+  font-weight: 400;
+}
+
 .blocked {
   border-color: #b44;
   color: #f88;

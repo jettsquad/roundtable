@@ -131,6 +131,29 @@ export interface TeamSummary {
           readonly startedAt: number;
           readonly bytes: number;
           readonly lastOutputAt: number;
+          /**
+           * What the seat's own output says it started and has not finished.
+           * Absent for a backend whose stream is not read; empty when it was
+           * read and nothing is open.
+           */
+          readonly doing?:
+            | readonly {
+                readonly id: string;
+                readonly tool: string;
+                readonly command: string;
+                readonly startedAt: number;
+                readonly background: boolean;
+              }[]
+            | undefined;
+          /** What was decided the last time it went quiet with a command open. */
+          readonly verdict?:
+            | {
+                readonly verdict: "wait" | "ask";
+                readonly reason: string;
+                readonly at: number;
+                readonly by: "secretary" | "system";
+              }
+            | undefined;
         }
       | undefined;
     /**

@@ -23,8 +23,12 @@ export type SeatPhase =
   | "starting"
   /** Producing output right now. */
   | "streaming"
-  /** Has spoken, but nothing recently. Normal for a model that is thinking. */
+  /** Has spoken, but nothing recently, and nothing it started is open. */
   | "quiet"
+  /** Its own output says a command it started has not finished. */
+  | "working"
+  /** A command has been quiet a whole window and somebody should look at it. */
+  | "attention"
   /** Silent long enough that it is probably not coming back. */
   | "stalling";
 
@@ -60,7 +64,18 @@ export interface SeatStatusInput {
   readonly running: boolean;
   /** Why it cannot run, when it cannot. */
   readonly blocked?: string | undefined;
-  readonly activity?: { readonly startedAt: number; readonly bytes: number; readonly lastOutputAt: number } | undefined;
+  readonly activity?:
+    | {
+        readonly startedAt: number;
+        readonly bytes: number;
+        readonly lastOutputAt: number;
+        /** Absent when the backend's stream is not read; empty when nothing is open. */
+        readonly doing?: readonly { readonly command: string; readonly startedAt: number }[] | undefined;
+        readonly verdict?:
+          | { readonly verdict: "wait" | "ask"; readonly reason: string; readonly by: "secretary" | "system" }
+          | undefined;
+      }
+    | undefined;
   /** The runtime's own thresholds. */
   readonly silence: { readonly idleMs: number; readonly firstOutputMs: number };
   readonly now: number;
@@ -99,14 +114,47 @@ export function describeSeat(input: SeatStatusInput): SeatStatus {
   }
 
   const quiet = input.now - activity.lastOutputAt;
+
+  // A command it started is still open. Said as that, with the command, and
+  // never as thinking: a seat waiting on a test suite is not composing
+  // anything, and calling it 「思考中」 was a guess that happened to be wrong
+  // on the night it mattered. The watchdog does not cancel in this state, so
+  // no countdown is shown — there is none.
+  const open = activity.doing ?? [];
+  if (open.length > 0) {
+    const oldest = open.reduce((first, one) => (one.startedAt < first.startedAt ? one : first));
+    const more = open.length > 1 ? `（另有 ${open.length - 1} 条）` : "";
+    const running = `在跑命令 ${seconds(input.now - oldest.startedAt)}`;
+    const what = `${oldest.command}${more}`;
+    const verdict = activity.verdict;
+    if (verdict?.verdict === "ask") {
+      return {
+        phase: "attention",
+        label: `需要你看一眼 · ${running}`,
+        detail:
+          `${what} —— 已经${seconds(quiet)}没有新输出。` +
+          `${verdict.by === "secretary" ? "秘书" : "系统"}：${verdict.reason} 它不会被自动中止，要停请叫停。`,
+      };
+    }
+    return {
+      phase: "working",
+      label: running,
+      detail: verdict === undefined ? what : `${what} —— 已经${seconds(quiet)}没有新输出。秘书：${verdict.reason}`,
+    };
+  }
+
   if (quiet < QUIET_AFTER_MS) {
     return { phase: "streaming", label: "正在输出", detail: `已产出 ${volume(activity.bytes)}` };
   }
   const left = input.silence.idleMs - quiet;
+  // With the stream read and nothing open, this is a seat waiting on its
+  // model and can be called that. Without it, all that is known is that
+  // nothing has arrived — said as exactly that.
+  const waiting = activity.doing === undefined ? "没有新输出" : "等模型回话";
   return {
     phase: quiet >= input.silence.idleMs * WARN_AT ? "stalling" : "quiet",
-    label: `思考中 ${seconds(quiet)}`,
-    detail: `已产出 ${volume(activity.bytes)}，${seconds(quiet)}没有新输出；再静默${seconds(Math.max(0, left))}会判定卡死。`,
+    label: `${waiting} ${seconds(quiet)}`,
+    detail: `已产出 ${volume(activity.bytes)}，${seconds(quiet)}没有新输出，也没有命令在跑；再静默${seconds(Math.max(0, left))}会判定卡死。`,
   };
 }
 

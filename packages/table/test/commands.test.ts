@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  firstLine,
   CUT_SHORT_MARK,
   cutShort,
   excerpt,
@@ -168,5 +169,26 @@ describe("cutShort", () => {
   it("一个字都没说的不标——那种情况另有一行「被叫停，没有答复」", () => {
     expect(cutShort("")).toBe("");
     expect(cutShort("  \n")).toBe("  \n");
+  });
+});
+
+describe("firstLine", () => {
+  it("取失败回复里第一句说了原因的话，去掉前面的警示符号", () => {
+    expect(firstLine("\n\n  ⚠️ 这个席位连续 15 分钟没有任何新输出，判定为卡死。\n判据是静默")).toBe(
+      "这个席位连续 15 分钟没有任何新输出，判定为卡死。",
+    );
+  });
+
+  it("以冒号结尾的那行只是在报幕，原因在它后面", () => {
+    // 真实跑出来的就是这个：审计里写着「没有完成（该席位没有给出答复：）」，等于没说。
+    expect(firstLine("⚠️ 该席位没有给出答复：\ndsh: MISSING_CREDENTIAL: no credential")).toBe(
+      "dsh: MISSING_CREDENTIAL: no credential",
+    );
+    expect(firstLine("只有这一行：")).toBe("只有这一行：");
+  });
+
+  it("太长就截断，空的就照实说没有原因", () => {
+    expect(firstLine("长".repeat(300))).toHaveLength(121);
+    expect(firstLine("  \n ")).toBe("没有给出原因");
   });
 });

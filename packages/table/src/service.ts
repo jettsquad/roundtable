@@ -87,6 +87,7 @@ export { spokenMessage } from "./log.ts";
 export type { RecordCheck, TranscriptEvent } from "./log.ts";
 import {
   cutShort,
+  firstLine,
   excerpt,
   excludedFor,
   isOpen,
@@ -217,6 +218,14 @@ export interface Team {
     | undefined;
   /** This team's decisions, oldest first. Not the transcript — see `audit.ts`. */
   readonly audit: readonly AuditEntry[];
+  /**
+   * Write down what was decided about a seat's quiet command.
+   *
+   * In the audit and not the transcript: it is a decision about the running
+   * of the table, not something anyone said, and a seat reading it next round
+   * as part of the discussion would be reading machinery.
+   */
+  noteQuiet(detail: string): void;
   /** The draft's identity, so a confirmation can name the one it saw. */
   readonly draftIdentity: { readonly agendaId: string; readonly revision: number } | undefined;
   /**
@@ -1618,6 +1627,10 @@ export class TeamsService extends Service {
       get audit() {
         return record.audit;
       },
+      noteQuiet: (detail: string): void => {
+        this.note(record, "seat-quiet", detail);
+        this.persist(record);
+      },
       get draftIdentity() {
         return record.draft === undefined
           ? undefined
@@ -2223,6 +2236,8 @@ export class TeamsService extends Service {
     const replies: SeatReply[] = [];
     const artifacts: string[] = [];
     let pausedAfter: string | undefined;
+    // `let` assigned inside the loop below, which narrowing cannot follow.
+    let failedAt = undefined as { readonly phase: string; readonly seat: string; readonly why: string } | undefined;
 
     const running: RunningAgenda = {
       agenda,
@@ -2303,7 +2318,8 @@ export class TeamsService extends Service {
               failed: true,
               contextLines: 0,
             });
-            continue;
+            failedAt = { phase: phase.title, seat: run.task.seatId, why: "议程点名的席位不在名册上。" };
+            break;
           }
 
           const window =
@@ -2317,6 +2333,15 @@ export class TeamsService extends Service {
           const reply = await this.runSeat(record, host, seat, run.task.instruction, window, running.abort.signal);
           replies.push(reply);
           if (!reply.failed) running.completedTasks.push(run.task.instruction);
+          // A seat that did not finish stops the phase where it stands. What
+          // follows was planned on the assumption that this was done: carrying
+          // on hands the next seat a gate that never opened, and it can only
+          // report that back — which is a round spent learning what was known
+          // the moment this one failed.
+          if (reply.failed && !running.abort.signal.aborted) {
+            failedAt = { phase: phase.title, seat: seat.displayName, why: firstLine(reply.text) };
+            break;
+          }
 
           const path = resolveArtifactPath(
             run.task.artifactPath === undefined ? undefined : { path: run.task.artifactPath },
@@ -2331,6 +2356,10 @@ export class TeamsService extends Service {
         }
 
         if (running.abort.signal.aborted) break;
+        // Not counted, for the same reason a stopped phase is not: `done` is
+        // where 「继续」 starts from, and a phase recorded as done is one
+        // nobody will run again.
+        if (failedAt !== undefined) break;
         // Counted complete only after every run in it finished. A phase the
         // stop cut through is not done, and calling it done would put its
         // unfinished tasks in neither list.
@@ -2356,6 +2385,7 @@ export class TeamsService extends Service {
       const finished =
         !running.abort.signal.aborted &&
         pausedAfter === undefined &&
+        failedAt === undefined &&
         running.completedPhases.length >= agenda.phases.length - startFrom;
       this.note(
         record,
@@ -2364,7 +2394,9 @@ export class TeamsService extends Service {
           ? `议程跑完，共 ${running.completedPhases.length} 个阶段。`
           : running.abort.signal.aborted
             ? `议程被叫停，已完成 ${running.completedPhases.length} 个阶段。`
-            : `议程停在「${pausedAfter ?? ""}」之后，等主持人。`,
+            : failedAt !== undefined
+              ? `议程停在「${failedAt.phase}」：${failedAt.seat} 没有完成（${failedAt.why}）。这一阶段没有记为完成，「继续」会从它重跑。`
+              : `议程停在「${pausedAfter ?? ""}」之后，等主持人。`,
         hash,
       );
       // KEPT after it finishes, where it used to be cleared.
@@ -2381,11 +2413,27 @@ export class TeamsService extends Service {
       if (finished && record.confirmed !== undefined) {
         record.confirmed = { ...record.confirmed, done: agenda.phases.map((phase) => phase.title) };
       }
+      // Said in the discussion as well as the audit: the host is looking at
+      // the discussion, and an agenda that simply stops producing lines is
+      // the silence this is meant to end.
+      if (failedAt !== undefined) {
+        record.log.append(
+          "系统",
+          `⚠️ 议程停在「${failedAt.phase}」：${failedAt.seat} 没有完成，后面的阶段没有执行。` +
+            `处理好之后点「继续」，会从这一阶段重跑。`,
+        );
+      }
       this.persist(record);
     }
 
     this.signalRoundEnded(record);
-    this.emitRoundEnded(record, "agenda", replies, running.reason !== undefined, pausedAfter !== undefined);
+    this.emitRoundEnded(
+      record,
+      "agenda",
+      replies,
+      running.reason !== undefined,
+      pausedAfter !== undefined || failedAt !== undefined,
+    );
     this.exportRecord(record);
     // The reason an agenda holds the count for its whole run: a command sent
     // during phase two waits for phase five, not for phase two. It goes out
@@ -2398,6 +2446,7 @@ export class TeamsService extends Service {
       phasesRun: running.completedPhases,
       artifacts,
       ...(pausedAfter === undefined ? {} : { pausedAfter }),
+      ...(failedAt === undefined ? {} : { failedAt }),
     };
   }
 
@@ -2963,6 +3012,13 @@ export interface AgendaOutcome {
    * outside otherwise.
    */
   readonly pausedAfter?: string;
+  /**
+   * Set when a seat did not finish its task and the agenda stopped there.
+   *
+   * The phase named is NOT in `phasesRun`: a resume runs it again from its
+   * first task, including any seat that had already answered in it.
+   */
+  readonly failedAt?: { readonly phase: string; readonly seat: string; readonly why: string };
   /** Files written, project-relative. */
   readonly artifacts: readonly string[];
   /**
