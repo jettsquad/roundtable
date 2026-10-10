@@ -118,6 +118,26 @@ export function Agenda({
             否则第二遍只会和第一遍一样。退回之后不会自己开跑，还要你点一次继续。
           </div>
         </details>
+        {/* The way out. Without it a stopped agenda could only be carried on
+            or wound back — the card stayed until another plan replaced it,
+            which made 「这份计划不要了」 something you could not say. Kept
+            apart from 「继续」 and behind a confirmation: it is the one
+            action on this card that cannot be undone. */}
+        <div className={styles.row}>
+          <button
+            type="button"
+            className={styles.quoteButton}
+            disabled={team.busy}
+            onClick={() => {
+              const asked = finished
+                ? "收起这份已经跑完的议程？讨论记录不会动。"
+                : `放弃这份议程？还有 ${phases.length - done.length} 个阶段没跑，放弃后不能再从中间继续。讨论记录不会动。`;
+              if (window.confirm(asked)) void run(() => api.abandonAgenda({ teamId: team.teamId }));
+            }}
+          >
+            {finished ? "收起这份议程" : "放弃这份议程"}
+          </button>
+        </div>
         {error === undefined ? null : <div className={styles.error}>{error}</div>}
       </div>
     );
