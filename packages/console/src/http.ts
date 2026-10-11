@@ -51,6 +51,7 @@ import type {
   SeatRequest,
   SquadSnapshot,
   TeamSummary,
+  AgendaNodeView,
 } from "./wire.ts";
 import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
 import { agendaEditIsLegal } from "./agenda-verdict.ts";
@@ -86,6 +87,16 @@ import {
   quotesFrom,
 } from "@squad/shared";
 import {
+  DEFAULT_MAX_ATTEMPTS,
+  initialNodes,
+  needsOf,
+  nodeIdOf,
+  nodeOf,
+  standing,
+  type Decision,
+  type NodeMap,
+} from "@squad/shared";
+import {
   captureWindow,
   draftIdentityMatches,
   shortHash,
@@ -104,6 +115,62 @@ import type { DirectoryPicker } from "@deepseek-ai/dsh-host-directory-picker";
 
 /** Where the browser half reads from. Prefix, so one registration serves several reads. */
 export const SQUAD_API_PREFIX = "/api/squad";
+
+type ConfirmedAgenda = NonNullable<NonNullable<ReturnType<Context["teams"]["get"]>>["confirmed"]>;
+
+/** A confirmed agenda's nodes, read from the old list of finished phases when that is all there is. */
+const nodesOf = (confirmed: ConfirmedAgenda): NodeMap =>
+  confirmed.nodes ?? initialNodes(confirmed.agenda, confirmed.done);
+
+/** Every node of a confirmed agenda, as the panel shows it. */
+function nodeViews(
+  confirmed: ConfirmedAgenda,
+  seats: readonly { readonly seatId: string; readonly displayName: string }[],
+): AgendaNodeView[] {
+  const nodes = nodesOf(confirmed);
+  const nameOf = (seatId: string): string => seats.find((seat) => seat.seatId === seatId)?.displayName ?? seatId;
+  return confirmed.agenda.phases.map((phase, index) => {
+    const id = nodeIdOf(phase, index);
+    const node = nodeOf(nodes, id);
+    return {
+      id,
+      title: phase.title,
+      state: node.state,
+      attempts: node.attempts,
+      maxAttempts: phase.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
+      needs: [...needsOf(confirmed.agenda, index)],
+      seats: [...new Set(phase.tasks.map((task) => nameOf(task.seatId)))],
+      ...(node.why === undefined ? {} : { why: node.why }),
+      ...(phase.check === undefined ? {} : { check: phase.check.command }),
+      ...(node.lastCheck === undefined
+        ? {}
+        : {
+            lastCheck: {
+              exitCode: node.lastCheck.exitCode,
+              tail: node.lastCheck.tail,
+              at: node.lastCheck.at,
+              ...(node.lastCheck.timedOut === true ? { timedOut: true } : {}),
+            },
+          }),
+    };
+  });
+}
+
+/**
+ * The phase the agenda is stopped behind because it asked for the host.
+ *
+ * The LAST phase to have passed, when that phase said `wait-for-host` and
+ * something is still waiting to run after it.
+ */
+function awaitedPhase(confirmed: ConfirmedAgenda): AgendaSpec["phases"][number] | undefined {
+  const nodes = nodesOf(confirmed);
+  if (standing(confirmed.agenda, nodes) !== "runnable") return undefined;
+  const passed = confirmed.agenda.phases.filter(
+    (phase, index) => nodeOf(nodes, nodeIdOf(phase, index)).state === "passed",
+  );
+  const last = passed.at(-1);
+  return last?.exit === "wait-for-host" ? last : undefined;
+}
 
 /** One team, flattened for the wire. */
 /**
@@ -358,7 +425,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
               // fact was in the confirmed agenda from the start; it had no
               // way to reach the panel, so 「在等你回答」 and 「跑了一半断了」
               // rendered the same.
-              awaitingHost: team.confirmed.agenda.phases[team.confirmed.done.length - 1]?.exit === "wait-for-host",
+              awaitingHost: awaitedPhase(team.confirmed) !== undefined,
               // Who to answer. Named rather than left to 「点名提问的那位」,
               // because a reply sent to nobody in particular is a round for
               // the WHOLE table: the seats whose turn has not come answer it
@@ -367,11 +434,16 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
               // a JSON schema, and the agenda stayed paused throughout.
               awaitingFrom: [
                 ...new Set(
-                  (team.confirmed.agenda.phases[team.confirmed.done.length - 1]?.tasks ?? []).map(
+                  (awaitedPhase(team.confirmed)?.tasks ?? []).map(
                     (task) => team.seats.find((seat) => seat.seatId === task.seatId)?.displayName ?? task.seatId,
                   ),
                 ),
               ],
+              standing: standing(team.confirmed.agenda, nodesOf(team.confirmed)),
+              // Each node, with what its last check said. Without this the
+              // panel could only show a count, and 「3 / 7」 cannot tell a
+              // node that passed from one that was given up on.
+              nodes: nodeViews(team.confirmed, team.seats),
             },
           }),
       prompts: team.prompts,
@@ -1706,6 +1778,13 @@ export function registerSquadApi(ctx: Context): () => void {
           // again — and the second is the expensive one.
           const body = await readJson<{ teamId: string; phaseIndex: number }>(req);
           teamOf(ctx, body.teamId).rewindAgenda(body.phaseIndex);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/agenda/decide" && req.method === "POST") {
+          const body = await readJson<{ teamId: string; nodeId: string; decision: Decision }>(req);
+          teamOf(ctx, body.teamId).decideNode(body.nodeId, body.decision);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true }));
           return;

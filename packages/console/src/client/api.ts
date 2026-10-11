@@ -23,6 +23,7 @@ import type {
   SquadSnapshot,
   ToolStatus,
   UpgradeReport,
+  AgendaDecision,
 } from "../wire.ts";
 
 export type { BackendTool, ToolStatus, UpgradeReport };
@@ -155,6 +156,8 @@ export const api = {
   /** Carry on an agenda that was stopped, paused, or cut short by a restart. */
   resumeAgenda: (body: { teamId: string }): Promise<{ ok: true }> => call("/agenda/resume", "POST", body),
   abandonAgenda: (body: { teamId: string }): Promise<{ ok: true }> => call("/agenda/abandon", "POST", body),
+  decideNode: (body: { teamId: string; nodeId: string; decision: AgendaDecision }): Promise<{ ok: true }> =>
+    call("/agenda/decide", "POST", body),
   /** Point a seat at an agent in the library and take its settings. */
   relinkSeat: (body: { teamId: string; seatId: string; templateId: string }): Promise<{ ok: true }> =>
     call("/seats/relink", "POST", body),

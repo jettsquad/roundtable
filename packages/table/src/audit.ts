@@ -33,6 +33,7 @@ export type AuditKind =
   | "agenda-discarded"
   | "agenda-rewound"
   | "agenda-abandoned"
+  | "agenda-decided"
   | "material-added"
   | "material-removed"
   | "checkpoint-folded"

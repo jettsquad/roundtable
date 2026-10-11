@@ -40,10 +40,15 @@ import {
   stripReasoning,
   sessionIdOfResult,
   usageOfResult,
+  nodeIdOf,
+  type AgendaPhase,
   type AgendaSpec,
   type SeatUsage,
   type UsageTotals,
 } from "@squad/shared";
+// Imported for the `Context.subprocess` declaration merging it carries: the
+// exit checks are run through it.
+import type {} from "@deepseek-ai/dsh-subprocess";
 import {
   EMPTY_TEAM_PROMPTS,
   blocksForSeat,
@@ -65,7 +70,29 @@ import {
   snapshotSeatSessions,
   type SeatActivity,
 } from "@squad/seat-runtime";
-import { outstandingWork, pausesAfter, planPhase } from "./agenda.ts";
+import { outstandingWork, pausesAfter, planPhase, type PlannedRun } from "./agenda.ts";
+import {
+  REPORT_FOOTER,
+  afterAttempt,
+  applyDecision,
+  describeCheck,
+  initialNodes,
+  nodeOf,
+  parseSeatReport,
+  passedTitles,
+  retryFeedback,
+  rewindTo,
+  runnable,
+  settle,
+  standing,
+  tally,
+  type ExitCheckResult,
+  type Decision,
+  type NodeDetour,
+  type NodeMap,
+  type SeatReport,
+  type Step,
+} from "@squad/shared";
 import { reopenReason } from "./reopen.ts";
 import { baseForFolder, nextHostId, recordForSession, restoreOrder, unclaimed } from "./sitting.ts";
 import { appendAudit, type AuditEntry, type AuditKind } from "./audit.ts";
@@ -210,6 +237,11 @@ export interface Team {
         readonly agenda: AgendaSpec;
         readonly at: number;
         readonly done: readonly string[];
+        /**
+         * Where each node stands. Absent on an agenda saved before nodes
+         * existed, where `done` is all there is.
+         */
+        readonly nodes?: NodeMap | undefined;
         /** sha256 of the canonical agenda, so what ran stays checkable. */
         readonly hash: string;
         /** Who was at the table when it was confirmed. */
@@ -251,6 +283,12 @@ export interface Team {
    * starts without being asked is work nobody decided to do.
    */
   rewindAgenda(phaseIndex: number): void;
+  /**
+   * Choose what happens to a node the agenda stopped at.
+   *
+   * Carries the agenda on when the choice leaves something to run.
+   */
+  decideNode(nodeId: string, decision: Decision): void;
   /**
    * Give up the confirmed agenda, finished or not.
    *
@@ -612,7 +650,7 @@ export interface TeamAssembler {
 }
 
 export class TeamsService extends Service {
-  static readonly inject = ["agents", "subagents", "seatConnections", "storageDomain"];
+  static readonly inject = ["agents", "subagents", "seatConnections", "storageDomain", "subprocess"];
 
   private readonly teams = new Map<string, TeamRecord>();
   private assembler: TeamAssembler | undefined;
@@ -908,6 +946,7 @@ export class TeamsService extends Service {
               agenda: saved.confirmed,
               at: saved.confirmedAt ?? Date.now(),
               done: [...(saved.confirmedDone ?? [])],
+              ...(saved.confirmedNodes === undefined ? {} : { nodes: saved.confirmedNodes as NodeMap }),
               // Recomputed rather than trusted when the row predates hashing:
               // a stored hash that no longer matches its agenda would be a
               // lie, and an absent one is merely a gap.
@@ -1047,6 +1086,7 @@ export class TeamsService extends Service {
             confirmed: record.confirmed.agenda,
             confirmedAt: record.confirmed.at,
             confirmedDone: record.confirmed.done,
+            ...(record.confirmed.nodes === undefined ? {} : { confirmedNodes: record.confirmed.nodes }),
             confirmedHash: record.confirmed.hash,
             confirmedRoster: record.confirmed.roster as { seatId: string; displayName: string; role: string }[],
           }),
@@ -1664,15 +1704,73 @@ export class TeamsService extends Service {
       resumeAgenda: () => {
         const held = record.confirmed;
         if (held === undefined) throw new Error("没有未跑完的议程。");
-        // A finished agenda is now kept rather than cleared, so 「跑完了」 has
-        // to be refused here instead of being implied by an absence.
-        if (held.done.length >= held.agenda.phases.length) {
-          throw new Error("这份议程已经跑完了。要重跑某个阶段，用「从这里重来」。");
+        const nodes = held.nodes ?? initialNodes(held.agenda, held.done);
+        // A finished agenda is kept rather than cleared, so 「跑完了」 has to
+        // be refused here instead of being implied by an absence.
+        const stood = standing(held.agenda, nodes);
+        if (stood === "finished") throw new Error("这份议程已经跑完了。要重跑某个阶段，先把它退回去。");
+        if (stood === "ended") {
+          throw new Error("这份议程已经结束，剩下的阶段都被放下或跳过了。要重跑某个阶段，先把它退回去。");
         }
-        return this.runAgenda(record, held.agenda, held.done.length);
+        // 「继续」 on a node that is waiting for a decision IS a decision: do
+        // it again. The other choices have their own buttons.
+        if (stood === "deciding") {
+          let next = nodes;
+          for (const [index, phase] of held.agenda.phases.entries()) {
+            const id = nodeIdOf(phase, index);
+            if (nodeOf(next, id).state === "deciding") next = applyDecision(held.agenda, next, id, { kind: "retry" });
+          }
+          record.confirmed = { ...held, nodes: next };
+        }
+        return this.runAgenda(record, held.agenda, true);
       },
       get order() {
         return record.order;
+      },
+      decideNode: (nodeId: string, decision: Decision) => {
+        const held = record.confirmed;
+        if (held === undefined) throw new Error("没有未跑完的议程。");
+        if (record.running !== undefined) throw new Error("议程正在跑，等它停下再决定。");
+        if (decision.kind === "assign" && !record.seats.some((seat) => seat.seatId === decision.seatId)) {
+          throw new Error(`名册上没有席位「${decision.seatId}」。`);
+        }
+        const before = held.nodes ?? initialNodes(held.agenda, held.done);
+        const nodes = applyDecision(held.agenda, before, nodeId, decision);
+        const index = held.agenda.phases.findIndex((phase, at) => nodeIdOf(phase, at) === nodeId);
+        const title = held.agenda.phases[index]?.title ?? nodeId;
+        const said =
+          decision.kind === "retry"
+            ? `重做${decision.instruction === undefined || decision.instruction.trim() === "" ? "" : `，并交代：${decision.instruction.trim()}`}`
+            : decision.kind === "assign"
+              ? `让 ${record.seats.find((seat) => seat.seatId === decision.seatId)?.displayName ?? decision.seatId} 去清障：${decision.instruction}`
+              : decision.kind === "pass"
+                ? "视为通过，不再检查"
+                : "放下它，不再做";
+        record.confirmed = { ...held, nodes, done: [...passedTitles(held.agenda, nodes)] };
+        this.note(record, "agenda-decided", `「${title}」：${unstopped(said)}。`, held.hash);
+        record.log.append("系统", `🧭 主持人对「${title}」的决定：${unstopped(said)}。`);
+        // A decision can be the last thing an agenda needed: give up the one
+        // node that was left and there is nothing to run. Said here, because
+        // no run follows to say it.
+        const stood = standing(held.agenda, nodes);
+        if (stood === "finished" || stood === "ended") {
+          const counts = tally(held.agenda, nodes);
+          const summary =
+            stood === "finished"
+              ? `议程跑完，${counts.passed} 个阶段全部通过。`
+              : `议程结束：通过 ${counts.passed}，未解决 ${counts.unresolved}，因此跳过 ${counts.skipped}。`;
+          this.note(record, "agenda-finished", summary, held.hash);
+          record.log.append("系统", summary);
+        }
+        this.persist(record);
+        // A decision that leaves something to run sets it running: choosing
+        // and then having to press 「继续」 as well is one decision asked for
+        // twice. Not awaited — an agenda is minutes of work.
+        if (standing(held.agenda, nodes) === "runnable") {
+          void this.runAgenda(record, held.agenda, true).catch((error: Error) =>
+            this.ctx.logger.warn(`议程续跑失败：${error.message}`),
+          );
+        }
       },
       rewindAgenda: (phaseIndex: number) => {
         const held = record.confirmed;
@@ -1682,7 +1780,8 @@ export class TeamsService extends Service {
           throw new Error(`没有第 ${phaseIndex + 1} 个阶段。`);
         }
         const title = held.agenda.phases[phaseIndex]?.title ?? "";
-        record.confirmed = { ...held, done: held.done.slice(0, phaseIndex) };
+        const rewound = rewindTo(held.agenda, held.nodes ?? initialNodes(held.agenda, held.done), phaseIndex);
+        record.confirmed = { ...held, nodes: rewound, done: [...passedTitles(held.agenda, rewound)] };
         this.note(record, "agenda-rewound", `退回到第 ${phaseIndex + 1} 阶段「${title}」，等主持人续跑。`, held.hash);
         // Said in the record, because the discussion is NOT rewound and the
         // next reader has to know why the same phase appears twice. Deleting
@@ -2200,6 +2299,208 @@ export class TeamsService extends Service {
   }
 
   /**
+   * Run one node's tasks, once.
+   *
+   * One attempt, and it says only what happened: which seat did not finish,
+   * and what the last seat reported about itself. Whether that amounts to a
+   * pass is not decided here — see `afterAttempt`.
+   */
+  private async runPhaseOnce(
+    record: TeamRecord,
+    host: Agent,
+    running: RunningAgenda,
+    phase: AgendaPhase,
+    guidance: NodeDetour | undefined,
+    replies: SeatReply[],
+    artifacts: string[],
+  ): Promise<{
+    readonly failed: { readonly seat: string; readonly why: string } | undefined;
+    readonly report: SeatReport | undefined;
+  }> {
+    // `let` assigned inside the loop below, which narrowing cannot follow.
+    let failed = undefined as { readonly seat: string; readonly why: string } | undefined;
+    let report = undefined as SeatReport | undefined;
+    // Taken once, before anything in the phase speaks. Every
+    // `phase-start` run in this phase is handed this same snapshot, so
+    // independence is a fact of what exists rather than a rule someone
+    // has to keep obeying.
+    //
+    // Only for the seats that will actually be handed it. A phase where
+    // every run takes a fresh window used to assemble an opening snapshot
+    // per seat and then discard all of them — work whose only visible
+    // effect was making the logs of a cumulative phase look like an
+    // independent one.
+    const own = planPhase(phase);
+    // A detour naming a seat runs that seat alone, on the detour's own
+    // instruction: it is there to clear an obstacle, not to do the node's
+    // work over. Otherwise the node's own tasks run, with whatever was
+    // said about the last attempt added underneath.
+    const runs: readonly PlannedRun[] =
+      guidance?.seatId === undefined
+        ? own
+        : [{ task: { seatId: guidance.seatId, instruction: guidance.instruction }, round: 1, window: "before-turn" }];
+    const added = guidance !== undefined && guidance.seatId === undefined ? `\n\n${guidance.instruction}` : "";
+    const footer = phase.check === undefined ? "" : `\n\n${REPORT_FOOTER}`;
+    // A long agenda can outgrow a conversation or outlast the cache
+    // between phases too. No fold here — the team is mid-agenda — so a
+    // seat dropped now reopens on the checkpoint and the tail as they are.
+    this.dropStaleSessions(record, host, record.seats);
+    const opening = new Map<string, WindowAttempt>();
+    for (const run of runs) {
+      if (run.window === "phase-start" && !opening.has(run.task.seatId)) {
+        const seat = record.seats.find((candidate) => candidate.seatId === run.task.seatId);
+        opening.set(
+          run.task.seatId,
+          seat === undefined
+            ? await this.contextFor(record.teamId, run.task.seatId)
+            : await this.windowForSeat(record, host, seat),
+        );
+      }
+    }
+
+    for (const run of runs) {
+      // Checked between runs, so a stop lands at a task boundary rather
+      // than halfway through one. The seat already running when the host
+      // stopped is cancelled through the same signal.
+      if (running.abort.signal.aborted) break;
+      const seat = record.seats.find((candidate) => candidate.seatId === run.task.seatId);
+      if (seat === undefined) {
+        // Vetting refuses this before confirmation, so reaching it means
+        // the roster changed underneath a confirmed agenda. Recorded as a
+        // failure rather than skipped: a task nobody ran and a seat with
+        // nothing to say are the same silence.
+        const text = `⚠️ 议程点名了不在名册上的席位「${run.task.seatId}」，本条未执行。`;
+        record.log.append("系统", text);
+        replies.push({
+          seatId: run.task.seatId,
+          displayName: run.task.seatId,
+          text,
+          failed: true,
+          contextLines: 0,
+        });
+        failed = { seat: run.task.seatId, why: "议程点名的席位不在名册上。" };
+        break;
+      }
+
+      const window =
+        run.window === "phase-start"
+          ? (opening.get(seat.seatId) ?? { lines: [] })
+          : await this.windowForSeat(record, host, seat);
+
+      const instructionId = newTurnId();
+      record.log.append(
+        record.input.hostDisplayName,
+        `（${phase.title}）${run.task.instruction}${added}`,
+        instructionId,
+      );
+      record.handed.set(seat.seatId, instructionId);
+      const reply = await this.runSeat(
+        record,
+        host,
+        seat,
+        `${run.task.instruction}${added}${footer}`,
+        window,
+        running.abort.signal,
+      );
+      replies.push(reply);
+      if (!reply.failed) {
+        running.completedTasks.push(run.task.instruction);
+        report = parseSeatReport(reply.text) ?? report;
+      }
+      // A seat that did not finish stops the phase where it stands. What
+      // follows was planned on the assumption that this was done: carrying
+      // on hands the next seat a gate that never opened, and it can only
+      // report that back — which is a round spent learning what was known
+      // the moment this one failed.
+      if (reply.failed && !running.abort.signal.aborted) {
+        failed = { seat: seat.displayName, why: firstLine(reply.text) };
+        break;
+      }
+
+      const path = resolveArtifactPath(
+        run.task.artifactPath === undefined ? undefined : { path: run.task.artifactPath },
+        { seatId: seat.seatId, phaseId: `${phase.title}-${run.round}` },
+        phase.tasks.filter((candidate) => candidate.artifactPath === run.task.artifactPath).length,
+      );
+      if (path !== undefined && !reply.failed) {
+        await this.writeArtifact(record, path, reply.text);
+        artifacts.push(path);
+        record.artifacts.push(path);
+      }
+    }
+    return { failed, report };
+  }
+
+  /**
+   * Run a node's exit check, in the project folder.
+   *
+   * By Squad, not by a seat: a seat asked whether its own work passed is the
+   * one party with a reason to say yes. The command was written into the
+   * agenda and the host saw it at confirmation; it runs with the same
+   * authority the seats' own commands do.
+   *
+   * Never throws. A check that cannot be started has not passed, and says
+   * why in the place its output would have been.
+   */
+  private async runCheck(
+    record: TeamRecord,
+    check: NonNullable<AgendaPhase["check"]>,
+    stop: AbortSignal,
+  ): Promise<ExitCheckResult> {
+    const limit = new AbortController();
+    const onStop = (): void => limit.abort(new Error("stopped"));
+    stop.addEventListener("abort", onStop, { once: true });
+    let timedOut = false;
+    const timer = setTimeout(
+      () => {
+        timedOut = true;
+        limit.abort(new Error("timeout"));
+      },
+      (check.timeoutSec ?? CHECK_TIMEOUT_SEC) * 1000,
+    );
+    try {
+      const child = await this.ctx.subprocess.spawn({
+        argv: ["/bin/sh", "-c", check.command],
+        cwd: record.input.projectFolder,
+        stdio: { stdin: "ignore", stdout: { maxBytes: CHECK_OUTPUT_BYTES }, stderr: { maxBytes: CHECK_OUTPUT_BYTES } },
+        graceMs: 2_000,
+        signal: limit.signal,
+        env: {},
+      });
+      const outcome = await child.done;
+      const out = child.collected.stdout?.readFrom(0).text ?? "";
+      const err = child.collected.stderr?.readFrom(0).text ?? "";
+      return {
+        exitCode: timedOut ? null : outcome.exitCode,
+        tail: `${out}${err === "" ? "" : `\n${err}`}`.trim().slice(-CHECK_TAIL_CHARS),
+        at: Date.now(),
+        ...(timedOut ? { timedOut: true } : {}),
+      };
+    } catch (failure) {
+      return {
+        exitCode: null,
+        tail: timedOut ? "" : `检查没能运行：${String((failure as Error).message ?? failure)}`,
+        at: Date.now(),
+        ...(timedOut ? { timedOut: true } : {}),
+      };
+    } finally {
+      clearTimeout(timer);
+      stop.removeEventListener("abort", onStop);
+    }
+  }
+
+  /** Write the nodes down, with the list of finished phases older readers expect. */
+  private saveNodes(record: TeamRecord, agenda: AgendaSpec, hash: string, nodes: NodeMap): void {
+    record.confirmed = {
+      ...(record.confirmed ?? { agenda, at: Date.now(), hash, roster: [] }),
+      agenda,
+      done: [...passedTitles(agenda, nodes)],
+      nodes,
+    };
+    this.persist(record);
+  }
+
+  /**
    * Run a confirmed agenda, phase by phase.
    *
    * The whole agenda counts as one stretch of work: `roundsInFlight` is held
@@ -2207,7 +2508,7 @@ export class TeamsService extends Service {
    * and record a boundary in the middle of something the host asked for as a
    * unit. The round-end signal fires once, at the end.
    */
-  private async runAgenda(record: TeamRecord, agenda: AgendaSpec, startFrom = 0): Promise<AgendaOutcome> {
+  private async runAgenda(record: TeamRecord, agenda: AgendaSpec, resuming = false): Promise<AgendaOutcome> {
     if (record.disposed) throw new Error("团队已销毁。");
     if (record.running !== undefined) throw new Error("这支团队已经在跑一个议程了。");
     // Commands still running finish first; nothing new starts meanwhile
@@ -2229,10 +2530,18 @@ export class TeamsService extends Service {
     // and the first turn used to leave nothing at all — no plan, no record
     // that one was confirmed.
     const hash = agendaHash(agenda);
+    // A resume carries on from the nodes as they stand; a confirmation starts
+    // every node over. Rows saved before nodes existed have only the list of
+    // finished phases, which `initialNodes` reads as passed.
+    let nodes: NodeMap = resuming
+      ? (record.confirmed?.nodes ?? initialNodes(agenda, record.confirmed?.done))
+      : initialNodes(agenda);
+    const passedBefore = tally(agenda, nodes).passed;
     record.confirmed = {
       agenda,
       at: record.confirmed?.at ?? Date.now(),
-      done: [...agenda.phases.slice(0, startFrom).map((phase) => phase.title)],
+      done: [...passedTitles(agenda, nodes)],
+      nodes,
       hash,
       // Who was at the table at confirmation. Execution reads the CURRENT
       // roster on purpose — a member added mid-agenda should be usable — so
@@ -2245,31 +2554,27 @@ export class TeamsService extends Service {
     };
     this.note(
       record,
-      startFrom > 0 ? "agenda-resumed" : "agenda-confirmed",
-      startFrom > 0
-        ? `从第 ${startFrom + 1} 阶段续跑，共 ${agenda.phases.length} 个阶段。`
+      resuming ? "agenda-resumed" : "agenda-confirmed",
+      resuming
+        ? `续跑，已通过 ${passedBefore} / ${agenda.phases.length} 个阶段。`
         : `主持人确认了议程，共 ${agenda.phases.length} 个阶段，名册 ${record.seats.length} 人。`,
       hash,
     );
     this.persist(record);
     const host = record.handle.agent;
-    if (startFrom > 0) {
+    if (resuming) {
       // Said in the record, because the record is about to look odd: only
-      // FINISHED phases are skipped, so a phase cut off halfway runs again
+      // nodes that PASSED are left alone, so one cut off halfway runs again
       // from the top and its instruction appears twice. That is the right
       // trade — we cannot know whether the interrupted seat's work landed —
       // but an unexplained duplicate reads like a bug.
-      record.log.append(
-        "系统",
-        `▶ 从第 ${startFrom + 1} 阶段「${agenda.phases[startFrom]?.title ?? ""}」继续。` +
-          `已跑完的阶段不重跑；上次中断在半途的那个阶段会从头再来一遍。`,
-      );
+      record.log.append("系统", `▶ 议程继续。已通过的阶段不重跑；上次没有通过的那个阶段会从头再来一遍。`);
     }
     const replies: SeatReply[] = [];
     const artifacts: string[] = [];
     let pausedAfter: string | undefined;
     // `let` assigned inside the loop below, which narrowing cannot follow.
-    let failedAt = undefined as { readonly phase: string; readonly seat: string; readonly why: string } | undefined;
+    let decidingAt = undefined as { readonly phase: string; readonly nodeId: string; readonly why: string } | undefined;
 
     const running: RunningAgenda = {
       agenda,
@@ -2291,144 +2596,99 @@ export class TeamsService extends Service {
     await this.prepareFreshStarts(record, record.handle.agent, record.seats);
     record.roundsInFlight += 1;
     try {
-      for (const [phaseIndex, phase] of agenda.phases.entries()) {
-        // Phases already finished in an earlier run of this agenda are
-        // skipped, not re-run. Re-running them would bill the work twice and
-        // put a second copy of every answer in the record.
-        if (phaseIndex < startFrom) continue;
+      while (!running.abort.signal.aborted) {
+        nodes = settle(agenda, nodes);
+        // The first of whatever can run. There may be more — two nodes that
+        // wait on the same finished one — and they take turns: one working
+        // tree cannot be written by two seats at once.
+        const phaseIndex = runnable(agenda, nodes)[0];
+        const phase = phaseIndex === undefined ? undefined : agenda.phases[phaseIndex];
+        if (phaseIndex === undefined || phase === undefined) break;
+        const nodeId = nodeIdOf(phase, phaseIndex);
         running.progress = {
           phase: phase.title,
           phaseIndex: phaseIndex + 1,
           phaseCount: agenda.phases.length,
-          completedPhases: running.completedPhases.length,
+          completedPhases: tally(agenda, nodes).passed,
         };
-        // Taken once, before anything in the phase speaks. Every
-        // `phase-start` run in this phase is handed this same snapshot, so
-        // independence is a fact of what exists rather than a rule someone
-        // has to keep obeying.
-        //
-        // Only for the seats that will actually be handed it. A phase where
-        // every run takes a fresh window used to assemble an opening snapshot
-        // per seat and then discard all of them — work whose only visible
-        // effect was making the logs of a cumulative phase look like an
-        // independent one.
-        const runs = planPhase(phase);
-        // A long agenda can outgrow a conversation or outlast the cache
-        // between phases too. No fold here — the team is mid-agenda — so a
-        // seat dropped now reopens on the checkpoint and the tail as they are.
-        this.dropStaleSessions(record, host, record.seats);
-        const opening = new Map<string, WindowAttempt>();
-        for (const run of runs) {
-          if (run.window === "phase-start" && !opening.has(run.task.seatId)) {
-            const seat = record.seats.find((candidate) => candidate.seatId === run.task.seatId);
-            opening.set(
-              run.task.seatId,
-              seat === undefined
-                ? await this.contextFor(record.teamId, run.task.seatId)
-                : await this.windowForSeat(record, host, seat),
+
+        let step: Step | undefined;
+        // What the seats are told on top of their task: the check's output
+        // after a failed attempt, or what was decided at a decision point.
+        let guidance = nodeOf(nodes, nodeId).detour;
+        while (!running.abort.signal.aborted) {
+          const attempt = await this.runPhaseOnce(record, host, running, phase, guidance, replies, artifacts);
+          if (running.abort.signal.aborted) break;
+          const check =
+            attempt.failed === undefined && phase.check !== undefined
+              ? await this.runCheck(record, phase.check, running.abort.signal)
+              : undefined;
+          if (running.abort.signal.aborted) break;
+          const attempts = nodeOf(nodes, nodeId).attempts + 1;
+          step = afterAttempt(phase, attempts, { seatFailed: attempt.failed, report: attempt.report, check });
+          if (check !== undefined) {
+            // In the discussion, because it is the fact the next seat stands
+            // on: 「RB1 通过了」 used to be something each of them had to go
+            // and find out for itself.
+            record.log.append(
+              "系统",
+              `${step.kind === "pass" ? "✅" : "❌"} 「${phase.title}」出口检查${step.kind === "pass" ? "通过" : "未通过"}` +
+                `（${describeCheck(check)}，第 ${attempts} 次）：${phase.check?.command ?? ""}`,
             );
           }
+          nodes = {
+            ...nodes,
+            [nodeId]: {
+              state: step.kind === "pass" ? "passed" : step.kind === "decide" ? "deciding" : "pending",
+              attempts,
+              ...(check === undefined ? {} : { lastCheck: check }),
+              ...(step.kind === "decide" ? { why: step.why } : {}),
+            },
+          };
+          this.saveNodes(record, agenda, hash, nodes);
+          if (step.kind !== "retry" || check === undefined) break;
+          guidance = { instruction: retryFeedback(phase, check, attempts) };
         }
+        if (running.abort.signal.aborted || step === undefined) break;
 
-        for (const run of runs) {
-          // Checked between runs, so a stop lands at a task boundary rather
-          // than halfway through one. The seat already running when the host
-          // stopped is cancelled through the same signal.
-          if (running.abort.signal.aborted) break;
-          const seat = record.seats.find((candidate) => candidate.seatId === run.task.seatId);
-          if (seat === undefined) {
-            // Vetting refuses this before confirmation, so reaching it means
-            // the roster changed underneath a confirmed agenda. Recorded as a
-            // failure rather than skipped: a task nobody ran and a seat with
-            // nothing to say are the same silence.
-            const text = `⚠️ 议程点名了不在名册上的席位「${run.task.seatId}」，本条未执行。`;
-            record.log.append("系统", text);
-            replies.push({
-              seatId: run.task.seatId,
-              displayName: run.task.seatId,
-              text,
-              failed: true,
-              contextLines: 0,
-            });
-            failedAt = { phase: phase.title, seat: run.task.seatId, why: "议程点名的席位不在名册上。" };
-            break;
-          }
-
-          const window =
-            run.window === "phase-start"
-              ? (opening.get(seat.seatId) ?? { lines: [] })
-              : await this.windowForSeat(record, host, seat);
-
-          const instructionId = newTurnId();
-          record.log.append(record.input.hostDisplayName, `（${phase.title}）${run.task.instruction}`, instructionId);
-          record.handed.set(seat.seatId, instructionId);
-          const reply = await this.runSeat(record, host, seat, run.task.instruction, window, running.abort.signal);
-          replies.push(reply);
-          if (!reply.failed) running.completedTasks.push(run.task.instruction);
-          // A seat that did not finish stops the phase where it stands. What
-          // follows was planned on the assumption that this was done: carrying
-          // on hands the next seat a gate that never opened, and it can only
-          // report that back — which is a round spent learning what was known
-          // the moment this one failed.
-          if (reply.failed && !running.abort.signal.aborted) {
-            failedAt = { phase: phase.title, seat: seat.displayName, why: firstLine(reply.text) };
-            break;
-          }
-
-          const path = resolveArtifactPath(
-            run.task.artifactPath === undefined ? undefined : { path: run.task.artifactPath },
-            { seatId: seat.seatId, phaseId: `${phase.title}-${run.round}` },
-            phase.tasks.filter((candidate) => candidate.artifactPath === run.task.artifactPath).length,
-          );
-          if (path !== undefined && !reply.failed) {
-            await this.writeArtifact(record, path, reply.text);
-            artifacts.push(path);
-            record.artifacts.push(path);
-          }
+        if (step.kind === "decide") {
+          decidingAt = { phase: phase.title, nodeId, why: step.why };
+          // Stops here even though another node might be runnable. Somebody
+          // has to choose, and work piling up behind a choice nobody has made
+          // is how a plan drifts from what was confirmed.
+          break;
         }
-
-        if (running.abort.signal.aborted) break;
-        // Not counted, for the same reason a stopped phase is not: `done` is
-        // where 「继续」 starts from, and a phase recorded as done is one
-        // nobody will run again.
-        if (failedAt !== undefined) break;
-        // Counted complete only after every run in it finished. A phase the
-        // stop cut through is not done, and calling it done would put its
-        // unfinished tasks in neither list.
         running.completedPhases.push(phase.title);
-        // Recorded as it goes, so an interruption knows where it stopped.
-        record.confirmed = {
-          ...(record.confirmed ?? { agenda, at: Date.now(), hash, roster: [] }),
-          agenda,
-          done: [...agenda.phases.slice(0, phaseIndex + 1).map((one) => one.title)],
-        };
-        this.persist(record);
-
         if (pausesAfter(phase)) {
           pausedAfter = phase.title;
           break;
         }
       }
+      nodes = settle(agenda, nodes);
+      this.saveNodes(record, agenda, hash, nodes);
     } finally {
       record.roundsInFlight -= 1;
       record.running = undefined;
       // Finished means finished: nothing left to carry on from. A stop or a
       // pause keeps the record, which is what makes 「继续」 possible.
-      const finished =
-        !running.abort.signal.aborted &&
-        pausedAfter === undefined &&
-        failedAt === undefined &&
-        running.completedPhases.length >= agenda.phases.length - startFrom;
+      const stood = standing(agenda, nodes);
+      const counts = tally(agenda, nodes);
+      const finished = !running.abort.signal.aborted && pausedAfter === undefined && stood === "finished";
+      // Nothing left to run and not everything passed: nodes were given up
+      // on, and what waited on them was skipped. Over, but not finished.
+      const ended = !running.abort.signal.aborted && pausedAfter === undefined && stood === "ended";
       this.note(
         record,
-        finished ? "agenda-finished" : running.abort.signal.aborted ? "agenda-stopped" : "agenda-paused",
+        finished || ended ? "agenda-finished" : running.abort.signal.aborted ? "agenda-stopped" : "agenda-paused",
         finished
-          ? `议程跑完，共 ${running.completedPhases.length} 个阶段。`
-          : running.abort.signal.aborted
-            ? `议程被叫停，已完成 ${running.completedPhases.length} 个阶段。`
-            : failedAt !== undefined
-              ? `议程停在「${failedAt.phase}」：${failedAt.seat} 没有完成（${failedAt.why}）。这一阶段没有记为完成，「继续」会从它重跑。`
-              : `议程停在「${pausedAfter ?? ""}」之后，等主持人。`,
+          ? `议程跑完，${counts.passed} 个阶段全部通过。`
+          : ended
+            ? `议程结束：通过 ${counts.passed}，未解决 ${counts.unresolved}，因此跳过 ${counts.skipped}。`
+            : running.abort.signal.aborted
+              ? `议程被叫停，已通过 ${counts.passed} 个阶段。`
+              : decidingAt !== undefined
+                ? `议程停在「${decidingAt.phase}」，需要决定：${unstopped(decidingAt.why)}。`
+                : `议程停在「${pausedAfter ?? ""}」之后，等主持人。`,
         hash,
       );
       // KEPT after it finishes, where it used to be cleared.
@@ -2442,17 +2702,19 @@ export class TeamsService extends Service {
       //
       // `done.length === phases.length` is what "finished" now looks like in
       // the record, and every reader that offers 「继续」 checks it.
-      if (finished && record.confirmed !== undefined) {
-        record.confirmed = { ...record.confirmed, done: agenda.phases.map((phase) => phase.title) };
-      }
       // Said in the discussion as well as the audit: the host is looking at
       // the discussion, and an agenda that simply stops producing lines is
       // the silence this is meant to end.
-      if (failedAt !== undefined) {
+      if (decidingAt !== undefined) {
         record.log.append(
           "系统",
-          `⚠️ 议程停在「${failedAt.phase}」：${failedAt.seat} 没有完成，后面的阶段没有执行。` +
-            `处理好之后点「继续」，会从这一阶段重跑。`,
+          `⚠️ 议程停在「${decidingAt.phase}」：${unstopped(decidingAt.why)}。后面的阶段没有执行。` +
+            `在议程卡片上决定怎么办：重做、让别人清障、视为通过，或者放下它。`,
+        );
+      } else if (ended) {
+        record.log.append(
+          "系统",
+          `议程结束，但不是全部通过：通过 ${counts.passed}，未解决 ${counts.unresolved}，因此跳过 ${counts.skipped}。`,
         );
       }
       this.persist(record);
@@ -2464,7 +2726,7 @@ export class TeamsService extends Service {
       "agenda",
       replies,
       running.reason !== undefined,
-      pausedAfter !== undefined || failedAt !== undefined,
+      pausedAfter !== undefined || decidingAt !== undefined,
     );
     this.exportRecord(record);
     // The reason an agenda holds the count for its whole run: a command sent
@@ -2478,7 +2740,7 @@ export class TeamsService extends Service {
       phasesRun: running.completedPhases,
       artifacts,
       ...(pausedAfter === undefined ? {} : { pausedAfter }),
-      ...(failedAt === undefined ? {} : { failedAt }),
+      ...(decidingAt === undefined ? {} : { decidingAt }),
     };
   }
 
@@ -3045,12 +3307,13 @@ export interface AgendaOutcome {
    */
   readonly pausedAfter?: string;
   /**
-   * Set when a seat did not finish its task and the agenda stopped there.
+   * Set when the agenda stopped at a decision point: a node whose check kept
+   * failing, whose seat reported itself blocked or asked the host something,
+   * or whose seat did not finish.
    *
-   * The phase named is NOT in `phasesRun`: a resume runs it again from its
-   * first task, including any seat that had already answered in it.
+   * The phase named is NOT in `phasesRun`.
    */
-  readonly failedAt?: { readonly phase: string; readonly seat: string; readonly why: string };
+  readonly decidingAt?: { readonly phase: string; readonly nodeId: string; readonly why: string };
   /** Files written, project-relative. */
   readonly artifacts: readonly string[];
   /**
@@ -3207,6 +3470,7 @@ interface TeamRecord {
         readonly agenda: AgendaSpec;
         readonly at: number;
         done: string[];
+        nodes?: NodeMap | undefined;
         readonly hash: string;
         readonly roster: readonly { readonly seatId: string; readonly displayName: string; readonly role: string }[];
       }
@@ -3284,6 +3548,15 @@ interface Command {
 
 /** How many finished commands a sitting keeps for the panel to label. */
 const FINISHED_COMMANDS_KEPT = 200;
+
+/** A sentence without its closing stop, so one can be added without doubling it. */
+const unstopped = (text: string): string => text.trim().replace(/[。.]+$/, "");
+
+/** How long an exit check may run when the agenda does not say. */
+const CHECK_TIMEOUT_SEC = 600;
+/** How much of a check's output is collected, and how much of that is kept. */
+const CHECK_OUTPUT_BYTES = 256 * 1024;
+const CHECK_TAIL_CHARS = 2000;
 
 /** The agenda currently executing, and the handle that stops it. */
 interface RunningAgenda {
