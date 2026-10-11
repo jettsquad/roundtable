@@ -103,43 +103,74 @@ describe("续接已有会话", () => {
 });
 
 describe("宿主配置", () => {
-  it("默认关掉，不读宿主的 CLAUDE.md", () => {
+  // `--setting-sources` 后面跟的是一个空字符串：不读任何一层设置文件。
+  const isolated = (argv: readonly string[]): boolean =>
+    argv.includes("--strict-mcp-config") && argv[argv.indexOf("--setting-sources") + 1] === "";
+
+  it("默认关掉，不读宿主的配置", () => {
     // 这是默认值，而不是一个选项——实测：常驻前缀带宿主配置是 100,113
     // token，不带是 33,899，差额每次冷启动都按「建缓存」这一档付。
-    expect(buildArgv({ prompt: "x" })).toContain("--safe-mode");
+    const argv = buildArgv({ prompt: "x" });
+    expect(isolated(argv)).toBe(true);
+    expect(argv[argv.indexOf("--setting-sources") + 1]).toBe("");
   });
 
   it("显式打开时让开", () => {
-    expect(buildArgv({ prompt: "x", hostCustomizations: true })).not.toContain("--safe-mode");
+    const argv = buildArgv({ prompt: "x", hostCustomizations: true });
+    expect(argv).not.toContain("--strict-mcp-config");
+    expect(argv).not.toContain("--setting-sources");
   });
 
   it("false 和不给是同一件事", () => {
     // 这个轴的存储值多半是 undefined（老席位存的时候还没有这个字段），
     // 而「没选」必须和「选了不要」落在省钱的那一边。
-    expect(buildArgv({ prompt: "x", hostCustomizations: false })).toContain("--safe-mode");
+    expect(isolated(buildArgv({ prompt: "x", hostCustomizations: false }))).toBe(true);
+  });
+
+  it("不用 --safe-mode：它会把我们特意给席位的两样东西一起关掉", () => {
+    // 实测：--safe-mode 下 --mcp-config 的工具不出现，--plugin-dir 的 skill 也不出现。
+    expect(buildArgv({ prompt: "x" })).not.toContain("--safe-mode");
+    expect(buildArgv({ prompt: "x", mcpConfig: "{}", skillsPluginDir: "/p" })).not.toContain("--safe-mode");
+  });
+
+  it("不关 skill：--disable-slash-commands 会让共享的 skill 也看不见", () => {
+    expect(buildArgv({ prompt: "x", skillsPluginDir: "/p" })).not.toContain("--disable-slash-commands");
+    expect(buildArgv({ prompt: "x", mcpConfig: "{}" })).not.toContain("--disable-slash-commands");
   });
 
   it("跟续接、权限模式、工具围栏共存", () => {
-    // 靠实跑定的，不是靠读文档：--safe-mode 配上这三样，第一轮建 33,899、
-    // 读 0，续接那轮建 51、读 33,899。三者同时生效。
     const argv = buildArgv({
       prompt: "x",
       resumeSessionId: "sess-1",
       permissionMode: "acceptEdits",
       toolFilter: { deny: ["Bash"] },
     });
-    expect(argv).toContain("--safe-mode");
+    expect(isolated(argv)).toBe(true);
     expect(argv).toContain("--resume");
     expect(flagValues(argv, "--permission-mode")).toEqual(["acceptEdits"]);
     expect(flagValues(argv, "--disallowed-tools")).toContain("Task");
   });
 
-  it("mounts a tool of our own without --safe-mode, which would switch it off", () => {
+  it("带着我们自己的工具时，隔离不变", () => {
     const argv = buildArgv({ prompt: "x", mcpConfig: "{}" });
-    expect(argv).not.toContain("--safe-mode");
-    expect(argv).toContain("--strict-mcp-config");
-    expect(argv).toContain("--disable-slash-commands");
+    expect(isolated(argv)).toBe(true);
     expect(argv[argv.indexOf("--mcp-config") + 1]).toBe("{}");
+  });
+});
+
+describe("共享 skill", () => {
+  it("给了插件目录就传给席位", () => {
+    const argv = buildArgv({ prompt: "x", skillsPluginDir: "/state/claude-skills-plugin" });
+    expect(argv[argv.indexOf("--plugin-dir") + 1]).toBe("/state/claude-skills-plugin");
+  });
+
+  it("没有共享 skill 时不传，席位照常启动", () => {
+    expect(buildArgv({ prompt: "x" })).not.toContain("--plugin-dir");
+    expect(buildArgv({ prompt: "x", skillsPluginDir: "" })).not.toContain("--plugin-dir");
+  });
+
+  it("读宿主配置的席位不另外给：它已经有宿主的全部 skill", () => {
+    expect(buildArgv({ prompt: "x", hostCustomizations: true, skillsPluginDir: "/p" })).not.toContain("--plugin-dir");
   });
 });
 

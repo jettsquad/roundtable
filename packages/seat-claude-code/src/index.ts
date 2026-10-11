@@ -31,6 +31,7 @@ import {
   requestedEffort,
   runCliSeat,
   seatSessionId,
+  seatStateDir,
   SEAT_SILENCE_LIMITS,
 } from "@squad/seat-runtime";
 import {
@@ -43,6 +44,7 @@ import {
 import { DELEGATION_TOOLS, buildArgv, seatDenials, type PermissionMode } from "./argv.ts";
 import { claudeTracker } from "./doing.ts";
 import { claudeConfigDirFor } from "./config-dir.ts";
+import { ensureSkillsPlugin } from "./skills-plugin.ts";
 import { readStream } from "./stream.ts";
 
 export const name = "squad-seat-claude-code";
@@ -210,6 +212,11 @@ export class FencedClaudeCodeSeats extends Service {
         // deleted between the turn that opens it and the turn that resumes it.
         const configDir = claudeConfigDirFor({ authMode: connection?.authMode, connectionId });
         if (configDir !== undefined) await mkdir(configDir, { recursive: true });
+        // The shared skills, as a folder this seat can be handed. Rebuilt
+        // per start because it is cheap and the shared folder may have
+        // appeared since the last one.
+        const skillsPluginDir =
+          hostCustomizations === true ? undefined : await ensureSkillsPlugin(seatStateDir("claude-skills-plugin"));
 
         return runCliSeat({
           ctx,
@@ -254,14 +261,14 @@ export class FencedClaudeCodeSeats extends Service {
               // cache CREATION per cold start, measured, for a framework
               // describing capabilities the seat does not have.
               hostCustomizations: hostCustomizations === true,
+              ...(skillsPluginDir === undefined ? {} : { skillsPluginDir }),
             }),
           // Resolved per start, so a rotated key reaches this turn.
           env: {
             ...(config.env ?? {}),
-            // Pairs with the isolation `buildArgv` spells out for a seat carrying our MCP tool.
-            ...(request.toolFilter?.allow?.includes(DOWNLOAD_TOOL_NAME) === true && hostCustomizations !== true
-              ? { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" }
-              : {}),
+            // The third part of the isolation `buildArgv` spells out: no flag
+            // stops the CLI reading CLAUDE.md, only this does.
+            ...(hostCustomizations === true ? {} : { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" }),
             ...connectionEnv,
             ...(configDir === undefined ? {} : { CLAUDE_CONFIG_DIR: configDir }),
           },
