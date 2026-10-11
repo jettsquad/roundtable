@@ -1,34 +1,104 @@
 {
   "documents": {
     "requirements": "docs/requirements.md",
+    "requirementIdPattern": "R\\d+",
+    "clauseHeadings": [
+      "验收"
+    ],
     "design": "docs/design.md",
-    "plan": "docs/plan.md"
+    "plan": [
+      "docs/plan-backend.md",
+      "docs/plan-web.md"
+    ]
   },
+  "acceptanceItems": [
+    "1"
+  ],
+  "notRequirements": [
+    {
+      "id": "R3",
+      "kind": "out-of-scope",
+      "reason": "Android 本期不做（需求所有者 2026-10-09 的范围决定）"
+    },
+    {
+      "quote": "本节条目来自项目负责人的答复",
+      "kind": "decision",
+      "reason": "背景说明，没有可检验的行为"
+    }
+  ],
   "requirements": [
     {
       "id": "R1",
       "title": "注册时必须填写用户名，18 个字符以内",
       "status": "active",
-      "surfaces": [
-        { "name": "backend", "level": "interface" },
-        { "name": "web", "level": "ui" }
+      "acceptance": "1",
+      "clauses": [
+        {
+          "id": "R1.a",
+          "quote": "注册时必须填写用户名"
+        },
+        {
+          "id": "R1.b",
+          "quote": "不超过 18 个字符"
+        },
+        {
+          "id": "R1.c",
+          "quote": "注册页有用户名输入框，填写后注册成功"
+        }
       ],
-      "design": ["docs/design.md#3.1"],
-      "tasks": ["T1", "T2"],
+      "surfaces": [
+        {
+          "name": "backend",
+          "level": "interface"
+        },
+        {
+          "name": "web",
+          "level": "ui"
+        }
+      ],
+      "design": [
+        "docs/design.md#3.1"
+      ],
+      "tasks": [
+        "T1",
+        "T2"
+      ],
       "evidence": [
         {
           "id": "E1",
           "surface": "backend",
           "level": "interface",
-          "run": "cd backend && uv run pytest tests/integration/test_registration_username.py -q",
-          "failsWhen": "注册接口接受了缺用户名或超过 18 个字符的请求，或拒绝了合法的用户名"
+          "run": "cd backend && uv run pytest -q tests/integration/test_registration_username.py::test_username_is_required",
+          "covers": [
+            {
+              "clause": "R1.a",
+              "failsWhen": "不带用户名的注册请求没有被拒绝"
+            }
+          ]
         },
         {
           "id": "E2",
+          "surface": "backend",
+          "level": "interface",
+          "run": "cd backend && uv run pytest -q tests/integration/test_registration_username.py::test_nineteen_characters_is_refused",
+          "covers": [
+            {
+              "clause": "R1.b",
+              "failsWhen": "19 个字符的用户名被接受，或 18 个字符的被拒绝"
+            }
+          ]
+        },
+        {
+          "id": "E3",
           "surface": "web",
           "level": "ui",
-          "run": "cd clients/web && npm run test:e2e -- registration",
-          "failsWhen": "注册页没有用户名输入框，或填了合法用户名后提交注册不成功"
+          "run": "cd clients/web && npx playwright test tests/e2e/registration.test.ts -g 'AC1'",
+          "covers": [
+            {
+              "clause": "R1.c",
+              "failsWhen": "注册页找不到用户名输入框，或填了合法用户名后提交没有进入已登录页面"
+            }
+          ]
         }
       ]
     },
@@ -40,16 +110,59 @@
         "approvedBy": "需求所有者姓名",
         "on": "2026-10-09",
         "reason": "第一版只记录举报，处置流程另立需求"
-      }
+      },
+      "clauses": [
+        {
+          "id": "R2.a",
+          "quote": "留言支持举报，举报由运营处置"
+        }
+      ]
     }
   ],
   "tasks": [
-    { "id": "T1", "title": "注册接口加用户名校验与存储", "requirements": ["R1"], "batch": "B1" },
-    { "id": "T2", "title": "Web 注册页加用户名输入", "requirements": ["R1"], "batch": "B2" }
+    {
+      "id": "T1",
+      "title": "注册接口加用户名校验与存储",
+      "requirements": [
+        "R1"
+      ],
+      "batch": "B1"
+    },
+    {
+      "id": "T2",
+      "title": "Web 注册页加用户名输入",
+      "requirements": [
+        "R1"
+      ],
+      "batch": "B2"
+    }
   ],
   "batches": [
-    { "id": "B1", "title": "后端", "evidence": ["E1"] },
-    { "id": "B2", "title": "Web", "evidence": ["E2"] }
+    {
+      "id": "B1",
+      "title": "后端",
+      "evidence": [
+        "E1",
+        "E2"
+      ]
+    },
+    {
+      "id": "B2",
+      "title": "Web",
+      "evidence": [
+        "E3"
+      ]
+    }
+  ],
+  "guards": [
+    {
+      "id": "G1",
+      "run": "cd backend && uv run pytest -q",
+      "why": "没有弄坏已有的行为",
+      "batches": [
+        "B2"
+      ]
+    }
   ],
   "leftovers": []
 }

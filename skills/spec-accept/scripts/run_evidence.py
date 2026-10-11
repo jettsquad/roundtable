@@ -57,6 +57,25 @@ def evidence_index(trace: dict[str, Any]) -> dict[str, tuple[str, dict[str, Any]
     return index
 
 
+def run_guards(trace: dict[str, Any], batch_id: str | None, cwd: str, timeout: int) -> list[dict[str, Any]]:
+    """守卫：不属于任何一条需求、但出口都要过的检查（没有弄坏别的）。
+
+    写在追溯表里而不是另一个出口脚本里。`batches` 不写就对每个批次都生效。
+    """
+    results: list[dict[str, Any]] = []
+    for guard in trace.get("guards") or []:
+        only = guard.get("batches")
+        if batch_id is not None and only and batch_id not in only:
+            continue
+        outcome = run_one(str(guard.get("run", "")), cwd, timeout)
+        passed = outcome["exitCode"] == 0
+        print(f"  {'✓' if passed else '✗'} 守卫 {guard.get('id')}（{outcome['seconds']} 秒）：{guard.get('run')}", flush=True)
+        if not passed and outcome["tail"].strip():
+            print("      " + outcome["tail"].strip()[-600:].replace("\n", "\n      "))
+        results.append({"id": guard.get("id"), "run": guard.get("run"), **outcome})
+    return results
+
+
 def run_batch(trace: dict[str, Any], batch_id: str, cwd: str, timeout: int) -> int:
     batch = next((row for row in trace.get("batches") or [] if row.get("id") == batch_id), None)
     if batch is None:
@@ -85,8 +104,14 @@ def run_batch(trace: dict[str, Any], batch_id: str, cwd: str, timeout: int) -> i
             tail = outcome["tail"].strip()
             if tail:
                 print("      " + tail[-600:].replace("\n", "\n      "))
-    if failed:
-        print(f"\n批次「{batch_id}」不能出口：{len(failed)} 条证据没通过（{', '.join(failed)}）。")
+    broken = [str(one["id"]) for one in run_guards(trace, batch_id, cwd, timeout) if one["exitCode"] != 0]
+    if failed or broken:
+        parts = []
+        if failed:
+            parts.append(f"{len(failed)} 条证据没通过（{', '.join(failed)}）")
+        if broken:
+            parts.append(f"{len(broken)} 条守卫没通过（{', '.join(broken)}）")
+        print(f"\n批次「{batch_id}」不能出口：{'；'.join(parts)}。")
         return 1
     print(f"\n批次「{batch_id}」可以出口：{len(listed)} 条证据全部通过。")
     return 0
@@ -124,6 +149,8 @@ def run_all(trace: dict[str, Any], cwd: str, timeout: int, out: str) -> int:
             }
         )
 
+    guards = run_guards(trace, None, cwd, timeout)
+    broken = [one for one in guards if one["exitCode"] != 0]
     met = [one for one in verdicts if one["verdict"] == "met"]
     unmet = [one for one in verdicts if one["verdict"] == "unmet"]
     deferred = [one for one in verdicts if one["verdict"] == "deferred"]
@@ -134,7 +161,9 @@ def run_all(trace: dict[str, Any], cwd: str, timeout: int, out: str) -> int:
                 "met": len(met),
                 "unmet": len(unmet),
                 "deferred": len(deferred),
+                "guardsFailed": len(broken),
                 "requirements": verdicts,
+                "guards": guards,
             },
             handle,
             ensure_ascii=False,
@@ -145,7 +174,9 @@ def run_all(trace: dict[str, Any], cwd: str, timeout: int, out: str) -> int:
         print(f"  ✗ {one['id']} {one.get('title') or ''}：{'；'.join(one['reasons'])}")
     for one in deferred:
         print(f"  — {one['id']} {one.get('title') or ''}：已推迟，不算满足")
-    return 1 if unmet else 0
+    for one in broken:
+        print(f"  ✗ 守卫 {one['id']} 没通过：{one.get('run')}")
+    return 1 if unmet or broken else 0
 
 
 def main() -> int:
