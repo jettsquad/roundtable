@@ -1,0 +1,55 @@
+{
+  "documents": {
+    "requirements": "docs/requirements.md",
+    "design": "docs/design.md",
+    "plan": "docs/plan.md"
+  },
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "注册时必须填写用户名，18 个字符以内",
+      "status": "active",
+      "surfaces": [
+        { "name": "backend", "level": "interface" },
+        { "name": "web", "level": "ui" }
+      ],
+      "design": ["docs/design.md#3.1"],
+      "tasks": ["T1", "T2"],
+      "evidence": [
+        {
+          "id": "E1",
+          "surface": "backend",
+          "level": "interface",
+          "run": "cd backend && uv run pytest tests/integration/test_registration_username.py -q",
+          "failsWhen": "注册接口接受了缺用户名或超过 18 个字符的请求，或拒绝了合法的用户名"
+        },
+        {
+          "id": "E2",
+          "surface": "web",
+          "level": "ui",
+          "run": "cd clients/web && npm run test:e2e -- registration",
+          "failsWhen": "注册页没有用户名输入框，或填了合法用户名后提交注册不成功"
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "留言支持举报，举报由运营处置",
+      "status": "deferred",
+      "deferral": {
+        "approvedBy": "需求所有者姓名",
+        "on": "2026-10-09",
+        "reason": "第一版只记录举报，处置流程另立需求"
+      }
+    }
+  ],
+  "tasks": [
+    { "id": "T1", "title": "注册接口加用户名校验与存储", "requirements": ["R1"], "batch": "B1" },
+    { "id": "T2", "title": "Web 注册页加用户名输入", "requirements": ["R1"], "batch": "B2" }
+  ],
+  "batches": [
+    { "id": "B1", "title": "后端", "evidence": ["E1"] },
+    { "id": "B2", "title": "Web", "evidence": ["E2"] }
+  ],
+  "leftovers": []
+}
