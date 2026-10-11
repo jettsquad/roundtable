@@ -98,6 +98,13 @@ export interface ArgvInput {
   readonly effort?: string | undefined;
   /** `--mcp-config` JSON, when the seat is given a tool of Squad's own. */
   readonly mcpConfig?: string | undefined;
+  /**
+   * `--plugin-dir`: the folder that carries the shared skills.
+   *
+   * See `skills-plugin.ts`. Ignored for a seat that reads the host's own
+   * configuration — it already has whatever skills the host has.
+   */
+  readonly skillsPluginDir?: string | undefined;
 }
 
 /** Delegation tools, denied to every seat unless the composition says otherwise. */
@@ -138,21 +145,28 @@ export function buildArgv(input: ArgvInput): readonly string[] {
   // Unless the seat asked for the host's configuration, everything the CLI
   // would have loaded on its own is turned off here. Auth, model selection,
   // built-in tools and permissions are unaffected — that is what makes this
-  // flag usable for a subscription seat, where giving the child its own
+  // usable for a subscription seat, where giving the child its own
   // `CLAUDE_CONFIG_DIR` is not an option: measured, an isolated config home
   // answers "Not logged in · Please run /login", and copying `.claude.json`
   // into it does not help, because the CLI only reads the Keychain from the
   // default home.
   //
-  // Except for a seat that is given a tool of Squad's own: `--safe-mode` also
-  // turns off `--mcp-config`, measured — the seat answered that it had no such
-  // tool. Those seats get the same isolation spelled out instead (only OUR MCP
-  // server, no skills, no settings files; the caller also sets
-  // CLAUDE_CODE_DISABLE_CLAUDE_MDS). Warm-cache cost measured equal to
-  // `--safe-mode`: ~2k created, ~40k read.
+  // Spelled out, not `--safe-mode`. That flag was the first choice and it
+  // does the same isolation in one word — but it also switches off the two
+  // things a seat is deliberately GIVEN: `--mcp-config` (measured: the seat
+  // answered that it had no such tool) and the skills of a `--plugin-dir`
+  // (measured: the plugin loads, its skills do not appear). So the isolation
+  // is written as its parts instead: no MCP servers but ours, no settings
+  // files, and — set by the caller — no CLAUDE.md
+  // (`CLAUDE_CODE_DISABLE_CLAUDE_MDS`). With no settings sources the host's
+  // own skills are not read either: measured, the catalogue is the CLI's
+  // built-ins plus whatever the plugin folder carries, and nothing else.
+  // Warm-cache cost measured equal to `--safe-mode`: ~2k created, ~40k read.
   if (input.hostCustomizations !== true) {
-    if (input.mcpConfig === undefined) argv.push("--safe-mode");
-    else argv.push("--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "");
+    argv.push("--strict-mcp-config", "--setting-sources", "");
+    if (input.skillsPluginDir !== undefined && input.skillsPluginDir !== "") {
+      argv.push("--plugin-dir", input.skillsPluginDir);
+    }
   }
 
   // Before the permission flags, and before the prompt: the CLI reads it as a
