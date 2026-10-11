@@ -104,6 +104,30 @@ function Phase({
           </label>
         )}
       </div>
+      {/* The command Squad itself will run to decide whether this phase got
+          done. Shown and editable here because this is the moment the host
+          approves it: it runs with their authority, and a phase with no
+          check passes the moment anybody replies. */}
+      <label className={styles.muted} style={{ display: "block" }}>
+        出口检查（Squad 自己运行，退出码 0 才算通过；留空 = 席位回了话就算完成）
+        <input
+          className={styles.grow ?? ""}
+          style={{ display: "block", width: "100%", fontFamily: "monospace" }}
+          value={phase.check?.command ?? ""}
+          placeholder="例如：git log --grep 'RB1 批次完成' -1 | grep -q ."
+          onChange={(event) => {
+            const command = event.target.value;
+            const { check: _dropped, ...rest } = phase;
+            onChange(command.trim() === "" ? rest : { ...rest, check: { ...phase.check, command } });
+          }}
+        />
+      </label>
+      {phase.needs === undefined ? null : (
+        <div className={styles.muted}>
+          依赖：{phase.needs.length === 0 ? "无（可以最先跑）" : phase.needs.join("、")}
+          {phase.id === undefined ? "" : ` · 节点名 ${phase.id}`}
+        </div>
+      )}
       {tasks.map((task, at) => (
         <div key={`${task.seatId}-${at}`} className={styles.said}>
           <div className={styles.row}>

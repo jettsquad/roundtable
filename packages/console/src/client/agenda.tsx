@@ -20,8 +20,10 @@
  * What is left here is the one thing that is genuinely not a message: an
  * agenda that is currently RUNNING, and the button that ends it.
  */
+import { useState } from "react";
 import type { TeamSummary } from "./api.ts";
 import { api, useAction } from "./api.ts";
+import type { AgendaNodeView } from "../wire.ts";
 import styles from "./panel.module.css";
 
 export function Agenda({
@@ -37,9 +39,29 @@ export function Agenda({
   // on its own: a restart is exactly when nobody is watching.
   if (team.progress === undefined && team.unfinished !== undefined) {
     const { phases, done, awaitingHost, awaitingFrom } = team.unfinished;
-    const next = phases[done.length];
+    // A server started before nodes existed sends neither field, and this
+    // bundle is rebuilt under it while it runs. Read the old shape as what it
+    // meant — a chain, finished up to `done` — rather than taking the whole
+    // panel down on `undefined.find`.
+    const nodes: readonly AgendaNodeView[] =
+      team.unfinished.nodes ??
+      phases.map((title, index) => ({
+        id: `p${index + 1}`,
+        title,
+        state: index < done.length ? ("passed" as const) : ("pending" as const),
+        attempts: index < done.length ? 1 : 0,
+        maxAttempts: 1,
+        needs: [],
+        seats: [],
+      }));
+    const standing = team.unfinished.standing ?? (done.length >= phases.length ? "finished" : "runnable");
+    const next = nodes.find((node) => node.state === "pending")?.title;
     const stoppedAt = done[done.length - 1];
-    const finished = done.length >= phases.length;
+    // Over, one way or the other: every node passed, or what is left was
+    // given up on or skipped. Neither has anything to carry on with.
+    const finished = standing === "finished" || standing === "ended";
+    const deciding = nodes.filter((node) => node.state === "deciding");
+    const dropped = nodes.filter((node) => node.state === "unresolved" || node.state === "skipped").length;
     return (
       <div className={`${styles.section} ${awaitingHost ? styles.calloutSection : ""}`}>
         {/* Two different situations wore one label. 「跑了一半断了」 asks
@@ -48,11 +70,20 @@ export function Agenda({
             something YOU owe — and a button reading 「继续」 beside an
             unanswered question is an invitation to skip it. */}
         <div className={styles.subhead}>
-          {awaitingHost ? "议程停下来等你回答" : finished ? "议程已经跑完" : "有一份议程没跑完"}
+          {deciding.length > 0
+            ? "议程停下来，需要你决定"
+            : awaitingHost
+              ? "议程停下来等你回答"
+              : standing === "finished"
+                ? "议程已经跑完"
+                : standing === "ended"
+                  ? "议程结束了，但不是全部通过"
+                  : "有一份议程没跑完"}
         </div>
         <div className={styles.muted}>
           {awaitingHost && stoppedAt !== undefined ? `「${stoppedAt}」问完了，在等你的回答 · ` : ""}
-          已完成 {done.length} / {phases.length} 个阶段
+          已通过 {done.length} / {phases.length} 个阶段
+          {dropped === 0 ? "" : ` · 放下或跳过 ${dropped} 个`}
           {next === undefined ? "" : ` · 下一个是「${next}」`}
           {` · 确认指纹 ${team.unfinished.hash}`}
         </div>
@@ -73,7 +104,10 @@ export function Agenda({
             名册和你确认时不一样了：{team.unfinished.rosterDrift.join("、")}。续跑会按现在的名册来。
           </div>
         )}
-        <div className={styles.row} style={finished ? { display: "none" } : undefined}>
+        {deciding.map((node) => (
+          <DecisionCard key={node.id} team={team} node={node} run={run} />
+        ))}
+        <div className={styles.row} style={finished || deciding.length > 0 ? { display: "none" } : undefined}>
           <button
             type="button"
             className={styles.button}
@@ -83,7 +117,7 @@ export function Agenda({
             {awaitingHost ? "我答完了，继续" : `从「${next ?? "下一阶段"}」继续`}
           </button>
           <span className={styles.hint}>
-            {awaitingHost ? "不回答直接点也行——那等于让它按自己的假设往下走。" : "已经跑完的阶段不会重跑。"}
+            {awaitingHost ? "不回答直接点也行——那等于让它按自己的假设往下走。" : "已经通过的阶段不会重跑。"}
           </span>
         </div>
         {/* Every phase, with the way back to it.
@@ -94,21 +128,32 @@ export function Agenda({
         <details className={styles.section}>
           <summary className={styles.sectionToggle}>阶段（{phases.length}）· 可以退回到其中任意一个重跑</summary>
           <ol className={styles.planList}>
-            {phases.map((title, index) => (
-              <li key={title}>
-                {title}
-                {index < done.length ? " ✓" : ""}
-                {index === done.length && !finished ? " ← 下一个" : ""}
-                {index >= done.length ? null : (
+            {nodes.map((node, index) => (
+              <li key={node.id}>
+                {node.title} <span className={styles.muted}>{STATE_LABEL[node.state]}</span>
+                {node.state === "pending" && node.title === next && !finished ? " ← 下一个" : ""}
+                {node.state === "pending" || node.attempts === 0 ? null : (
+                  <span className={styles.muted}>{` · 做了 ${node.attempts} 次`}</span>
+                )}
+                {node.state === "pending" && node.attempts === 0 ? null : (
                   <button
                     type="button"
-                    className={styles.quoteButton}
+                    className={styles.subtleButton}
                     disabled={team.busy}
                     title="把议程退回到这一阶段之前。之前说过的话都留着，重跑的席位看得见。"
                     onClick={() => void run(() => api.rewindAgenda({ teamId: team.teamId, phaseIndex: index }))}
                   >
                     从这里重来
                   </button>
+                )}
+                {node.why === undefined || node.state === "passed" ? null : (
+                  <div className={styles.hint}>{node.why}</div>
+                )}
+                {node.check === undefined ? null : (
+                  <div className={styles.hint}>
+                    出口检查：<code>{node.check}</code>
+                    {node.lastCheck === undefined ? "（还没跑过）" : `（上次：${checkWords(node.lastCheck)}）`}
+                  </div>
                 )}
               </li>
             ))}
@@ -126,11 +171,11 @@ export function Agenda({
         <div className={styles.row}>
           <button
             type="button"
-            className={styles.quoteButton}
+            className={styles.subtleButton}
             disabled={team.busy}
             onClick={() => {
               const asked = finished
-                ? "收起这份已经跑完的议程？讨论记录不会动。"
+                ? `收起这份已经${standing === "finished" ? "跑完" : "结束"}的议程？讨论记录不会动。`
                 : `放弃这份议程？还有 ${phases.length - done.length} 个阶段没跑，放弃后不能再从中间继续。讨论记录不会动。`;
               if (window.confirm(asked)) void run(() => api.abandonAgenda({ teamId: team.teamId }));
             }}
@@ -163,6 +208,120 @@ export function Agenda({
         <span className={styles.hint}>结束会让秘书写一份中止交接，团队保留。</span>
       </div>
       {error === undefined ? null : <div className={styles.error}>{error}</div>}
+    </div>
+  );
+}
+
+const STATE_LABEL: Record<AgendaNodeView["state"], string> = {
+  pending: "",
+  passed: "✓ 通过",
+  deciding: "⚠ 等你决定",
+  unresolved: "✗ 已放下",
+  skipped: "— 跳过",
+};
+
+function checkWords(check: NonNullable<AgendaNodeView["lastCheck"]>): string {
+  if (check.timedOut === true) return "超时";
+  if (check.exitCode === 0) return "通过";
+  return check.exitCode === null ? "被中止" : `未通过，退出码 ${check.exitCode}`;
+}
+
+/**
+ * A node the agenda could not get past by itself, and the four things that
+ * can be done about it.
+ *
+ * Shows the evidence before the buttons: why it stopped, the check's own
+ * output. A choice made without those is a guess, and the whole reason the
+ * agenda stopped here is that guessing had stopped working.
+ */
+function DecisionCard({
+  team,
+  node,
+  run,
+}: {
+  readonly team: TeamSummary;
+  readonly node: AgendaNodeView;
+  readonly run: (action: () => Promise<unknown>) => Promise<unknown>;
+}): JSX.Element {
+  const [instruction, setInstruction] = useState("");
+  const [seatId, setSeatId] = useState(team.seats[0]?.seatId ?? "");
+  const decide = (decision: Parameters<typeof api.decideNode>[0]["decision"]): void =>
+    void run(() => api.decideNode({ teamId: team.teamId, nodeId: node.id, decision }));
+  const said = instruction.trim();
+  return (
+    <div className={styles.section}>
+      <div>
+        <strong>「{node.title}」</strong>（{node.seats.join("、")}）
+      </div>
+      {node.why === undefined ? null : <div className={styles.error}>{node.why}</div>}
+      {node.check === undefined ? null : (
+        <div className={styles.hint}>
+          出口检查：<code>{node.check}</code>
+        </div>
+      )}
+      {node.lastCheck === undefined || node.lastCheck.tail.trim() === "" ? null : (
+        <details>
+          <summary className={styles.sectionToggle}>检查的输出（{checkWords(node.lastCheck)}）</summary>
+          <pre className={styles.hint} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+            {node.lastCheck.tail}
+          </pre>
+        </details>
+      )}
+      <textarea
+        className={styles.textarea}
+        rows={2}
+        value={instruction}
+        placeholder="要交代的话（重做时可以不写；让别人清障时必须写清要他做什么）"
+        onChange={(event) => setInstruction(event.target.value)}
+      />
+      <div className={styles.row}>
+        <button
+          type="button"
+          className={styles.button}
+          disabled={team.busy}
+          onClick={() => decide({ kind: "retry", ...(said === "" ? {} : { instruction: said }) })}
+        >
+          重做
+        </button>
+        <select value={seatId} onChange={(event) => setSeatId(event.target.value)} disabled={team.busy}>
+          {team.seats.map((seat) => (
+            <option key={seat.seatId} value={seat.seatId}>
+              {seat.displayName}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className={styles.button}
+          disabled={team.busy || said === "" || seatId === ""}
+          title="让这位席位先去解决障碍。他做完后，这一阶段的出口检查会再跑一遍。"
+          onClick={() => decide({ kind: "assign", seatId, instruction: said })}
+        >
+          让他去清障
+        </button>
+        <button
+          type="button"
+          className={styles.subtleButton}
+          disabled={team.busy}
+          onClick={() => {
+            if (window.confirm(`把「${node.title}」直接算作通过？出口检查不会再跑，后面的阶段会照常开始。`)) {
+              decide({ kind: "pass" });
+            }
+          }}
+        >
+          视为通过
+        </button>
+        <button
+          type="button"
+          className={styles.subtleButton}
+          disabled={team.busy}
+          onClick={() => {
+            if (window.confirm(`放下「${node.title}」？依赖它的阶段都会被跳过。`)) decide({ kind: "abandon" });
+          }}
+        >
+          放下它
+        </button>
+      </div>
     </div>
   );
 }

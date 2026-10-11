@@ -309,6 +309,19 @@ export interface TeamSummary {
          * whole time.
          */
         readonly awaitingFrom: readonly string[];
+        /**
+         * Where the whole agenda stands: something can run, a decision is
+         * needed, every node passed, or it is over with nodes given up on.
+         */
+        readonly standing?: "runnable" | "deciding" | "finished" | "ended" | undefined;
+        /**
+         * Every node, in written order, with what its last check said.
+         *
+         * Optional, like `standing`, for one reason: the panel's bundle is
+         * rebuilt while an older server is still running, and that server
+         * sends neither.
+         */
+        readonly nodes?: readonly AgendaNodeView[] | undefined;
       }
     | undefined;
   /**
@@ -637,6 +650,39 @@ export interface DraftAgendaRequest {
   /** The host's own words. `@` references are refused — the secretary is private-blind. */
   readonly command: string;
 }
+
+/** One node of a confirmed agenda, as the panel shows it. */
+export interface AgendaNodeView {
+  readonly id: string;
+  readonly title: string;
+  readonly state: "pending" | "passed" | "deciding" | "unresolved" | "skipped";
+  /** Runs since it was last sent back. */
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  /** The nodes it waits on. */
+  readonly needs: readonly string[];
+  /** Who does it, by display name. */
+  readonly seats: readonly string[];
+  /** Why it is waiting for a decision, was given up on, or was skipped. */
+  readonly why?: string | undefined;
+  /** Its exit check, when it has one. */
+  readonly check?: string | undefined;
+  readonly lastCheck?:
+    | {
+        readonly exitCode: number | null;
+        readonly tail: string;
+        readonly at: number;
+        readonly timedOut?: boolean | undefined;
+      }
+    | undefined;
+}
+
+/** What the host can choose for a node the agenda stopped at. */
+export type AgendaDecision =
+  | { readonly kind: "retry"; readonly instruction?: string | undefined }
+  | { readonly kind: "assign"; readonly seatId: string; readonly instruction: string }
+  | { readonly kind: "pass" }
+  | { readonly kind: "abandon" };
 
 /** The host's verdict on a draft. */
 export interface AgendaVerdictRequest {

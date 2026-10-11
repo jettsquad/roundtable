@@ -743,6 +743,32 @@
   opacity: 1;
 }
 
+/* A secondary action that is always there to be seen.
+   `.quoteButton` looks the same but is invisible until its MESSAGE is
+   hovered — right for a row of controls under every line of a discussion,
+   and wrong anywhere else: used on a card, it is a button nobody can find.
+   Three of them were (「放弃这份议程」「视为通过」「放下它」), found only by
+   opening the page and looking for them. */
+.subtleButton {
+  all: unset;
+  cursor: pointer;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  opacity: 0.8;
+  border: 1px solid var(--dsh-color-border, #34343a);
+  white-space: nowrap;
+}
+
+.subtleButton:hover {
+  opacity: 1;
+}
+
+.subtleButton:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .quoted {
   border-color: #4c8;
   color: #6c9;
@@ -931,11 +957,16 @@
   overflow-wrap: anywhere;
 }
 
+/* Outlined and tinted, not filled like its chip: this one holds a paragraph
+   and a button, and a solid block of amber made the button on it hard to
+   find — seen in the browser, not predicted. */
 .statusDetail.attention {
   padding: 6px 9px;
   border-radius: 6px;
   opacity: 1;
   font-weight: 400;
+  background: #d9a54a1f;
+  color: inherit;
 }
 
 .blocked {

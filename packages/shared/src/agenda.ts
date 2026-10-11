@@ -63,6 +63,34 @@ export const AgendaPhaseSchema = z
       .optional(),
     exit: z.enum(["after-tasks", "after-bounded-rounds", "wait-for-host"]).optional(),
     maxRounds: z.number().int().positive().optional(),
+    /**
+     * This phase's name as a node, for `needs` to refer to. Absent, it is
+     * `p1`, `p2`… by position — see `nodeIdOf`.
+     */
+    id: z.string().min(1).max(40).optional(),
+    /**
+     * The nodes that must have PASSED before this one runs. Absent means the
+     * one written just before it, which is what a plain list always meant.
+     */
+    needs: z.array(z.string().min(1)).optional(),
+    /**
+     * How Squad itself finds out whether this phase got done.
+     *
+     * A shell command run in the project folder; exit code 0 passes. Without
+     * one, "the seat answered" is all that is known — which is how five
+     * phases once finished in four minutes on five replies of 「前置没满足，
+     * 不开工」. The exit criterion was in each instruction as prose, and
+     * nothing ever ran it.
+     */
+    check: z
+      .object({
+        command: z.string().min(1).max(2000),
+        timeoutSec: z.number().int().positive().max(7200).optional(),
+      })
+      .strict()
+      .optional(),
+    /** Attempts before the node stops being retried, the first included. */
+    maxAttempts: z.number().int().positive().max(10).optional(),
   })
   .strict();
 
@@ -79,6 +107,23 @@ export type AgendaSpec = z.infer<typeof AgendaSpecSchema>;
 
 /** Structural validation only; see `checkAgendaAgainstRoster` for the rest. */
 export const parseAgendaSpec = (value: unknown): AgendaSpec => AgendaSpecSchema.parse(value);
+
+/** A phase's node id: its own, or its position. */
+export const nodeIdOf = (phase: AgendaPhase, index: number): string => phase.id ?? `p${index + 1}`;
+
+/**
+ * What a phase waits on: what it names, or the phase before it.
+ *
+ * The default is the whole of backward compatibility — an agenda with no
+ * `needs` anywhere is a chain, exactly the list it always was.
+ */
+export function needsOf(agenda: AgendaSpec, index: number): readonly string[] {
+  const phase = agenda.phases[index];
+  if (phase === undefined) return [];
+  if (phase.needs !== undefined) return phase.needs;
+  const before = agenda.phases[index - 1];
+  return before === undefined ? [] : [nodeIdOf(before, index - 1)];
+}
 
 export interface AgendaProblem {
   readonly phase: string;
@@ -98,6 +143,20 @@ export interface AgendaProblem {
 export function checkAgendaAgainstRoster(agenda: AgendaSpec, seatIds: readonly string[]): readonly AgendaProblem[] {
   const known = new Set(seatIds);
   const problems: AgendaProblem[] = [];
+  // Node ids and what each node waits on. A node may only wait on one
+  // written BEFORE it: that is what makes the plan impossible to tie in a
+  // knot, with no cycle check to get wrong.
+  const earlier = new Set<string>();
+  for (const [index, phase] of agenda.phases.entries()) {
+    const id = nodeIdOf(phase, index);
+    if (earlier.has(id)) problems.push({ phase: phase.title, detail: `节点名「${id}」和前面的阶段重了` });
+    for (const need of phase.needs ?? []) {
+      if (!earlier.has(need)) {
+        problems.push({ phase: phase.title, detail: `needs 里的「${need}」不是写在它前面的阶段` });
+      }
+    }
+    earlier.add(id);
+  }
   for (const phase of agenda.phases) {
     for (const task of phase.tasks) {
       if (!known.has(task.seatId)) {

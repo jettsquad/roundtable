@@ -137,6 +137,33 @@ const teamRecord = z.object({
   /** Phase titles that finished, in order. Where a resume starts from. */
   confirmedDone: z.array(z.string()).optional(),
   /**
+   * Where each node of the confirmed agenda stands.
+   *
+   * `confirmedDone` cannot say what this does: a node given up on, one
+   * waiting for a decision, how many times one was tried, what its check
+   * last printed. Absent on rows written before nodes existed, which are
+   * read from `confirmedDone` alone.
+   */
+  confirmedNodes: z
+    .record(
+      z.string(),
+      z.object({
+        state: z.enum(["pending", "passed", "deciding", "unresolved", "skipped"]),
+        attempts: z.number(),
+        why: z.string().optional(),
+        lastCheck: z
+          .object({
+            exitCode: z.number().nullable(),
+            tail: z.string(),
+            at: z.number(),
+            timedOut: z.boolean().optional(),
+          })
+          .optional(),
+        detour: z.object({ seatId: z.string().optional(), instruction: z.string() }).optional(),
+      }),
+    )
+    .optional(),
+  /**
    * sha256 of the canonical confirmed agenda.
    *
    * So 「跑的是不是我确认的那份」 stays answerable after everyone has
