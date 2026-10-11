@@ -86,6 +86,11 @@ import {
   settle,
   standing,
   tally,
+  PROXY_DECISION_CAP,
+  type DecisionPoint,
+  type DecisionReason,
+  type ProxyDecision,
+  type ProxyDecisionEntry,
   type ExitCheckResult,
   type Decision,
   type NodeDetour,
@@ -242,6 +247,10 @@ export interface Team {
          * existed, where `done` is all there is.
          */
         readonly nodes?: NodeMap | undefined;
+        /** Confirmed with 「由 Lil X 代理」: decision points go to the proxy, not to the host. */
+        readonly proxy?: boolean | undefined;
+        /** What the proxy decided, oldest first. The raw material of the report. */
+        readonly decisions?: readonly ProxyDecisionEntry[] | undefined;
         /** sha256 of the canonical agenda, so what ran stays checkable. */
         readonly hash: string;
         /** Who was at the table when it was confirmed. */
@@ -440,7 +449,7 @@ export interface Team {
    * which is what keeps a wrong agenda costing a click instead of an
    * afternoon.
    */
-  runAgenda(agenda: AgendaSpec): Promise<AgendaOutcome>;
+  runAgenda(agenda: AgendaSpec, options?: { readonly proxy?: boolean | undefined }): Promise<AgendaOutcome>;
   /**
    * Stop the running agenda and return the material for its hand-off.
    *
@@ -654,6 +663,7 @@ export class TeamsService extends Service {
 
   private readonly teams = new Map<string, TeamRecord>();
   private assembler: TeamAssembler | undefined;
+  private proxy: AgendaProxy | undefined;
   /** sessionId → the lookup in flight for it. See `sittingFor`. */
   private readonly sittingLookups = new Map<string, Promise<Team | undefined>>();
   /** path → the rewrite in flight for it. See `compacted`. */
@@ -947,6 +957,10 @@ export class TeamsService extends Service {
               at: saved.confirmedAt ?? Date.now(),
               done: [...(saved.confirmedDone ?? [])],
               ...(saved.confirmedNodes === undefined ? {} : { nodes: saved.confirmedNodes as NodeMap }),
+              ...(saved.confirmedProxy === true ? { proxy: true } : {}),
+              ...(saved.confirmedDecisions === undefined
+                ? {}
+                : { decisions: saved.confirmedDecisions as readonly ProxyDecisionEntry[] }),
               // Recomputed rather than trusted when the row predates hashing:
               // a stored hash that no longer matches its agenda would be a
               // lie, and an absent one is merely a gap.
@@ -1087,6 +1101,10 @@ export class TeamsService extends Service {
             confirmedAt: record.confirmed.at,
             confirmedDone: record.confirmed.done,
             ...(record.confirmed.nodes === undefined ? {} : { confirmedNodes: record.confirmed.nodes }),
+            ...(record.confirmed.proxy === true ? { confirmedProxy: true } : {}),
+            ...(record.confirmed.decisions === undefined || record.confirmed.decisions.length === 0
+              ? {}
+              : { confirmedDecisions: record.confirmed.decisions as TeamPersisted["confirmedDecisions"] }),
             confirmedHash: record.confirmed.hash,
             confirmedRoster: record.confirmed.roster as { seatId: string; displayName: string; role: string }[],
           }),
@@ -1124,6 +1142,22 @@ export class TeamsService extends Service {
     this.assembler = assembler;
     return () => {
       if (this.assembler === assembler) this.assembler = undefined;
+    };
+  }
+
+  /**
+   * Register whoever decides in the host's place at a decision point.
+   *
+   * Injected for the same reason the assembler is: the table must not be
+   * able to reach the host's criteria, and whoever decides needs them. Used
+   * only by an agenda confirmed with 「由 Lil X 代理」; without one
+   * registered, such an agenda stops at a decision point like any other.
+   */
+  useProxy(proxy: AgendaProxy): () => void {
+    if (this.proxy !== undefined) throw new Error("已经有一个代理主持注册在这张桌子上了。");
+    this.proxy = proxy;
+    return () => {
+      if (this.proxy === proxy) this.proxy = undefined;
     };
   }
 
@@ -1909,7 +1943,7 @@ export class TeamsService extends Service {
       transcript: () => record.log.events(),
       recordSpoken: (speaker, text, turnId) => record.log.append(speaker, text, turnId),
       recordCheck: () => record.log.check(),
-      runAgenda: (agenda) => this.runAgenda(record, agenda),
+      runAgenda: (agenda, options) => this.runAgenda(record, agenda, false, options?.proxy === true),
       stopAgenda: (reason) => this.stopAgenda(record, reason),
       stop: (reason) => this.stop(record, reason),
       dispose: () => this.dispose(record),
@@ -2316,10 +2350,13 @@ export class TeamsService extends Service {
   ): Promise<{
     readonly failed: { readonly seat: string; readonly why: string } | undefined;
     readonly report: SeatReport | undefined;
+    /** What the last seat to speak said — what a decision point is shown. */
+    readonly last: { readonly seat: string; readonly text: string } | undefined;
   }> {
     // `let` assigned inside the loop below, which narrowing cannot follow.
     let failed = undefined as { readonly seat: string; readonly why: string } | undefined;
     let report = undefined as SeatReport | undefined;
+    let last = undefined as { readonly seat: string; readonly text: string } | undefined;
     // Taken once, before anything in the phase speaks. Every
     // `phase-start` run in this phase is handed this same snapshot, so
     // independence is a fact of what exists rather than a rule someone
@@ -2403,6 +2440,7 @@ export class TeamsService extends Service {
         running.abort.signal,
       );
       replies.push(reply);
+      last = { seat: seat.displayName, text: reply.text };
       if (!reply.failed) {
         running.completedTasks.push(run.task.instruction);
         report = parseSeatReport(reply.text) ?? report;
@@ -2428,7 +2466,254 @@ export class TeamsService extends Service {
         record.artifacts.push(path);
       }
     }
-    return { failed, report };
+    return { failed, report, last };
+  }
+
+  /** The name a proxy speaks under in the discussion, so nobody mistakes it for the host. */
+  private proxySpeaker(record: TeamRecord): string {
+    return `Lil X（代${record.input.hostDisplayName}）`;
+  }
+
+  /** What a proxy is shown at one point. */
+  private decisionPoint(
+    record: TeamRecord,
+    agenda: AgendaSpec,
+    nodes: NodeMap,
+    at: {
+      readonly phase: AgendaPhase;
+      readonly nodeId: string;
+      readonly reason: DecisionPoint["reason"];
+      readonly why: string;
+      readonly lastReply: { readonly seat: string; readonly text: string } | undefined;
+    },
+    discussion?: DecisionPoint["discussion"],
+  ): DecisionPoint {
+    const node = nodeOf(nodes, at.nodeId);
+    return {
+      nodeId: at.nodeId,
+      phase: at.phase,
+      reason: at.reason,
+      why: at.why,
+      attempts: node.attempts,
+      decisions: node.decisions ?? 0,
+      ...(node.lastCheck === undefined ? {} : { lastCheck: node.lastCheck }),
+      ...(at.lastReply === undefined ? {} : { lastReply: at.lastReply }),
+      agenda,
+      nodes,
+      seats: record.seats.map((seat) => ({ seatId: seat.seatId, displayName: seat.displayName, role: seat.role })),
+      projectFolder: record.input.projectFolder,
+      ...(discussion === undefined ? {} : { discussion }),
+    };
+  }
+
+  /** Keep what a proxy decided: in the discussion, in the audit, and for the report. */
+  private recordProxyDecision(
+    record: TeamRecord,
+    hash: string,
+    entry: Omit<ProxyDecisionEntry, "at">,
+    said: string,
+  ): void {
+    const held = record.confirmed;
+    if (held !== undefined) {
+      record.confirmed = { ...held, decisions: [...(held.decisions ?? []), { at: Date.now(), ...entry }] };
+    }
+    record.log.append(this.proxySpeaker(record), said);
+    this.note(record, "agenda-decided", `Lil X 对「${entry.title}」：${unstopped(entry.detail)}。`, hash);
+  }
+
+  /**
+   * Have the proxy decide what happens to a node the agenda stopped at.
+   *
+   * @returns the nodes after its decision, or `undefined` when there is no
+   *   decision to act on — no proxy registered, or it failed, or it answered
+   *   outside its options. The caller then stops for the host, which is what
+   *   would have happened with no proxy at all.
+   */
+  private async decideByProxy(
+    record: TeamRecord,
+    host: Agent,
+    running: RunningAgenda,
+    agenda: AgendaSpec,
+    hash: string,
+    nodes: NodeMap,
+    at: {
+      readonly phase: AgendaPhase;
+      readonly nodeId: string;
+      readonly reason: DecisionReason;
+      readonly why: string;
+      readonly lastReply: { readonly seat: string; readonly text: string } | undefined;
+      readonly replies: SeatReply[];
+    },
+  ): Promise<NodeMap | undefined> {
+    const proxy = this.proxy;
+    if (proxy === undefined) return undefined;
+    const title = at.phase.title;
+    const taken = nodeOf(nodes, at.nodeId).decisions ?? 0;
+
+    // The cap. Not a question put to the host — the node is put down, what
+    // waits on it is skipped, and it goes in the report. Without it a node
+    // nobody can fix is decided about for ever.
+    if (taken >= PROXY_DECISION_CAP) {
+      const why = `已经为它做过 ${taken} 个决定，出口仍未通过：${unstopped(at.why)}`;
+      const after = applyDecision(agenda, nodes, at.nodeId, { kind: "abandon", why });
+      this.recordProxyDecision(
+        record,
+        hash,
+        { nodeId: at.nodeId, title, problem: at.why, action: "cap-reached", detail: "决定次数用完，放下这一阶段" },
+        `「${title}」我已经做过 ${taken} 个决定，它仍然过不了：${unstopped(at.why)}。放下它，依赖它的阶段跳过，其余继续；写进给主持人的报告。`,
+      );
+      this.saveNodes(record, agenda, hash, after);
+      return after;
+    }
+
+    let decision: ProxyDecision;
+    let discussion = undefined as DecisionPoint["discussion"];
+    try {
+      decision = await proxy(this.decisionPoint(record, agenda, nodes, at), host, running.abort.signal);
+      if (decision.kind === "discuss") {
+        // One round, with the seats it concerns, in the open. The proposal is
+        // a line in the discussion like any other; so are the answers.
+        const proposal = decision.proposal;
+        record.log.append(this.proxySpeaker(record), `关于「${title}」，我的方案：\n${proposal}`);
+        const heard: { seat: string; text: string }[] = [];
+        for (const seatId of decision.seatIds) {
+          if (running.abort.signal.aborted) return undefined;
+          const seat = record.seats.find((candidate) => candidate.seatId === seatId);
+          if (seat === undefined) continue;
+          const window = await this.windowForSeat(record, host, seat);
+          const reply = await this.runSeat(
+            record,
+            host,
+            seat,
+            `Lil X 代主持人就「${title}」卡住的问题提出了下面的方案。只回应这个方案：可行吗，有什么要改，你这边需要什么。不要动手做，先把话说清楚。\n\n${proposal}`,
+            window,
+            running.abort.signal,
+          );
+          at.replies.push(reply);
+          heard.push({ seat: seat.displayName, text: reply.text });
+        }
+        if (running.abort.signal.aborted) return undefined;
+        discussion = { proposal, replies: heard };
+        decision = await proxy(this.decisionPoint(record, agenda, nodes, at, discussion), host, running.abort.signal);
+      }
+    } catch (failure) {
+      if (running.abort.signal.aborted) return undefined;
+      record.log.append(
+        "系统",
+        `⚠️ Lil X 没能就「${title}」做出决定（${unstopped(String((failure as Error).message ?? failure)).slice(0, 160)}）。议程停在这里，等主持人。`,
+      );
+      return undefined;
+    }
+
+    // A second `discuss` is refused by the parser; this is the belt to that
+    // pair of braces, for a proxy that is not the one we ship.
+    if (decision.kind === "discuss") return undefined;
+
+    const entry = { nodeId: at.nodeId, title, problem: at.why, ...(discussion === undefined ? {} : { discussion }) };
+    let after: NodeMap;
+    if (decision.kind === "give-up") {
+      after = applyDecision(agenda, nodes, at.nodeId, { kind: "abandon", why: decision.why });
+      this.recordProxyDecision(
+        record,
+        hash,
+        { ...entry, action: "give-up", detail: `放下：${decision.why}` },
+        `「${title}」我把它放下：${unstopped(decision.why)}。这一条会写进给主持人的报告。`,
+      );
+    } else if (decision.kind === "assign") {
+      const name = record.seats.find((seat) => seat.seatId === decision.seatId)?.displayName ?? decision.seatId;
+      after = applyDecision(agenda, nodes, at.nodeId, {
+        kind: "assign",
+        seatId: decision.seatId,
+        instruction: decision.instruction,
+      });
+      this.recordProxyDecision(
+        record,
+        hash,
+        { ...entry, action: "assign", detail: `让 ${name} 去清障：${decision.instruction}` },
+        `「${title}」：${unstopped(decision.say)}。@${name} 你来处理。`,
+      );
+    } else if (decision.kind === "answer") {
+      after = applyDecision(agenda, nodes, at.nodeId, {
+        kind: "retry",
+        instruction: `主持人不在场，以下是 Lil X 代他给出的答复，按它继续做，不要再等确认：\n${decision.text}`,
+      });
+      this.recordProxyDecision(
+        record,
+        hash,
+        { ...entry, action: "answer", detail: `代答：${decision.text}` },
+        `「${title}」，回答你们的问题：${decision.text}`,
+      );
+    } else {
+      after = applyDecision(agenda, nodes, at.nodeId, { kind: "retry", instruction: decision.instruction });
+      this.recordProxyDecision(
+        record,
+        hash,
+        { ...entry, action: "retry", detail: `重做：${decision.instruction}` },
+        `「${title}」：${unstopped(decision.say)}。`,
+      );
+    }
+    this.saveNodes(record, agenda, hash, after);
+    return after;
+  }
+
+  /**
+   * A phase asked to stop for the host; have the proxy answer in his place.
+   *
+   * @returns whether the agenda may carry on. The answer is a line in the
+   *   discussion, which is how the seats of the following phases come to read it.
+   */
+  private async answerByProxy(
+    record: TeamRecord,
+    host: Agent,
+    running: RunningAgenda,
+    agenda: AgendaSpec,
+    nodes: NodeMap,
+    at: {
+      readonly phase: AgendaPhase;
+      readonly nodeId: string;
+      readonly lastReply: { readonly seat: string; readonly text: string } | undefined;
+    },
+  ): Promise<boolean> {
+    const proxy = this.proxy;
+    if (proxy === undefined) return false;
+    const title = at.phase.title;
+    try {
+      const decision = await proxy(
+        this.decisionPoint(record, agenda, nodes, {
+          ...at,
+          reason: "awaiting-host",
+          why: "这一阶段要求停下来等主持人回答",
+        }),
+        host,
+        running.abort.signal,
+      );
+      // Whatever it chose, what the seats need here is words. An instruction
+      // meant for a redo reads perfectly well as the answer to carry forward.
+      const text =
+        decision.kind === "answer"
+          ? decision.text
+          : decision.kind === "discuss"
+            ? decision.proposal
+            : decision.kind === "give-up"
+              ? decision.why
+              : decision.instruction;
+      this.recordProxyDecision(
+        record,
+        record.confirmed?.hash ?? "",
+        { nodeId: at.nodeId, title, problem: "这一阶段在等主持人回答", action: "answer", detail: `代答：${text}` },
+        `「${title}」问到主持人的，我来答：${text}`,
+      );
+      this.persist(record);
+      return true;
+    } catch (failure) {
+      if (!running.abort.signal.aborted) {
+        record.log.append(
+          "系统",
+          `⚠️ Lil X 没能回答「${title}」提出的问题（${unstopped(String((failure as Error).message ?? failure)).slice(0, 160)}）。议程停在这里，等主持人。`,
+        );
+      }
+      return false;
+    }
   }
 
   /**
@@ -2508,7 +2793,12 @@ export class TeamsService extends Service {
    * and record a boundary in the middle of something the host asked for as a
    * unit. The round-end signal fires once, at the end.
    */
-  private async runAgenda(record: TeamRecord, agenda: AgendaSpec, resuming = false): Promise<AgendaOutcome> {
+  private async runAgenda(
+    record: TeamRecord,
+    agenda: AgendaSpec,
+    resuming = false,
+    proxied = false,
+  ): Promise<AgendaOutcome> {
     if (record.disposed) throw new Error("团队已销毁。");
     if (record.running !== undefined) throw new Error("这支团队已经在跑一个议程了。");
     // Commands still running finish first; nothing new starts meanwhile
@@ -2537,11 +2827,16 @@ export class TeamsService extends Service {
       ? (record.confirmed?.nodes ?? initialNodes(agenda, record.confirmed?.done))
       : initialNodes(agenda);
     const passedBefore = tally(agenda, nodes).passed;
+    // Whether the proxy holds the chair is decided at confirmation and kept:
+    // a resume carries on under whatever was chosen then.
+    const proxy = resuming ? record.confirmed?.proxy === true : proxied;
     record.confirmed = {
       agenda,
       at: record.confirmed?.at ?? Date.now(),
       done: [...passedTitles(agenda, nodes)],
       nodes,
+      ...(proxy ? { proxy: true } : {}),
+      ...(resuming && record.confirmed?.decisions !== undefined ? { decisions: record.confirmed.decisions } : {}),
       hash,
       // Who was at the table at confirmation. Execution reads the CURRENT
       // roster on purpose — a member added mid-agenda should be usable — so
@@ -2557,7 +2852,7 @@ export class TeamsService extends Service {
       resuming ? "agenda-resumed" : "agenda-confirmed",
       resuming
         ? `续跑，已通过 ${passedBefore} / ${agenda.phases.length} 个阶段。`
-        : `主持人确认了议程，共 ${agenda.phases.length} 个阶段，名册 ${record.seats.length} 人。`,
+        : `主持人确认了议程，共 ${agenda.phases.length} 个阶段，名册 ${record.seats.length} 人${proxy ? "，由 Lil X 代理" : ""}。`,
       hash,
     );
     this.persist(record);
@@ -2613,6 +2908,7 @@ export class TeamsService extends Service {
         };
 
         let step: Step | undefined;
+        let lastReply = undefined as { readonly seat: string; readonly text: string } | undefined;
         // What the seats are told on top of their task: the check's output
         // after a failed attempt, or what was decided at a decision point.
         let guidance = nodeOf(nodes, nodeId).detour;
@@ -2636,6 +2932,7 @@ export class TeamsService extends Service {
                 `（${describeCheck(check)}，第 ${attempts} 次）：${phase.check?.command ?? ""}`,
             );
           }
+          const before = nodeOf(nodes, nodeId);
           nodes = {
             ...nodes,
             [nodeId]: {
@@ -2643,8 +2940,12 @@ export class TeamsService extends Service {
               attempts,
               ...(check === undefined ? {} : { lastCheck: check }),
               ...(step.kind === "decide" ? { why: step.why } : {}),
+              // Carried over: it is what stops a proxy deciding its way round
+              // the same node for ever, and an attempt is not a reason to forget it.
+              ...(before.decisions === undefined ? {} : { decisions: before.decisions }),
             },
           };
+          lastReply = attempt.last ?? lastReply;
           this.saveNodes(record, agenda, hash, nodes);
           if (step.kind !== "retry" || check === undefined) break;
           guidance = { instruction: retryFeedback(phase, check, attempts) };
@@ -2652,6 +2953,24 @@ export class TeamsService extends Service {
         if (running.abort.signal.aborted || step === undefined) break;
 
         if (step.kind === "decide") {
+          // With a proxy in the chair the decision is taken here and the
+          // agenda carries on; it comes back `undefined` only when the proxy
+          // could not be reached or answered outside its options.
+          const decided = proxy
+            ? await this.decideByProxy(record, host, running, agenda, hash, nodes, {
+                phase,
+                nodeId,
+                reason: step.reason,
+                why: step.why,
+                lastReply,
+                replies,
+              })
+            : undefined;
+          if (running.abort.signal.aborted) break;
+          if (decided !== undefined) {
+            nodes = decided;
+            continue;
+          }
           decidingAt = { phase: phase.title, nodeId, why: step.why };
           // Stops here even though another node might be runnable. Somebody
           // has to choose, and work piling up behind a choice nobody has made
@@ -2660,6 +2979,13 @@ export class TeamsService extends Service {
         }
         running.completedPhases.push(phase.title);
         if (pausesAfter(phase)) {
+          // The phase asked to stop for the host. A proxy answers in his
+          // place and the agenda carries on; it stops only if the proxy
+          // could not answer.
+          const answered =
+            proxy && (await this.answerByProxy(record, host, running, agenda, nodes, { phase, nodeId, lastReply }));
+          if (running.abort.signal.aborted) break;
+          if (answered === true) continue;
           pausedAfter = phase.title;
           break;
         }
@@ -3471,6 +3797,8 @@ interface TeamRecord {
         readonly at: number;
         done: string[];
         nodes?: NodeMap | undefined;
+        proxy?: boolean | undefined;
+        decisions?: readonly ProxyDecisionEntry[] | undefined;
         readonly hash: string;
         readonly roster: readonly { readonly seatId: string; readonly displayName: string; readonly role: string }[];
       }
@@ -3551,6 +3879,12 @@ const FINISHED_COMMANDS_KEPT = 200;
 
 /** A sentence without its closing stop, so one can be added without doubling it. */
 const unstopped = (text: string): string => text.trim().replace(/[。.]+$/, "");
+
+/**
+ * Whoever decides in the host's place. Given the point, the team's host node
+ * to run under, and the signal that stops the agenda.
+ */
+export type AgendaProxy = (point: DecisionPoint, host: Agent, signal: AbortSignal) => Promise<ProxyDecision>;
 
 /** How long an exit check may run when the agenda does not say. */
 const CHECK_TIMEOUT_SEC = 600;

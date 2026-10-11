@@ -60,6 +60,13 @@ export interface NodeRecord {
   readonly why?: string | undefined;
   /** Consumed by the next run. */
   readonly detour?: NodeDetour | undefined;
+  /**
+   * Decisions taken at this node so far, by anyone.
+   *
+   * Kept across retries, unlike `attempts`: it is what stops a proxy from
+   * deciding its way round the same node for ever.
+   */
+  readonly decisions?: number | undefined;
 }
 
 export type NodeMap = Readonly<Record<string, NodeRecord>>;
@@ -297,7 +304,10 @@ export function applyDecision(agenda: AgendaSpec, nodes: NodeMap, id: string, de
   const record = nodes[id];
   if (record === undefined) throw new Error(`议程里没有节点「${id}」。`);
   if (record.state !== "deciding") throw new Error(`节点「${id}」现在不需要决定。`);
-  const kept = record.lastCheck === undefined ? {} : { lastCheck: record.lastCheck };
+  const kept = {
+    ...(record.lastCheck === undefined ? {} : { lastCheck: record.lastCheck }),
+    decisions: (record.decisions ?? 0) + 1,
+  };
   let next: NodeRecord;
   if (decision.kind === "pass") next = { ...kept, state: "passed", attempts: record.attempts, why: "主持人判为通过" };
   else if (decision.kind === "abandon") {
@@ -326,4 +336,65 @@ export function rewindTo(agenda: AgendaSpec, nodes: NodeMap, phaseIndex: number)
     if (index >= phaseIndex) next[nodeIdOf(phase, index)] = FRESH;
   }
   return next;
+}
+
+// ── A proxy at the decision point ──────────────────────────────────────────
+
+/** Decisions a proxy may take at one node before the node is put down. */
+export const PROXY_DECISION_CAP = 3;
+
+/** Everything a proxy is shown when the agenda cannot go on by itself. */
+export interface DecisionPoint {
+  readonly nodeId: string;
+  readonly phase: AgendaPhase;
+  /** Why the machine stopped, or that a phase asked for the host. */
+  readonly reason: DecisionReason | "awaiting-host";
+  readonly why: string;
+  readonly attempts: number;
+  /** Decisions already taken here, this one not included. */
+  readonly decisions: number;
+  readonly lastCheck?: ExitCheckResult | undefined;
+  /** What the last seat to speak in this node said. */
+  readonly lastReply?: { readonly seat: string; readonly text: string } | undefined;
+  readonly agenda: AgendaSpec;
+  readonly nodes: NodeMap;
+  readonly seats: readonly { readonly seatId: string; readonly displayName: string; readonly role: string }[];
+  readonly projectFolder: string;
+  /**
+   * Present on the second call for one decision: the proxy proposed
+   * something, the seats concerned answered, and now it has to settle.
+   */
+  readonly discussion?:
+    | { readonly proposal: string; readonly replies: readonly { readonly seat: string; readonly text: string }[] }
+    | undefined;
+}
+
+/**
+ * What a proxy may choose.
+ *
+ * There is no "ask the host": the proxy is there because the host is not.
+ * There is no "pass" either — counting a node as passed without its check is
+ * the host's alone, or the proxy would be marking its own work.
+ */
+export type ProxyDecision =
+  /** Same seats again, told what to do differently. */
+  | { readonly kind: "retry"; readonly instruction: string; readonly say: string }
+  /** One seat clears the obstacle; the node's own check then says whether it worked. */
+  | { readonly kind: "assign"; readonly seatId: string; readonly instruction: string; readonly say: string }
+  /** Answer what a seat asked the host. */
+  | { readonly kind: "answer"; readonly text: string }
+  /** Put a proposed way out to the seats it concerns, for one round, before settling. */
+  | { readonly kind: "discuss"; readonly seatIds: readonly string[]; readonly proposal: string }
+  /** Put the node down. Whatever waits on it is skipped; the rest carries on. */
+  | { readonly kind: "give-up"; readonly why: string };
+
+/** One decision a proxy took, as it is kept for the report. */
+export interface ProxyDecisionEntry {
+  readonly at: number;
+  readonly nodeId: string;
+  readonly title: string;
+  readonly problem: string;
+  readonly action: ProxyDecision["kind"] | "cap-reached";
+  readonly detail: string;
+  readonly discussion?: DecisionPoint["discussion"];
 }

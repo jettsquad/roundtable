@@ -55,6 +55,7 @@ export { exportToPool, importAsCandidates, mergeIntoPool } from "./pool.ts";
 export type { ExportRefusal, ExportResult, PoolEntry } from "./pool.ts";
 
 export { buildDistilPrompt, parseDistillation } from "./distil.ts";
+export { buildProxyPrompt, parseProxyDecision } from "./proxy.ts";
 export type { DistilInput, Distillation, Relation } from "./distil.ts";
 
 // The situation vocabulary now lives in @squad/shared: the secretary labels

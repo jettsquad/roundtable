@@ -116,6 +116,13 @@ export class SquadConsole extends Service {
     // A seat's quiet command goes to the secretary from here — the one place
     // that holds both the teams and the secretary.
     this.ctx.effect(() => watchQuietCommands(this.ctx));
+    // Lil X in the chair, for an agenda confirmed that way. Wired here for
+    // the reason the quiet-command judge is: this is the one place that holds
+    // both the table and the host's criteria, and the table must never reach
+    // the criteria itself.
+    this.ctx.effect(() =>
+      this.ctx.teams.useProxy((point, host, signal) => this.ctx.reasoning.decide(point, host, signal)),
+    );
 
     // A finished round is the moment someone who looked away wants to hear
     // about. Skipped while the panel is in front of them and when they turned

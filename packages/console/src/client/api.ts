@@ -218,6 +218,7 @@ export const api = {
     agenda?: unknown;
     agendaId?: string;
     revision?: number;
+    proxy?: boolean;
   }): Promise<unknown> => call("/agenda", "POST", body),
 };
 

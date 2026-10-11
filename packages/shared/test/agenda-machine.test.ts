@@ -264,6 +264,23 @@ describe("在决策点", () => {
     expect(applyDecision(chain, withCheck, "p2", { kind: "retry" })["p2"]?.lastCheck?.tail).toBe("boom");
   });
 
+  it("每做一个决定计一次数，重做之后也不清零", () => {
+    // attempts 在决定之后重新算，decisions 不会：它是代理不能绕着同一个节点
+    // 无限决定下去的依据。
+    const once = applyDecision(chain, stuck, "p2", { kind: "retry" });
+    expect(once["p2"]).toMatchObject({ attempts: 0, decisions: 1 });
+    const again = applyDecision(chain, { ...once, p2: { ...once["p2"]!, state: "deciding" } }, "p2", {
+      kind: "assign",
+      seatId: "x",
+      instruction: "清障",
+    });
+    expect(again["p2"]?.decisions).toBe(2);
+    const dropped = applyDecision(chain, { ...again, p2: { ...again["p2"]!, state: "deciding" } }, "p2", {
+      kind: "abandon",
+    });
+    expect(dropped["p2"]).toMatchObject({ state: "unresolved", decisions: 3 });
+  });
+
   it("不在等决定的节点不能被决定", () => {
     expect(() => applyDecision(chain, stuck, "p1", { kind: "pass" })).toThrow(/不需要决定/);
     expect(() => applyDecision(chain, stuck, "nope", { kind: "pass" })).toThrow(/没有节点/);

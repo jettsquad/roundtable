@@ -314,6 +314,18 @@ export interface TeamSummary {
          * needed, every node passed, or it is over with nodes given up on.
          */
         readonly standing?: "runnable" | "deciding" | "finished" | "ended" | undefined;
+        /** Confirmed with 「由 Lil X 代理」. */
+        readonly proxy?: boolean | undefined;
+        /** What the proxy decided so far, oldest first. */
+        readonly decisions?:
+          | readonly {
+              readonly at: number;
+              readonly title: string;
+              readonly problem: string;
+              readonly action: string;
+              readonly detail: string;
+            }[]
+          | undefined;
         /**
          * Every node, in written order, with what its last check said.
          *
@@ -699,6 +711,11 @@ export interface AgendaVerdictRequest {
    */
   readonly agendaId?: string;
   readonly revision?: number;
+  /**
+   * 「由 Lil X 代理」: decision points go to the proxy instead of stopping
+   * for the host. Chosen at confirmation and kept for the agenda's life.
+   */
+  readonly proxy?: boolean;
 }
 
 /** Renaming a team. */

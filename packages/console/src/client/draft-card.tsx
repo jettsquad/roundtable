@@ -187,6 +187,9 @@ export function DraftCard({
   const [edited, setEdited] = useState<AgendaSpec | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  // Off unless asked for, every time: handing the chair over is a decision
+  // about THIS agenda, not a setting to be left on from the last one.
+  const [proxy, setProxy] = useState(false);
   const draft = edited ?? team.draft;
   if (team.draft === undefined || draft === undefined) return null;
 
@@ -209,6 +212,7 @@ export function DraftCard({
         // The edited agenda travels only when it differs, so an untouched
         // draft is confirmed exactly as the secretary wrote it.
         ...(verdict === "confirm" && edited !== undefined ? { agenda: edited } : {}),
+        ...(verdict === "confirm" && proxy ? { proxy: true } : {}),
       })
       .then(onChanged)
       .catch((failure: Error) => setError(String(failure.message)))
@@ -255,6 +259,26 @@ export function DraftCard({
           onRemove={() => change({ ...draft, phases: draft.phases.filter((_, at) => at !== index) })}
         />
       ))}
+      {/* Not `.row`: that wraps, and the box ended up alone on a line above
+          the words it belongs to — seen in the browser, not predicted. */}
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, margin: "10px 0" }}>
+        <input
+          type="checkbox"
+          style={{ marginTop: 3, flex: "0 0 auto" }}
+          checked={proxy}
+          disabled={busy}
+          onChange={(event) => setProxy(event.target.checked)}
+        />
+        <span style={{ flex: "1 1 0", minWidth: 0 }}>
+          <strong>由 Lil X 代理</strong>
+          <span className={styles.hint} style={{ display: "block" }}>
+            议程自己过不去的地方（出口检查一直不过、席位被别人卡住、席位来问你）不再停下来等你，由 Lil X
+            替你决定：重做、点别人去清障、回答问题，或者提出方案和相关席位讨论一轮后定案。它不能改你的目标，
+            也不能把没通过的阶段算作通过；同一阶段最多决定 3 次，再不行就放下它、继续做别的。它的每个决定都会
+            写在讨论里。
+          </span>
+        </span>
+      </label>
       <div className={styles.row}>
         <button type="button" className={styles.button} disabled={busy || empty} onClick={() => resolve("confirm")}>
           {edited === undefined ? "执行这份议程" : "按我改过的执行"}
