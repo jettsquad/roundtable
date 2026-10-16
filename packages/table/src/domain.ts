@@ -164,6 +164,10 @@ const teamRecord = z.object({
       }),
     )
     .optional(),
+  /** The project's HEAD when the agenda was confirmed. */
+  confirmedStartCommit: z.string().optional(),
+  /** Where the completion report was written, relative to the project. */
+  confirmedReportPath: z.string().optional(),
   /** Confirmed with 「由 Lil X 代理」. A resume carries on under it. */
   confirmedProxy: z.boolean().optional(),
   /**

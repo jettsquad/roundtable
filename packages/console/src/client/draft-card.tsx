@@ -109,7 +109,7 @@ function Phase({
           approves it: it runs with their authority, and a phase with no
           check passes the moment anybody replies. */}
       <label className={styles.muted} style={{ display: "block" }}>
-        出口检查（Squad 自己运行，退出码 0 才算通过；留空 = 席位回了话就算完成）
+        出口检查（Squad 自己运行，退出码 0 才算通过；留空 = 席位回了话、且没有说「未完成」，就算通过）
         <input
           className={styles.grow ?? ""}
           style={{ display: "block", width: "100%", fontFamily: "monospace" }}

@@ -81,3 +81,23 @@ export async function writeDiscussion(projectFolder: string, teamId: string, mar
   await writeFile(partial, markdown, "utf8");
   await rename(partial, target);
 }
+
+/**
+ * Write a completion report into the project's `.squad/reports/`.
+ *
+ * Same folder and same self-ignoring rule as the discussions: a copy for the
+ * person to read, never something the team's work depends on.
+ *
+ * @returns the path relative to the project folder.
+ */
+export async function writeReport(projectFolder: string, name: string, markdown: string): Promise<string> {
+  const root = join(projectFolder, EXPORT_FOLDER);
+  await mkdir(join(root, "reports"), { recursive: true });
+  const ignore = join(root, ".gitignore");
+  if (!existsSync(ignore)) {
+    await writeFile(ignore, "# Squad 导出的讨论副本。整个目录不进版本库。\n*\n", "utf8");
+  }
+  const relative = join(EXPORT_FOLDER, "reports", `${name}.md`);
+  await writeFile(join(projectFolder, relative), markdown, "utf8");
+  return relative;
+}

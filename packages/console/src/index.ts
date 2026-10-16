@@ -121,7 +121,9 @@ export class SquadConsole extends Service {
     // both the table and the host's criteria, and the table must never reach
     // the criteria itself.
     this.ctx.effect(() =>
-      this.ctx.teams.useProxy((point, host, signal) => this.ctx.reasoning.decide(point, host, signal)),
+      this.ctx.teams.useProxy({
+        decide: (point, host, signal) => this.ctx.reasoning.decide(point, host, signal),
+      }),
     );
 
     // A finished round is the moment someone who looked away wants to hear

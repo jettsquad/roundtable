@@ -50,6 +50,7 @@ export function buildAgendaPrompt(input: AgendaDraftInput): string {
     // Asked for on every phase that delivers something, because a phase
     // without one passes the moment anybody replies — which is how an agenda
     // once finished on five replies of 「前置没满足，不开工」.
+    'Mind the level each key lives on: "publicContextCutoff" and "artifactPath" go INSIDE a task object; "check", "needs", "id", "maxAttempts", "exit", "maxRounds", "contextMode" and "situation" go on the PHASE. Never the other way round.',
     'Give a phase a "check" whenever it must DELIVER something that can be verified by a command: files exist, a commit is in git log, tests or a script exit 0. "check.command" is ONE shell command run in the project folder by the app itself after the phase\'s tasks; exit code 0 means the phase passed, anything else sends the same seats back with the output (up to "maxAttempts" tries, default 3). Take the command from what the host or the plan already states as the exit criterion (e.g. the plan says "scripts/rb-exit.sh RB1 --commit exits 0" or "the commit feat(x): RB1 批次完成 exists" → check that). Never invent a criterion the plan does not state, and never write a check that cannot fail (e.g. "true"). Omit "check" for phases that are pure discussion or review with nothing a command can verify.',
     'A phase runs only after every phase it depends on has PASSED. By default it depends on the phase written just before it. Use "id" (short, unique) and "needs" (ids of EARLIER phases only) when that is not the real dependency — e.g. two phases that both depend on the same earlier one. Do not put "confirm the previous batch is committed before starting" into an instruction: the app enforces that through "needs" and the earlier phase\'s "check".',
     'Rules: use only the seatIds listed below; every phase needs at least one task; a phase that repeats rounds uses exit "after-bounded-rounds" WITH a positive integer maxRounds, and no other phase may set maxRounds.',
@@ -86,8 +87,94 @@ export function extractJson(text: string): unknown {
  * addressed to a seat that does not exist reads at execution time as a seat
  * that had nothing to say.
  */
+/** Keys that belong on a task, and the keys that belong on a phase. */
+const TASK_KEYS = ["publicContextCutoff", "artifactPath"] as const;
+const PHASE_KEYS = ["check", "needs", "maxAttempts", "exit", "maxRounds", "contextMode", "situation"] as const;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Put a key written one level off back where it belongs.
+ *
+ * The shape has grown — a phase now carries a check, dependencies, an attempt
+ * limit — and a model writing it sometimes sets a task's key on the phase, or
+ * the reverse. What was meant is not in doubt: 「这一阶段各自独立作答」 written
+ * as a phase-level `publicContextCutoff` means every task in it. Refusing the
+ * whole draft over that costs the host a round to learn nothing, so the key
+ * is moved rather than rejected.
+ *
+ * Only where the move is unambiguous. A phase-level key goes to every task
+ * that does not set its own; a task-level key is lifted only when the phase
+ * does not already say something else. Anything this does not recognise is
+ * left for the schema to refuse, by name.
+ */
+export function settleMisplacedKeys(raw: unknown): unknown {
+  if (!isRecord(raw) || !Array.isArray(raw["phases"])) return raw;
+  const phases = raw["phases"].map((entry) => {
+    if (!isRecord(entry)) return entry;
+    const phase: Record<string, unknown> = { ...entry };
+    const tasks = Array.isArray(phase["tasks"])
+      ? phase["tasks"].map((task) => (isRecord(task) ? { ...task } : task))
+      : undefined;
+    for (const key of TASK_KEYS) {
+      if (!(key in phase)) continue;
+      // A file path names ONE answer's destination; spread over several tasks
+      // it would have them overwrite each other.
+      const spreads = key !== "artifactPath" || tasks?.length === 1;
+      if (tasks !== undefined && spreads) {
+        for (const task of tasks) if (isRecord(task) && !(key in task)) task[key] = phase[key];
+      }
+      delete phase[key];
+    }
+    if (tasks !== undefined) {
+      for (const task of tasks) {
+        if (!isRecord(task)) continue;
+        for (const key of PHASE_KEYS) {
+          if (!(key in task)) continue;
+          if (!(key in phase)) phase[key] = task[key];
+          delete task[key];
+        }
+      }
+      phase["tasks"] = tasks;
+    }
+    return phase;
+  });
+  return { ...raw, phases };
+}
+
+/** A schema refusal, as a sentence about the agenda rather than a dump of the validator. */
+function readableSchemaError(error: unknown, raw: unknown): Error {
+  const issues = (error as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) return error instanceof Error ? error : new Error(String(error));
+  const phases = isRecord(raw) && Array.isArray(raw["phases"]) ? raw["phases"] : [];
+  const lines = issues.map((issue) => {
+    const one = issue as { path?: unknown[]; message?: string; keys?: string[]; code?: string };
+    const path = Array.isArray(one.path) ? one.path : [];
+    const index = path[0] === "phases" && typeof path[1] === "number" ? path[1] : undefined;
+    const phase = index === undefined ? undefined : phases[index];
+    const where =
+      index === undefined
+        ? "议程"
+        : `第 ${index + 1} 阶段${isRecord(phase) && typeof phase["title"] === "string" ? `「${phase["title"]}」` : ""}` +
+          (path[2] === "tasks" && typeof path[3] === "number" ? `的第 ${path[3] + 1} 条任务` : "");
+    const what =
+      one.code === "unrecognized_keys" && Array.isArray(one.keys)
+        ? `多了不认识的字段 ${one.keys.join("、")}`
+        : `${path.slice(index === undefined ? 0 : path[2] === "tasks" ? 4 : 2).join(".") || "内容"}：${one.message ?? "格式不对"}`;
+    return `- ${where}：${what}`;
+  });
+  return new Error(`秘书拟的议程格式不对，未采用。请让她重拟一次：\n${lines.join("\n")}`);
+}
+
 export function parseAgendaReply(text: string, seats: readonly RosterSeat[]): AgendaSpec {
-  const agenda = parseAgendaSpec(extractJson(text));
+  const raw = settleMisplacedKeys(extractJson(text));
+  let agenda: AgendaSpec;
+  try {
+    agenda = parseAgendaSpec(raw);
+  } catch (error) {
+    throw readableSchemaError(error, raw);
+  }
   const problems = checkAgendaAgainstRoster(
     agenda,
     seats.map((seat) => seat.seatId),

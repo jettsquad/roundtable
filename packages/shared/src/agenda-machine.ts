@@ -184,7 +184,23 @@ export type SeatReport =
 
 /** Appended to a task whose phase has a check, so the seat ends on a line we can read. */
 export const REPORT_FOOTER = [
-  "这一步做完后，Squad 会自己运行出口检查来判断是否通过；你的自述不算数，但请照实写。",
+  "这一步做完后，Squad 会自己运行出口检查。检查通过、并且你报的是完成，这一步才算通过；检查没过会让你重做。没做成、被卡住或要问人，就照实写，不要因为检查可能会过就写完成：你写了未完成，后面的任务会停下来等决定，而不是在缺东西的基础上接着做。",
+  "答复的最后单独一行，四选一，原样使用这个前缀：",
+  "【结果】完成",
+  "【结果】未完成：<原因>",
+  "【结果】被卡住：<卡在谁的什么东西上>",
+  "【结果】需要主持人：<具体问题>",
+].join("\n");
+
+/**
+ * The same line, asked of a phase that has no exit check.
+ *
+ * There the line is not a courtesy beside a measurement — it is the only
+ * thing that can say the phase did not deliver. A verifier that found
+ * requirements unmet has nothing else to say it with, so it has to be asked.
+ */
+export const REPORT_FOOTER_UNCHECKED = [
+  "这一步没有出口检查，它算不算做成，只看你最后这一行，请照实写：没做成就写未完成，不要因为「我已经答复了」就写完成。",
   "答复的最后单独一行，四选一，原样使用这个前缀：",
   "【结果】完成",
   "【结果】未完成：<原因>",
@@ -225,7 +241,7 @@ export interface AttemptOutcome {
 }
 
 /** Why the machine stopped at a node. */
-export type DecisionReason = "seat-failed" | "blocked" | "needs-host" | "check-failed";
+export type DecisionReason = "seat-failed" | "blocked" | "needs-host" | "not-done" | "check-failed";
 
 export type Step =
   | { readonly kind: "pass" }
@@ -247,17 +263,28 @@ export function afterAttempt(phase: AgendaPhase, attempts: number, outcome: Atte
       why: `${outcome.seatFailed.seat} 没有完成：${outcome.seatFailed.why}`,
     };
   }
-  // The check is the only thing that says "passed". A seat that reports
-  // itself blocked while the check passes has, whatever it thinks, delivered.
-  if (outcome.check !== undefined && passes(outcome.check)) return { kind: "pass" };
-
+  // What the seat says about its own work is heard BEFORE the check.
+  //
+  // It used to be the other way round — a passing check was a pass whatever
+  // the seat said — on the reasoning that the check is the measurement and
+  // the seat only an opinion. That holds only while the check measures the
+  // work. An agenda then ended "6 / 6 passed" with its verifier reporting 23
+  // of 25 requirements unmet, because the check was 「验收表里有『未满足』
+  // 三个字」. So a check can refuse a phase; it cannot overrule the seat that
+  // did the work saying it is not done. Somebody has to decide that.
   const report = outcome.report;
-  if (report?.kind === "blocked") return { kind: "decide", reason: "blocked", why: `席位说被卡住：${report.detail}` };
-  if (report?.kind === "needs-host") {
-    return { kind: "decide", reason: "needs-host", why: `席位在问主持人：${report.detail}` };
+  const checked = outcome.check === undefined ? "" : passes(outcome.check) ? "出口检查通过了，但" : "";
+  if (report?.kind === "blocked") {
+    return { kind: "decide", reason: "blocked", why: `${checked}席位说被卡住：${report.detail}` };
   }
-  // No check: the old rule. The seats answered, and nothing can say more.
-  if (outcome.check === undefined) return { kind: "pass" };
+  if (report?.kind === "needs-host") {
+    return { kind: "decide", reason: "needs-host", why: `${checked}席位在问主持人：${report.detail}` };
+  }
+  if (report?.kind === "not-done") {
+    return { kind: "decide", reason: "not-done", why: `${checked}席位说没有做成：${report.detail}` };
+  }
+  // No check: the seats answered, did not say otherwise, and nothing can say more.
+  if (outcome.check === undefined || passes(outcome.check)) return { kind: "pass" };
 
   const limit = phase.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   if (attempts < limit) return { kind: "retry" };

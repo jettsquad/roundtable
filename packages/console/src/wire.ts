@@ -316,6 +316,8 @@ export interface TeamSummary {
         readonly standing?: "runnable" | "deciding" | "finished" | "ended" | undefined;
         /** Confirmed with 「由 Lil X 代理」. */
         readonly proxy?: boolean | undefined;
+        /** Where the completion report is, relative to the project folder. */
+        readonly reportPath?: string | undefined;
         /** What the proxy decided so far, oldest first. */
         readonly decisions?:
           | readonly {

@@ -441,6 +441,7 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
               ],
               standing: standing(team.confirmed.agenda, nodesOf(team.confirmed)),
               ...(team.confirmed.proxy === true ? { proxy: true } : {}),
+              ...(team.confirmed.reportPath === undefined ? {} : { reportPath: team.confirmed.reportPath }),
               ...(team.confirmed.decisions === undefined || team.confirmed.decisions.length === 0
                 ? {}
                 : {

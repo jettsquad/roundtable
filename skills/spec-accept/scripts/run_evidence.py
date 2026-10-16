@@ -6,6 +6,7 @@
 
 用法：
   run_evidence.py <trace.json> --batch <批次号> [--cwd <项目根目录>]   判定一个批次能否出口
+  run_evidence.py <trace.json> --requirement <需求号> [--cwd <根>]     只判定一条需求
   run_evidence.py <trace.json> [--cwd <项目根目录>]                    全量验收，写 acceptance.json
 
 只用标准库。退出码：0 = 全部通过 / 全部满足；1 = 有没通过的；2 = 用法或文件错误。
@@ -117,6 +118,41 @@ def run_batch(trace: dict[str, Any], batch_id: str, cwd: str, timeout: int) -> i
     return 0
 
 
+def run_requirement(trace: dict[str, Any], requirement_id: str, cwd: str, timeout: int) -> int:
+    """只判定一条需求：它的证据全部通过，且没有遗留项挂在它上面。
+
+    给「补做这一条需求」的议程节点当出口用：补做的是哪一条，量的就是哪一条。
+    """
+    requirement = next((row for row in trace.get("requirements") or [] if row.get("id") == requirement_id), None)
+    if requirement is None:
+        print(f"追溯表里没有需求「{requirement_id}」。", file=sys.stderr)
+        return 2
+    if requirement.get("status") == "deferred":
+        print(f"需求「{requirement_id}」已推迟，不算满足。")
+        return 1
+    listed = requirement.get("evidence") or []
+    failed: list[str] = []
+    print(f"需求「{requirement_id}」{requirement.get('title') or ''}：运行 {len(listed)} 条证据")
+    for evidence in listed:
+        outcome = run_one(str(evidence.get("run", "")), cwd, timeout)
+        passed = outcome["exitCode"] == 0
+        print(f"  {'✓' if passed else '✗'} {evidence.get('id')}（{outcome['seconds']} 秒）：{evidence.get('run')}", flush=True)
+        if not passed:
+            failed.append(str(evidence.get("id")))
+            if outcome["tail"].strip():
+                print("      " + outcome["tail"].strip()[-600:].replace("\n", "\n      "))
+    owed = [one for one in trace.get("leftovers") or [] if one.get("requirement") == requirement_id]
+    for one in owed:
+        print(f"  ✗ 遗留项 {one.get('id')}：{one.get('what', '')}")
+    if not listed:
+        print("  ✗ 没有证据")
+    if failed or owed or not listed:
+        print(f"\n需求「{requirement_id}」未满足。")
+        return 1
+    print(f"\n需求「{requirement_id}」满足。")
+    return 0
+
+
 def run_all(trace: dict[str, Any], cwd: str, timeout: int, out: str) -> int:
     owed: dict[Any, list[dict[str, Any]]] = {}
     for leftover in trace.get("leftovers") or []:
@@ -183,6 +219,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="把追溯表里的证据真的跑一遍。")
     parser.add_argument("trace", help="trace.json 的路径")
     parser.add_argument("--batch", default=None, help="只判定这一个批次能否出口")
+    parser.add_argument("--requirement", default=None, help="只判定这一条需求是否满足")
     parser.add_argument("--cwd", default=None, help="证据命令在哪个目录下运行，默认是 trace.json 所在目录")
     parser.add_argument("--timeout", type=int, default=1800, help="单条证据最长运行秒数，默认 1800")
     parser.add_argument("--out", default=None, help="全量验收的结论写到哪，默认是 trace.json 旁边的 acceptance.json")
@@ -192,6 +229,8 @@ def main() -> int:
     cwd = os.path.abspath(arguments.cwd or os.path.dirname(os.path.abspath(arguments.trace)))
     if arguments.batch is not None:
         return run_batch(trace, arguments.batch, cwd, arguments.timeout)
+    if arguments.requirement is not None:
+        return run_requirement(trace, arguments.requirement, cwd, arguments.timeout)
     out = arguments.out or os.path.join(os.path.dirname(os.path.abspath(arguments.trace)), "acceptance.json")
     return run_all(trace, cwd, arguments.timeout, out)
 

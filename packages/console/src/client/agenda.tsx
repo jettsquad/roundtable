@@ -165,6 +165,11 @@ export function Agenda({
             否则第二遍只会和第一遍一样。退回之后不会自己开跑，还要你点一次继续。
           </div>
         </details>
+        {team.unfinished.reportPath === undefined ? null : (
+          <div>
+            📋 完成报告：<code>{team.unfinished.reportPath}</code>
+          </div>
+        )}
         {/* What the proxy decided while nobody was watching. On the card and
             not only in the discussion: the discussion is hours long, and
             「它替我决定了什么」 is the first thing to want on coming back. */}
