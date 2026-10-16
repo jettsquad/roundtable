@@ -168,10 +168,33 @@ describe("一次尝试之后", () => {
     expect(step).toMatchObject({ kind: "decide", reason: "needs-host" });
   });
 
-  it("席位说被卡住但检查过了：事情办成了，算通过", () => {
-    expect(afterAttempt(node, 1, { report: { kind: "blocked", detail: "x" }, check: check(0) })).toEqual({
-      kind: "pass",
-    });
+  it("没有出口检查的阶段，席位自己说没做成：进决策点，不算通过", () => {
+    // 验收阶段就是这样：它的产出只有一个结论，没有命令可以替它量。
+    const { check: _dropped, ...unchecked } = node;
+    const step = afterAttempt(unchecked, 1, { report: { kind: "not-done", detail: "R3、R7 未满足" } });
+    expect(step).toMatchObject({ kind: "decide", reason: "not-done" });
+    expect(step.kind === "decide" ? step.why : "").toContain("R3、R7");
+    // 没写结果行，或说完成：照旧算通过。
+    expect(afterAttempt(unchecked, 1, {})).toEqual({ kind: "pass" });
+    expect(afterAttempt(unchecked, 1, { report: { kind: "done" } })).toEqual({ kind: "pass" });
+  });
+
+  it("有出口检查时，席位说没做成：也进决策点，不原样重做", () => {
+    // W1 报「单靠改标题做不成」时，照检查重做三遍只会得到三次同样的话。
+    const step = afterAttempt(node, 1, { report: { kind: "not-done", detail: "x" }, check: check(1) });
+    expect(step).toMatchObject({ kind: "decide", reason: "not-done" });
+  });
+
+  it("检查过了，但席位说没做成、被卡住或在问主持人：检查不能替它说做成了", () => {
+    // 真实发生的：验收人报 25 条需求 23 条未满足，出口检查是「验收表里有『未满足』三个字」，阶段算通过。
+    const notDone = afterAttempt(node, 1, { report: { kind: "not-done", detail: "23 条未满足" }, check: check(0) });
+    expect(notDone).toMatchObject({ kind: "decide", reason: "not-done" });
+    expect(notDone.kind === "decide" ? notDone.why : "").toContain("出口检查通过了，但");
+    expect(afterAttempt(node, 1, { report: { kind: "blocked", detail: "x" }, check: check(0) }).kind).toBe("decide");
+    expect(afterAttempt(node, 1, { report: { kind: "needs-host", detail: "x" }, check: check(0) }).kind).toBe("decide");
+    // 说完成、或没写结果行：照旧以检查为准。
+    expect(afterAttempt(node, 1, { report: { kind: "done" }, check: check(0) })).toEqual({ kind: "pass" });
+    expect(afterAttempt(node, 1, { check: check(0) })).toEqual({ kind: "pass" });
   });
 
   it("席位技术性失败：进决策点，不跑检查也不重试", () => {
@@ -184,10 +207,10 @@ describe("一次尝试之后", () => {
     expect(afterAttempt(node, 1, { check: check(null) }).kind).toBe("retry");
   });
 
-  it("没有检查的阶段：答了就算过，除非自己说被卡住或在问主持人", () => {
+  it("没有检查的阶段：答了就算过，除非自己说没做成、被卡住或在问主持人", () => {
     const plain = phase("讨论");
     expect(afterAttempt(plain, 1, {})).toEqual({ kind: "pass" });
-    expect(afterAttempt(plain, 1, { report: { kind: "not-done", detail: "x" } })).toEqual({ kind: "pass" });
+    expect(afterAttempt(plain, 1, { report: { kind: "not-done", detail: "x" } }).kind).toBe("decide");
     expect(afterAttempt(plain, 1, { report: { kind: "blocked", detail: "x" } }).kind).toBe("decide");
   });
 
@@ -262,6 +285,23 @@ describe("在决策点", () => {
   it("上一次检查的结果留着，决定之后还看得到", () => {
     const withCheck: NodeMap = { ...stuck, p2: { state: "deciding", attempts: 3, lastCheck: check(1, "boom") } };
     expect(applyDecision(chain, withCheck, "p2", { kind: "retry" })["p2"]?.lastCheck?.tail).toBe("boom");
+  });
+
+  it("每做一个决定计一次数，重做之后也不清零", () => {
+    // attempts 在决定之后重新算，decisions 不会：它是代理不能绕着同一个节点
+    // 无限决定下去的依据。
+    const once = applyDecision(chain, stuck, "p2", { kind: "retry" });
+    expect(once["p2"]).toMatchObject({ attempts: 0, decisions: 1 });
+    const again = applyDecision(chain, { ...once, p2: { ...once["p2"]!, state: "deciding" } }, "p2", {
+      kind: "assign",
+      seatId: "x",
+      instruction: "清障",
+    });
+    expect(again["p2"]?.decisions).toBe(2);
+    const dropped = applyDecision(chain, { ...again, p2: { ...again["p2"]!, state: "deciding" } }, "p2", {
+      kind: "abandon",
+    });
+    expect(dropped["p2"]).toMatchObject({ state: "unresolved", decisions: 3 });
   });
 
   it("不在等决定的节点不能被决定", () => {

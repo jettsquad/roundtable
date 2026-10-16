@@ -440,6 +440,19 @@ export async function snapshotOf(ctx: Context): Promise<SquadSnapshot> {
                 ),
               ],
               standing: standing(team.confirmed.agenda, nodesOf(team.confirmed)),
+              ...(team.confirmed.proxy === true ? { proxy: true } : {}),
+              ...(team.confirmed.reportPath === undefined ? {} : { reportPath: team.confirmed.reportPath }),
+              ...(team.confirmed.decisions === undefined || team.confirmed.decisions.length === 0
+                ? {}
+                : {
+                    decisions: team.confirmed.decisions.map((one) => ({
+                      at: one.at,
+                      title: one.title,
+                      problem: one.problem,
+                      action: one.action,
+                      detail: one.detail,
+                    })),
+                  }),
               // Each node, with what its last check said. Without this the
               // panel could only show a count, and 「3 / 7」 cannot tell a
               // node that passed from one that was given up on.
@@ -790,7 +803,7 @@ export function resolveAgenda(ctx: Context, request: AgendaVerdictRequest): void
       });
   }
 
-  void team.runAgenda(held).catch((error: Error) => {
+  void team.runAgenda(held, { proxy: request.proxy === true }).catch((error: Error) => {
     ctx.logger.warn(`议程失败：${error.message}`);
   });
 }

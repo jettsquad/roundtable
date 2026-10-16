@@ -107,3 +107,86 @@ describe("buildAgendaPrompt", () => {
     expect(prompt).toContain("seat-a (甲), seat-b (乙)");
   });
 });
+
+describe("字段写错了一层", () => {
+  const seats = [
+    { seatId: "s1", displayName: "甲" },
+    { seatId: "s2", displayName: "乙" },
+  ];
+  const reply = (phase: Record<string, unknown>) => JSON.stringify({ phases: [phase] });
+
+  it("任务的字段写在了阶段上：挪到每条任务，而不是整份草案作废", () => {
+    // 真实发生的：秘书把 publicContextCutoff 写在了阶段上，主持人看到的是一段校验器的 JSON。
+    const agenda = parseAgendaReply(
+      reply({
+        title: "各自评审",
+        contextMode: "independent",
+        publicContextCutoff: "phase-start",
+        tasks: [
+          { seatId: "s1", instruction: "评审" },
+          { seatId: "s2", instruction: "评审", publicContextCutoff: "immediately-before-turn" },
+        ],
+      }),
+      seats,
+    );
+    expect(agenda.phases[0]?.tasks.map((task) => task.publicContextCutoff)).toEqual([
+      "phase-start",
+      "immediately-before-turn",
+    ]);
+  });
+
+  it("阶段的字段写在了任务上：提到阶段，阶段自己写了的不覆盖", () => {
+    const agenda = parseAgendaReply(
+      reply({
+        title: "入库",
+        contextMode: "cumulative",
+        maxAttempts: 2,
+        tasks: [{ seatId: "s1", instruction: "提交", check: { command: "test -f a" }, maxAttempts: 5 }],
+      }),
+      seats,
+    );
+    expect(agenda.phases[0]?.check).toEqual({ command: "test -f a" });
+    expect(agenda.phases[0]?.maxAttempts).toBe(2);
+  });
+
+  it("写在阶段上的文件路径只在该阶段只有一条任务时才挪：摊到几条任务上会互相覆盖", () => {
+    const one = parseAgendaReply(
+      reply({
+        title: "写",
+        contextMode: "cumulative",
+        artifactPath: "docs/a.md",
+        tasks: [{ seatId: "s1", instruction: "写" }],
+      }),
+      seats,
+    );
+    expect(one.phases[0]?.tasks[0]?.artifactPath).toBe("docs/a.md");
+    const two = parseAgendaReply(
+      reply({
+        title: "写",
+        contextMode: "cumulative",
+        artifactPath: "docs/a.md",
+        tasks: [
+          { seatId: "s1", instruction: "写" },
+          { seatId: "s2", instruction: "写" },
+        ],
+      }),
+      seats,
+    );
+    expect(two.phases[0]?.tasks.every((task) => task.artifactPath === undefined)).toBe(true);
+  });
+
+  it("真不认识的字段仍然拒绝，但说的是人话：哪个阶段、多了什么", () => {
+    expect(() =>
+      parseAgendaReply(
+        reply({ title: "入库", contextMode: "cumulative", owner: "甲", tasks: [{ seatId: "s1", instruction: "x" }] }),
+        seats,
+      ),
+    ).toThrow(/第 1 阶段「入库」：多了不认识的字段 owner/);
+    expect(() =>
+      parseAgendaReply(
+        reply({ title: "入库", contextMode: "cumulative", tasks: [{ seatId: "s1", instruction: "x", priority: 1 }] }),
+        seats,
+      ),
+    ).toThrow(/第 1 阶段「入库」的第 1 条任务：多了不认识的字段 priority/);
+  });
+});

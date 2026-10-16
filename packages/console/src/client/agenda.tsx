@@ -55,6 +55,7 @@ export function Agenda({
         seats: [],
       }));
     const standing = team.unfinished.standing ?? (done.length >= phases.length ? "finished" : "runnable");
+    const decisions = team.unfinished.decisions ?? [];
     const next = nodes.find((node) => node.state === "pending")?.title;
     const stoppedAt = done[done.length - 1];
     // Over, one way or the other: every node passed, or what is left was
@@ -84,6 +85,7 @@ export function Agenda({
           {awaitingHost && stoppedAt !== undefined ? `「${stoppedAt}」问完了，在等你的回答 · ` : ""}
           已通过 {done.length} / {phases.length} 个阶段
           {dropped === 0 ? "" : ` · 放下或跳过 ${dropped} 个`}
+          {team.unfinished.proxy === true ? " · 由 Lil X 代理" : ""}
           {next === undefined ? "" : ` · 下一个是「${next}」`}
           {` · 确认指纹 ${team.unfinished.hash}`}
         </div>
@@ -163,6 +165,28 @@ export function Agenda({
             否则第二遍只会和第一遍一样。退回之后不会自己开跑，还要你点一次继续。
           </div>
         </details>
+        {team.unfinished.reportPath === undefined ? null : (
+          <div>
+            📋 完成报告：<code>{team.unfinished.reportPath}</code>
+          </div>
+        )}
+        {/* What the proxy decided while nobody was watching. On the card and
+            not only in the discussion: the discussion is hours long, and
+            「它替我决定了什么」 is the first thing to want on coming back. */}
+        {decisions.length === 0 ? null : (
+          <details className={styles.section}>
+            <summary className={styles.sectionToggle}>Lil X 替你做的决定（{decisions.length}）</summary>
+            <ol className={styles.planList}>
+              {decisions.map((one) => (
+                <li key={`${one.at}-${one.title}`}>
+                  <strong>{one.title}</strong>
+                  <div className={styles.hint}>问题：{one.problem}</div>
+                  <div>{one.detail}</div>
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
         {/* The way out. Without it a stopped agenda could only be carried on
             or wound back — the card stayed until another plan replaced it,
             which made 「这份计划不要了」 something you could not say. Kept

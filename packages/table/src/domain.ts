@@ -160,6 +160,38 @@ const teamRecord = z.object({
           })
           .optional(),
         detour: z.object({ seatId: z.string().optional(), instruction: z.string() }).optional(),
+        decisions: z.number().optional(),
+      }),
+    )
+    .optional(),
+  /** The project's HEAD when the agenda was confirmed. */
+  confirmedStartCommit: z.string().optional(),
+  /** Where the completion report was written, relative to the project. */
+  confirmedReportPath: z.string().optional(),
+  /** Confirmed with 「由 Lil X 代理」. A resume carries on under it. */
+  confirmedProxy: z.boolean().optional(),
+  /**
+   * What the proxy decided, oldest first.
+   *
+   * Kept with the agenda rather than only in the audit: the audit is a line
+   * per decision, and the report the host reads at the end needs the problem,
+   * the proposal, what the seats answered and what was done.
+   */
+  confirmedDecisions: z
+    .array(
+      z.object({
+        at: z.number(),
+        nodeId: z.string(),
+        title: z.string(),
+        problem: z.string(),
+        action: z.string(),
+        detail: z.string(),
+        discussion: z
+          .object({
+            proposal: z.string(),
+            replies: z.array(z.object({ seat: z.string(), text: z.string() })),
+          })
+          .optional(),
       }),
     )
     .optional(),

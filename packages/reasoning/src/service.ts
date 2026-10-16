@@ -38,6 +38,8 @@ import {
 import { buildDistilPrompt, parseDistillation, type Distillation } from "./distil.ts";
 import type { Situation } from "@squad/shared";
 import { ReasoningStore } from "./store.ts";
+import { buildProxyPrompt, parseProxyDecision } from "./proxy.ts";
+import type { DecisionPoint, ProxyDecision } from "@squad/shared";
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -511,12 +513,40 @@ export class ReasoningService extends Service {
     return providerForSeat({ backend: connection.backend, connectionId });
   }
 
-  private async runTask(parent: Agent, label: string, prompt: string): Promise<string> {
+  /**
+   * Decide, in the host's place, what an agenda does at a point it cannot
+   * get past by itself.
+   *
+   * The host's own criteria for this kind of decision travel with the
+   * question. They go to Lil X and nowhere else — still not into any seat's
+   * prompt, which is the rule that keeps a criterion from becoming something
+   * the team is told to think.
+   *
+   * Throws when the model does not answer or answers outside the set. The
+   * caller's fallback is to stop and show the host, which is what would have
+   * happened without a proxy.
+   */
+  async decide(point: DecisionPoint, parent: Agent, signal?: AbortSignal): Promise<ProxyDecision> {
+    const situation = point.phase.situation;
+    const criteria =
+      situation === undefined
+        ? []
+        : await this.recordDelivery(
+            (await this.candidatesFor({ action: situation.action, features: situation.features })).slice(
+              0,
+              DELIVERY_LIMIT,
+            ),
+          );
+    const reply = await this.runTask(parent, "Lil X · 代理主持", buildProxyPrompt(point, criteria), signal);
+    return parseProxyDecision(reply, point);
+  }
+
+  private async runTask(parent: Agent, label: string, prompt: string, signal?: AbortSignal): Promise<string> {
     const request: SubagentStartRequest = {
       label,
       prompt: [{ type: "text", text: prompt }],
       parent,
-      signal: new AbortController().signal,
+      signal: signal ?? new AbortController().signal,
     };
     const started = await this.ctx.subagents.start(this.distilProvider(), request);
     const result = await started.result;
