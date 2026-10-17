@@ -170,7 +170,7 @@ export const api = {
   agendaFromReply: (body: { teamId: string; turnId: string }): Promise<unknown> =>
     call("/agenda/from-reply", "POST", body),
   /** The record this session should use, created on first sight. */
-  sitting: (body: { projectFolder: string; sessionId: string }): Promise<{ teamId?: string }> =>
+  sitting: (body: { projectFolder: string; sessionId: string; teamId?: string }): Promise<{ teamId?: string }> =>
     call("/sitting", "POST", body),
   /** Read the team plan out of one secretary reply. Throws when it is not one. */
   previewTeamPlan: (body: { teamId: string; turnId: string }): Promise<TeamPlan> =>

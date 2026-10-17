@@ -110,13 +110,17 @@ export function apply(ctx: Context, config: Config): void {
  * the first thing to break would be everything downstream of it.
  */
 export async function applyPlan(ctx: Context, plan: MigrationPlan): Promise<string> {
-  const team = await ctx.teams.create({
-    displayName: plan.displayName,
-    projectFolder: plan.projectFolder,
-    hostDisplayName: plan.hostDisplayName,
-    seats: plan.seats,
-    ...(plan.checkpointCoefficient === undefined ? {} : { checkpointCoefficient: plan.checkpointCoefficient }),
-  });
+  const team = await ctx.teams.create(
+    {
+      displayName: plan.displayName,
+      projectFolder: plan.projectFolder,
+      hostDisplayName: plan.hostDisplayName,
+      seats: plan.seats,
+      ...(plan.checkpointCoefficient === undefined ? {} : { checkpointCoefficient: plan.checkpointCoefficient }),
+      // 1.x allowed several teams in one folder; migrating must not drop them.
+    },
+    { sharedFolder: true },
+  );
 
   // Replayed in order, so the 2.0 record reads as the discussion did.
   for (const spoken of plan.lines) {
