@@ -100,7 +100,7 @@ import {
   type Step,
 } from "@squad/shared";
 import { reopenReason } from "./reopen.ts";
-import { basesForFolder, nextHostId, recordForSession, resolveBase, restoreOrder, unclaimed } from "./sitting.ts";
+import { nextHostId, recordForSession, resolveBase, restoreOrder, unclaimed } from "./sitting.ts";
 import { appendAudit, type AuditEntry, type AuditKind } from "./audit.ts";
 import { agendaHash } from "./hash.ts";
 import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "./roster.ts";
