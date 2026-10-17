@@ -82,6 +82,7 @@ import {
   parseSeatReport,
   withTransientRetry,
   doneAfterAttempt,
+  phaseLedger,
   passedTitles,
   retryFeedback,
   rewindTo,
@@ -2787,7 +2788,19 @@ export class TeamsService extends Service {
     lines.push(
       `- 议程：${agenda.phases.length} 个阶段，通过 ${counts.passed}，未解决 ${counts.unresolved}，跳过 ${counts.skipped}`,
     );
+    const ledger = phaseLedger(agenda, nodes);
+    const unverified = ledger.filter((entry) => entry.state === "passed" && !entry.verified).length;
+    if (unverified > 0) {
+      lines.push(`- **其中 ${unverified} 个阶段的「通过」没有命令验证过**，见下面「各阶段怎么通过的」`);
+    }
     lines.push(`- 生成时间：${new Date().toISOString()}`, "");
+    lines.push("## 各阶段怎么通过的", "");
+    for (const entry of ledger) {
+      lines.push(
+        `- ${entry.verified ? "✅" : entry.state === "passed" ? "⚠️" : "❌"} **${entry.title}**：${entry.line}`,
+      );
+    }
+    lines.push("");
 
     const dropped = agenda.phases
       .map((phase, index) => ({ phase, node: nodeOf(nodes, nodeIdOf(phase, index)) }))

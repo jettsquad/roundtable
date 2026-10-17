@@ -10,6 +10,7 @@ import {
   nodeOf,
   parseSeatReport,
   passedTitles,
+  phaseLedger,
   retryFeedback,
   rewindTo,
   runnable,
@@ -400,5 +401,35 @@ describe("瞬时错误由固定规则重试", () => {
     const r = run(["ERR timed out"]);
     await withTransientRetry(r.fn, failure, { delaysMs: [1], sleep: async () => undefined, stopped: () => true });
     expect(r.calls()).toBe(1);
+  });
+});
+
+describe("报告里每个阶段的通过靠什么", () => {
+  const agenda: AgendaSpec = {
+    phases: [checked("甲"), phase("乙"), checked("丙"), checked("丁")],
+  };
+  const ids = agenda.phases.map((p, i) => nodeIdOf(p, i));
+  const nodes: NodeMap = {
+    [ids[0]!]: { state: "passed", attempts: 2, lastCheck: check(0) },
+    [ids[1]!]: { state: "passed", attempts: 1 },
+    [ids[2]!]: { state: "passed", attempts: 1, why: "主持人判为通过" },
+    [ids[3]!]: { state: "unresolved", attempts: 3, why: "检查仍未通过" },
+  };
+  const ledger = phaseLedger(agenda, nodes);
+
+  it("检查过了的才算验证过", () => {
+    expect(ledger[0]).toMatchObject({ verified: true });
+    expect(ledger[0]?.line).toContain("第 2 次");
+  });
+
+  it("没有检查的阶段，通过只代表席位答复了", () => {
+    expect(ledger[1]).toMatchObject({ verified: false });
+    expect(ledger[1]?.line).toContain("没有命令验证过");
+  });
+
+  it("主持人判过的、放下的，都不算验证过", () => {
+    expect(ledger[2]).toMatchObject({ verified: false });
+    expect(ledger[2]?.line).toContain("主持人判为通过");
+    expect(ledger[3]).toMatchObject({ verified: false, state: "unresolved" });
   });
 });

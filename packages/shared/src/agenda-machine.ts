@@ -379,6 +379,45 @@ export async function withTransientRetry<T>(
   return result;
 }
 
+/** How one phase ended, for the report the host reads. */
+export interface PhaseLedgerEntry {
+  readonly title: string;
+  readonly state: NodeState;
+  /** Passed with a check that ran and exited 0. */
+  readonly verified: boolean;
+  readonly line: string;
+}
+
+/**
+ * What stands behind each phase's pass.
+ *
+ * The report used to count passes, and a pass could mean three different
+ * things: a command checked the delivery, the seats merely answered because
+ * the phase had no check, or the host counted it through. "6 of 6 passed"
+ * said none of that, and a reader took it for the first.
+ */
+export function phaseLedger(agenda: AgendaSpec, nodes: NodeMap): readonly PhaseLedgerEntry[] {
+  return agenda.phases.map((phase, index) => {
+    const node = nodeOf(nodes, nodeIdOf(phase, index));
+    const base = { title: phase.title, state: node.state };
+    if (node.state !== "passed") {
+      const word = { pending: "没有跑到", deciding: "停在决策点", unresolved: "放下", skipped: "跳过" }[node.state];
+      return { ...base, verified: false, line: `${word}${node.why === undefined ? "" : `：${node.why}`}` };
+    }
+    if (node.why === "主持人判为通过") {
+      return { ...base, verified: false, line: "主持人判为通过，没有经过出口检查" };
+    }
+    if (phase.check === undefined) {
+      return { ...base, verified: false, line: "没有出口检查：通过只表示席位答复了，没有命令验证过交付" };
+    }
+    const last = node.lastCheck;
+    if (last === undefined || last.exitCode !== 0) {
+      return { ...base, verified: false, line: `有出口检查，但没有留下通过的记录：${phase.check.command}` };
+    }
+    return { ...base, verified: true, line: `出口检查通过（第 ${node.attempts} 次）：${phase.check.command}` };
+  });
+}
+
 /** A check's result in a few words. */
 export function describeCheck(check: ExitCheckResult): string {
   if (check.timedOut === true) return "超时";

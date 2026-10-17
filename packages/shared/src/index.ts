@@ -24,6 +24,7 @@ export * from "./team-artifact.ts";
 export * from "./agent-reply-text.ts";
 export * from "./agenda.ts";
 export * from "./agenda-machine.ts";
+export * from "./agenda-check.ts";
 export * from "./situation.ts";
 export * from "./seat-provider.ts";
 export * from "./seat-usage.ts";
