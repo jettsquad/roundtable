@@ -161,6 +161,7 @@ const teamRecord = z.object({
           .optional(),
         detour: z.object({ seatId: z.string().optional(), instruction: z.string() }).optional(),
         decisions: z.number().optional(),
+        doneTasks: z.array(z.number()).readonly().optional(),
       }),
     )
     .optional(),

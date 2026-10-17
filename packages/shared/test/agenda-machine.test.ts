@@ -3,10 +3,14 @@ import { checkAgendaAgainstRoster, needsOf, nodeIdOf, type AgendaPhase, type Age
 import {
   afterAttempt,
   applyDecision,
+  doneAfterAttempt,
+  isTransientFailure,
+  withTransientRetry,
   initialNodes,
   nodeOf,
   parseSeatReport,
   passedTitles,
+  phaseLedger,
   retryFeedback,
   rewindTo,
   runnable,
@@ -314,5 +318,118 @@ describe("在决策点", () => {
     const nodes = rewindTo(chain, done, 1);
     expect(passedTitles(chain, nodes)).toEqual(["T0"]);
     expect(runnable(chain, nodes)).toEqual([1]);
+  });
+});
+
+describe("重试从没做完的那条任务接着做", () => {
+  it("没做完时，把这次完成的并进已完成的", () => {
+    expect(doneAfterAttempt({ before: [0], completed: [1], allDone: false, helperRun: false })).toEqual([0, 1]);
+    expect(doneAfterAttempt({ before: undefined, completed: [0], allDone: false, helperRun: false })).toEqual([0]);
+  });
+
+  it("全部做完就清空：出口检查没过不是哪一条任务的错，下次整段重来", () => {
+    expect(doneAfterAttempt({ before: [0], completed: [1], allDone: true, helperRun: false })).toBeUndefined();
+  });
+
+  it("被点来清障碍的席位不在计划里，不改记录", () => {
+    expect(doneAfterAttempt({ before: [0], completed: [0], allDone: true, helperRun: true })).toEqual([0]);
+  });
+
+  it("决定「重做」时保留已完成的，「点人」时清掉", () => {
+    const agenda: AgendaSpec = { phases: [phase("甲")] };
+    const id = nodeIdOf(agenda.phases[0]!, 0);
+    const deciding: NodeMap = { [id]: { state: "deciding", attempts: 1, doneTasks: [0] } };
+    expect(nodeOf(applyDecision(agenda, deciding, id, { kind: "retry", instruction: "接着做" }), id).doneTasks).toEqual(
+      [0],
+    );
+    expect(
+      nodeOf(applyDecision(agenda, deciding, id, { kind: "assign", seatId: "b", instruction: "清障" }), id).doneTasks,
+    ).toBeUndefined();
+  });
+});
+
+describe("瞬时错误由固定规则重试", () => {
+  it("认得出网络和模型服务的瞬时错误", () => {
+    // 水户那次的真实报错：被当成任务失败交给了 Lil X。
+    expect(isTransientFailure("Reconnecting... 2/5 (workspace routing discovery failed)")).toBe(true);
+    expect(isTransientFailure("failed to refresh available models: request timed out")).toBe(true);
+    expect(isTransientFailure("error sending request for url (https://x)")).toBe(true);
+    expect(isTransientFailure("API Error: 529 overloaded_error")).toBe(true);
+    expect(isTransientFailure("HTTP 503")).toBe(true);
+  });
+
+  it("认不出的不算：任务本身的失败要交给人", () => {
+    expect(isTransientFailure("没有这个文件：clients/web/package.json")).toBe(false);
+    expect(isTransientFailure("席位上限已到")).toBe(false);
+    expect(isTransientFailure("")).toBe(false);
+  });
+
+  const run = (results: string[]) => {
+    let calls = 0;
+    return {
+      fn: async () => results[Math.min(calls++, results.length - 1)]!,
+      calls: () => calls,
+    };
+  };
+  const failure = (text: string): string | undefined => (text.startsWith("ERR") ? text : undefined);
+
+  it("瞬时错误之后成功，就用成功的那次", async () => {
+    const r = run(["ERR timed out", "好了"]);
+    const waited: number[] = [];
+    const out = await withTransientRetry(r.fn, failure, {
+      delaysMs: [1, 2],
+      sleep: async (ms) => void waited.push(ms),
+    });
+    expect(out).toBe("好了");
+    expect(waited).toEqual([1]);
+  });
+
+  it("重试有上限，上限到了把最后的失败交出去", async () => {
+    const r = run(["ERR timed out"]);
+    const out = await withTransientRetry(r.fn, failure, { delaysMs: [1, 2], sleep: async () => undefined });
+    expect(out).toBe("ERR timed out");
+    expect(r.calls()).toBe(3);
+  });
+
+  it("不是瞬时错误就不重试", async () => {
+    const r = run(["ERR 文件不存在"]);
+    await withTransientRetry(r.fn, failure, { delaysMs: [1], sleep: async () => undefined });
+    expect(r.calls()).toBe(1);
+  });
+
+  it("已经叫停就不再重试", async () => {
+    const r = run(["ERR timed out"]);
+    await withTransientRetry(r.fn, failure, { delaysMs: [1], sleep: async () => undefined, stopped: () => true });
+    expect(r.calls()).toBe(1);
+  });
+});
+
+describe("报告里每个阶段的通过靠什么", () => {
+  const agenda: AgendaSpec = {
+    phases: [checked("甲"), phase("乙"), checked("丙"), checked("丁")],
+  };
+  const ids = agenda.phases.map((p, i) => nodeIdOf(p, i));
+  const nodes: NodeMap = {
+    [ids[0]!]: { state: "passed", attempts: 2, lastCheck: check(0) },
+    [ids[1]!]: { state: "passed", attempts: 1 },
+    [ids[2]!]: { state: "passed", attempts: 1, why: "主持人判为通过" },
+    [ids[3]!]: { state: "unresolved", attempts: 3, why: "检查仍未通过" },
+  };
+  const ledger = phaseLedger(agenda, nodes);
+
+  it("检查过了的才算验证过", () => {
+    expect(ledger[0]).toMatchObject({ verified: true });
+    expect(ledger[0]?.line).toContain("第 2 次");
+  });
+
+  it("没有检查的阶段，通过只代表席位答复了", () => {
+    expect(ledger[1]).toMatchObject({ verified: false });
+    expect(ledger[1]?.line).toContain("没有命令验证过");
+  });
+
+  it("主持人判过的、放下的，都不算验证过", () => {
+    expect(ledger[2]).toMatchObject({ verified: false });
+    expect(ledger[2]?.line).toContain("主持人判为通过");
+    expect(ledger[3]).toMatchObject({ verified: false, state: "unresolved" });
   });
 });

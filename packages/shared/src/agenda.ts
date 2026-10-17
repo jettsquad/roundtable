@@ -14,6 +14,7 @@
  * like a seat that simply had nothing to say.
  */
 import { z } from "zod";
+import { vacuousCheckReason } from "./agenda-check.ts";
 import { ACTION_KINDS, FEATURE_FLAGS } from "./situation.ts";
 
 export const AgendaTaskSchema = z
@@ -161,6 +162,12 @@ export function checkAgendaAgainstRoster(agenda: AgendaSpec, seatIds: readonly s
     for (const task of phase.tasks) {
       if (!known.has(task.seatId)) {
         problems.push({ phase: phase.title, detail: `点名了不存在的席位「${task.seatId}」` });
+      }
+    }
+    if (phase.check !== undefined) {
+      const vacuous = vacuousCheckReason(phase.check.command);
+      if (vacuous !== undefined) {
+        problems.push({ phase: phase.title, detail: `出口检查不可能失败：${vacuous}` });
       }
     }
     if (phase.exit === "after-bounded-rounds" && phase.maxRounds === undefined) {

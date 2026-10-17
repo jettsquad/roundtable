@@ -47,10 +47,10 @@ Squad 1.x 验证过的纯逻辑，原样搬过来，连测试一起。
 
 ## 迁出记录
 
-| 曾在这 | 已去 | 时间 |
-|---|---|---|
-| `buildCheckpointPrompt` · `validateCheckpoint` · `CHECKPOINT_HEADINGS` | ③ `@squad/secretary` | 建立 `packages/secretary` 时 |
-| `buildTeamAgendaTerminationPrompt` · `validateTeamAgendaTerminationSummary` | ③ `@squad/secretary` | 同上 |
+| 曾在这                                                                      | 已去                 | 时间                         |
+| --------------------------------------------------------------------------- | -------------------- | ---------------------------- |
+| `buildCheckpointPrompt` · `validateCheckpoint` · `CHECKPOINT_HEADINGS`      | ③ `@squad/secretary` | 建立 `packages/secretary` 时 |
+| `buildTeamAgendaTerminationPrompt` · `validateTeamAgendaTerminationSummary` | ③ `@squad/secretary` | 同上                         |
 
 理由是同一个：它们形式上是纯函数（输入 → 字符串），三条禁令一条不犯，但**内容是决定——
 秘书被告知要做什么**。那不是共享的判断逻辑，是秘书插件的核心资产，只是碰巧用不需要 `ctx`
@@ -63,22 +63,22 @@ Squad 1.x 验证过的纯逻辑，原样搬过来，连测试一起。
 `agenda.ts` 是本包在「只出不进」立规之后**唯一新增**的文件，走的正是规矩允许的那条路：
 提升的条件是**真的有两个消费者**，并且要点名。
 
-| 消费者 | 用它做什么 |
-|---|---|
+| 消费者               | 用它做什么                                        |
+| -------------------- | ------------------------------------------------- |
 | ③ `@squad/secretary` | 从主持人一句话**拟出**议程，并校验模型返回的 JSON |
-| ① `@squad/table` | **执行**主持人确认过的议程 |
+| ① `@squad/table`     | **执行**主持人确认过的议程                        |
 
 两个插件不许互相 import，而这是它们必须达成一致的词汇——它没法住在墙的任何一侧。
 规矩因此是按设计工作的：不是「看起来通用」，而是「墙两边都要用」。
 
 ## 现在还剩什么
 
-| 模块 | 消费者 |
-|---|---|
+| 模块                                   | 消费者                                           |
+| -------------------------------------- | ------------------------------------------------ |
 | `agent-reply-text`（`stripReasoning`） | ① 桌子、③ 秘书 —— **真有两个**，留在这里名正言顺 |
-| `team-checkpoint-threshold` | ② 装配（目前唯一） |
-| `team-artifact` | ① 桌子（目前唯一） |
-| `agenda` | ③ 秘书、① 桌子 —— **真有两个** |
+| `team-checkpoint-threshold`            | ② 装配（目前唯一）                               |
+| `team-artifact`                        | ① 桌子（目前唯一）                               |
+| `agenda`                               | ③ 秘书、① 桌子 —— **真有两个**                   |
 
 后两个只有一个消费者，按规矩本该跟着走。留下的理由与检查点那批不同：它们是**可复用的计算**
 （token 估算、路径规范化），不是「告诉某个 LLM 做什么」的决定。第二个消费者出现时它们留在这里，

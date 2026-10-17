@@ -67,6 +67,18 @@ export interface NodeRecord {
    * deciding its way round the same node for ever.
    */
   readonly decisions?: number | undefined;
+  /**
+   * Which of the node's tasks (by position in its run plan) already finished
+   * in the attempt that is being carried on.
+   *
+   * A retry used to start the phase over, so a seat that had delivered was
+   * run again — and handed guidance written for whichever seat had failed.
+   * Recorded per task, the way a durable-execution engine records each step,
+   * so a retry resumes at the task that did not finish. Cleared when every
+   * task has finished (a failed exit check is not any one task's fault) and
+   * when the node is sent back to the start.
+   */
+  readonly doneTasks?: readonly number[] | undefined;
 }
 
 export type NodeMap = Readonly<Record<string, NodeRecord>>;
@@ -295,6 +307,117 @@ export function afterAttempt(phase: AgendaPhase, attempts: number, outcome: Atte
   };
 }
 
+/**
+ * Which tasks of a node count as finished after one run of it.
+ *
+ * Everything done so far plus what this run finished — or nothing, once the
+ * whole plan has finished, because from then on a retry is about the exit
+ * check and every task goes again. A helper sent in to clear an obstacle runs
+ * outside the plan and leaves the record as it was.
+ */
+export function doneAfterAttempt(input: {
+  readonly before: readonly number[] | undefined;
+  readonly completed: readonly number[];
+  readonly allDone: boolean;
+  readonly helperRun: boolean;
+}): readonly number[] | undefined {
+  if (input.helperRun) return input.before;
+  if (input.allDone) return undefined;
+  return [...new Set([...(input.before ?? []), ...input.completed])].sort((a, b) => a - b);
+}
+
+// ── A seat that failed for a reason that will pass ─────────────────────────
+
+/**
+ * Rounds a seat is run again on its own after a transient failure, before
+ * anybody is asked what to do about it.
+ */
+export const TRANSIENT_RETRY_DELAYS_MS: readonly number[] = [3_000, 15_000];
+
+const TRANSIENT_FAILURE =
+  /Reconnecting|routing discovery failed|timed? ?out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|network (?:error|is unreachable)|error sending request|rate.?limit|overloaded|\b(?:429|502|503|504)\b|temporarily unavailable/i;
+
+/**
+ * Whether a failed seat's message names a failure that running it again
+ * cures: the network, a model service that timed out or is busy.
+ *
+ * A fixed rule rather than a judgement. A model asked whether to retry spent
+ * a decision, and in one agenda sent the retry to the wrong seat.
+ */
+export function isTransientFailure(text: string): boolean {
+  return TRANSIENT_FAILURE.test(text);
+}
+
+/**
+ * Run something, and again after each delay while it fails for a transient
+ * reason. Returns the last result.
+ *
+ * `sleep` is injected so a test does not wait, and a stop cuts the waiting
+ * short.
+ */
+export async function withTransientRetry<T>(
+  run: () => Promise<T>,
+  failure: (result: T) => string | undefined,
+  options: {
+    readonly delaysMs?: readonly number[];
+    readonly sleep?: (ms: number) => Promise<void>;
+    readonly stopped?: () => boolean;
+    readonly onRetry?: (why: string, attempt: number, delayMs: number) => void;
+  } = {},
+): Promise<T> {
+  const delays = options.delaysMs ?? TRANSIENT_RETRY_DELAYS_MS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let result = await run();
+  for (const [index, delay] of delays.entries()) {
+    const why = failure(result);
+    if (why === undefined || !isTransientFailure(why) || options.stopped?.() === true) break;
+    options.onRetry?.(why, index + 1, delay);
+    await sleep(delay);
+    if (options.stopped?.() === true) break;
+    result = await run();
+  }
+  return result;
+}
+
+/** How one phase ended, for the report the host reads. */
+export interface PhaseLedgerEntry {
+  readonly title: string;
+  readonly state: NodeState;
+  /** Passed with a check that ran and exited 0. */
+  readonly verified: boolean;
+  readonly line: string;
+}
+
+/**
+ * What stands behind each phase's pass.
+ *
+ * The report used to count passes, and a pass could mean three different
+ * things: a command checked the delivery, the seats merely answered because
+ * the phase had no check, or the host counted it through. "6 of 6 passed"
+ * said none of that, and a reader took it for the first.
+ */
+export function phaseLedger(agenda: AgendaSpec, nodes: NodeMap): readonly PhaseLedgerEntry[] {
+  return agenda.phases.map((phase, index) => {
+    const node = nodeOf(nodes, nodeIdOf(phase, index));
+    const base = { title: phase.title, state: node.state };
+    if (node.state !== "passed") {
+      const word = { pending: "没有跑到", deciding: "停在决策点", unresolved: "放下", skipped: "跳过" }[node.state];
+      return { ...base, verified: false, line: `${word}${node.why === undefined ? "" : `：${node.why}`}` };
+    }
+    if (node.why === "主持人判为通过") {
+      return { ...base, verified: false, line: "主持人判为通过，没有经过出口检查" };
+    }
+    if (phase.check === undefined) {
+      return { ...base, verified: false, line: "没有出口检查：通过只表示席位答复了，没有命令验证过交付" };
+    }
+    const last = node.lastCheck;
+    if (last === undefined || last.exitCode !== 0) {
+      return { ...base, verified: false, line: `有出口检查，但没有留下通过的记录：${phase.check.command}` };
+    }
+    return { ...base, verified: true, line: `出口检查通过（第 ${node.attempts} 次）：${phase.check.command}` };
+  });
+}
+
 /** A check's result in a few words. */
 export function describeCheck(check: ExitCheckResult): string {
   if (check.timedOut === true) return "超时";
@@ -348,7 +471,14 @@ export function applyDecision(agenda: AgendaSpec, nodes: NodeMap, id: string, de
     };
   } else {
     const said = decision.instruction?.trim() ?? "";
-    next = { ...kept, state: "pending", attempts: 0, ...(said === "" ? {} : { detour: { instruction: said } }) };
+    next = {
+      ...kept,
+      state: "pending",
+      attempts: 0,
+      // What already finished stays finished: the retry resumes where it stopped.
+      ...(record.doneTasks === undefined ? {} : { doneTasks: record.doneTasks }),
+      ...(said === "" ? {} : { detour: { instruction: said } }),
+    };
   }
   return settle(agenda, { ...nodes, [id]: next });
 }
