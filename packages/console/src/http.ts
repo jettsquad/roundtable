@@ -1924,7 +1924,7 @@ export function registerSquadApi(ctx: Context): () => void {
           // the record it should use from then on. Creating it here rather
           // than on the client because the decision is 「这个 session 属于哪
           // 一场工作」 — a fact about the team, not about a browser tab.
-          const body = await readJson<{ projectFolder: string; sessionId: string }>(req);
+          const body = await readJson<{ projectFolder: string; sessionId: string; teamId?: string }>(req);
           const sitting = await ctx.teams.sittingFor(body);
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify(sitting === undefined ? {} : { teamId: sitting.teamId }));

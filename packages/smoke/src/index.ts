@@ -57,20 +57,23 @@ export function apply(ctx: Context, config: Config): void {
     };
     try {
       line("建团…");
-      const team = await ctx.teams.create({
-        displayName: "冒烟团队",
-        projectFolder: config.projectFolder,
-        hostDisplayName: "主持人",
-        seats: [
-          {
-            seatId: "seat-a",
-            displayName: "甲",
-            role: "通用",
-            systemPrompt: "你回答简短，不做多余的事。",
-            backend: "claude-code",
-          },
-        ],
-      });
+      const team = await ctx.teams.create(
+        {
+          displayName: "冒烟团队",
+          projectFolder: config.projectFolder,
+          hostDisplayName: "主持人",
+          seats: [
+            {
+              seatId: "seat-a",
+              displayName: "甲",
+              role: "通用",
+              systemPrompt: "你回答简短，不做多余的事。",
+              backend: "claude-code",
+            },
+          ],
+        },
+        { sharedFolder: true },
+      );
       line(`团队已建：${team.teamId}`);
 
       // A neutral fact, deliberately NOT a secret. An earlier probe planted a
@@ -153,15 +156,18 @@ export function apply(ctx: Context, config: Config): void {
       // cumulative, a "seat B saw seat A" check passes and says nothing. So
       // the two modes run the same two tasks and are compared against each
       // other — the claim is that they DIFFER, and that needs both halves.
-      const pair = await ctx.teams.create({
-        displayName: "对照团队",
-        projectFolder: config.projectFolder,
-        hostDisplayName: "主持人",
-        seats: [
-          { seatId: "seat-a", displayName: "甲", role: "通用", systemPrompt: "回答极简。", backend: "claude-code" },
-          { seatId: "seat-b", displayName: "乙", role: "通用", systemPrompt: "回答极简。", backend: "claude-code" },
-        ],
-      });
+      const pair = await ctx.teams.create(
+        {
+          displayName: "对照团队",
+          projectFolder: config.projectFolder,
+          hostDisplayName: "主持人",
+          seats: [
+            { seatId: "seat-a", displayName: "甲", role: "通用", systemPrompt: "回答极简。", backend: "claude-code" },
+            { seatId: "seat-b", displayName: "乙", role: "通用", systemPrompt: "回答极简。", backend: "claude-code" },
+          ],
+        },
+        { sharedFolder: true },
+      );
 
       // Discriminated by WHICH word comes back, not by asking the seat to
       // reason about phases. A seat has no reliable way to tell which phase a

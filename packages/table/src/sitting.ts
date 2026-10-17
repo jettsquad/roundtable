@@ -67,15 +67,61 @@ export function recordForSession<T extends SittingLike>(
 }
 
 /**
- * The team that owns a folder — a base, never a sitting.
+ * The teams that work in a folder — bases only, never a sitting.
  *
  * A sitting of a sitting would be a tree nobody asked for, and the roster
- * would then live at an arbitrary depth in it.
+ * would then live at an arbitrary depth in it. More than one is possible: the
+ * folder is a workspace, and nothing used to stop two teams being made on it.
  */
-export function baseForFolder<T extends FolderLike>(records: readonly T[], projectFolder: string): T | undefined {
-  return records.find(
+export function basesForFolder<T extends FolderLike>(records: readonly T[], projectFolder: string): readonly T[] {
+  return records.filter(
     (record) => record.disposed !== true && record.baseTeamId === undefined && record.projectFolder === projectFolder,
   );
+}
+
+/** Which team a session belongs to, or why that cannot be said. */
+export type BaseResolution<T> =
+  | { readonly kind: "found"; readonly base: T }
+  /** Nobody works in this folder. */
+  | { readonly kind: "none" }
+  /** The caller named a team that is not here, or is in another folder. */
+  | { readonly kind: "missing"; readonly teamId: string }
+  /** Several teams share the folder and nothing says which one this is. */
+  | { readonly kind: "ambiguous"; readonly candidates: readonly T[] };
+
+/**
+ * The team a session belongs to.
+ *
+ * By TEAM ID when the caller knows it — a session opened from a team's own
+ * card — because a team is not a folder. Matching on the folder alone gave
+ * every team in a shared folder the roster of the OLDEST one: a team made
+ * later, under any name, showed the members of the first.
+ *
+ * By folder only when nobody said which team. One team in the folder is then
+ * unambiguous. With several, a team that has never been opened is adopted by
+ * the first session to arrive, exactly as a lone team is (see `unclaimed`);
+ * otherwise the answer is "ambiguous", not the first of them.
+ */
+export function resolveBase<T extends FolderLike>(
+  records: readonly T[],
+  input: { readonly projectFolder: string; readonly teamId?: string | undefined },
+): BaseResolution<T> {
+  if (input.teamId !== undefined) {
+    const named = records.find((record) => record.teamId === input.teamId && record.disposed !== true);
+    const base = named?.baseTeamId === undefined ? named : records.find((record) => record.teamId === named.baseTeamId);
+    if (base === undefined || base.disposed === true || base.projectFolder !== input.projectFolder) {
+      return { kind: "missing", teamId: input.teamId };
+    }
+    return { kind: "found", base };
+  }
+  const bases = basesForFolder(records, input.projectFolder);
+  const [only] = bases;
+  if (only === undefined) return { kind: "none" };
+  if (bases.length === 1) return { kind: "found", base: only };
+  const fresh = bases.filter(unclaimed);
+  const [adopted] = fresh;
+  if (adopted !== undefined && fresh.length === 1) return { kind: "found", base: adopted };
+  return { kind: "ambiguous", candidates: bases };
 }
 
 /**

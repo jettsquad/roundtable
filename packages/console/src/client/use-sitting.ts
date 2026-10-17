@@ -30,7 +30,13 @@ function resolve(projectFolder: string, sessionId: string): Promise<string | und
       if (answer.teamId !== undefined) known.set(sessionId, answer.teamId);
       return answer.teamId;
     })
-    .catch(() => undefined)
+    .catch((problem: unknown) => {
+      // Said, not swallowed: a refused lookup (several teams share the folder
+      // and nothing says which this is) would otherwise look like a session
+      // that is merely slow to load.
+      console.warn(`[squad] ${problem instanceof Error ? problem.message : String(problem)}`);
+      return undefined;
+    })
     .finally(() => {
       // Cleared either way: a failed lookup must be retryable, and leaving a
       // rejected promise in the map would make one network blip permanent for

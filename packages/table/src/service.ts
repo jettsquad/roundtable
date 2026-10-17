@@ -16,7 +16,7 @@
  *   because the table put them in its prompt. Independent rounds are therefore
  *   a fact of the topology rather than a promise made in a system prompt.
  */
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
 import type { SubagentResult, SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
@@ -100,7 +100,7 @@ import {
   type Step,
 } from "@squad/shared";
 import { reopenReason } from "./reopen.ts";
-import { baseForFolder, nextHostId, recordForSession, restoreOrder, unclaimed } from "./sitting.ts";
+import { nextHostId, recordForSession, resolveBase, restoreOrder, unclaimed } from "./sitting.ts";
 import { appendAudit, type AuditEntry, type AuditKind } from "./audit.ts";
 import { agendaHash } from "./hash.ts";
 import { checkRemoval, checkRoster, placeSeat, secretaryOf } from "./roster.ts";
@@ -734,11 +734,15 @@ export class TeamsService extends Service {
           if (session.id.startsWith("team-") || session.id.startsWith("sit-")) return;
           const cwd = session.header.cwd;
           if (cwd === undefined) return;
-          const base = baseForFolder(
+          // Marked only when the folder says whose it is. With several teams
+          // sharing it the label would be a guess, and `sittingFor` is the
+          // place that asks for the team by id.
+          const resolved = resolveBase(
             [...this.teams.values()].map((record) => ({ ...record, projectFolder: record.input.projectFolder })),
-            cwd,
+            { projectFolder: cwd },
           );
-          if (base === undefined) return;
+          if (resolved.kind !== "found") return;
+          const base = resolved.base;
           this.markLiveSession(session, base.input.displayName);
         } catch (error) {
           this.ctx.logger.warn(`标记会话失败：${error instanceof Error ? error.message : String(error)}`);
@@ -1215,7 +1219,7 @@ export class TeamsService extends Service {
     }
   }
 
-  async create(input: CreateTeamInput): Promise<Team> {
+  async create(input: CreateTeamInput, options: { readonly sharedFolder?: boolean } = {}): Promise<Team> {
     const problems = checkRoster(input.seats);
     if (problems.length > 0) throw new Error(problems.map((problem) => problem.detail).join("\n"));
 
@@ -1227,6 +1231,20 @@ export class TeamsService extends Service {
     // skip the check entirely.
     if (!existsSync(input.projectFolder) || !statSync(input.projectFolder).isDirectory()) {
       throw new Error(`项目文件夹不存在，或者不是个目录：${input.projectFolder}`);
+    }
+    // One team to a folder. The folder IS the workspace, so a second team on
+    // it shares the sidebar entry, and every session opened there then has to
+    // be told apart by something other than where it is. Refused rather than
+    // allowed quietly: the person asked for a new team and would get the old
+    // one's members, which is the report this check exists because of.
+    if (options.sharedFolder !== true) {
+      const taken = this.teamsInFolder(input.projectFolder);
+      if (taken.length > 0) {
+        throw new Error(
+          `文件夹 ${input.projectFolder} 已经有团队「${taken.map((record) => record.input.displayName).join("」「")}」。` +
+            `一个文件夹只放一支团队：换一个文件夹，或者先解散那支团队。`,
+        );
+      }
     }
     const teamId = `team-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -1288,6 +1306,29 @@ export class TeamsService extends Service {
   }
 
   /**
+   * The live teams working in this folder, compared by real path.
+   *
+   * Saved teams hold the canonical spelling (registration resolves symlinks),
+   * while a caller may type `/tmp/x` for `/private/tmp/x`.
+   */
+  private teamsInFolder(folder: string): readonly TeamRecord[] {
+    const canonical = (path: string): string => {
+      try {
+        return realpathSync(path);
+      } catch {
+        return path;
+      }
+    };
+    const wanted = new Set([folder, canonical(folder)]);
+    return [...this.teams.values()].filter(
+      (record) =>
+        record.disposed !== true &&
+        record.baseTeamId === undefined &&
+        (wanted.has(record.input.projectFolder) || wanted.has(canonical(record.input.projectFolder))),
+    );
+  }
+
+  /**
    * Put this team's folder in the workspace registry, and answer its
    * canonical path.
    *
@@ -1337,7 +1378,11 @@ export class TeamsService extends Service {
    * checkpoints and the usage — so the seats arrive with no memory of the
    * other session, which is exactly what 「重新听我的命令开始新的工作」 means.
    */
-  async sittingFor(input: { readonly projectFolder: string; readonly sessionId: string }): Promise<Team | undefined> {
+  async sittingFor(input: {
+    readonly projectFolder: string;
+    readonly sessionId: string;
+    readonly teamId?: string | undefined;
+  }): Promise<Team | undefined> {
     // One lookup per session at a time. The body awaits (creating the host
     // node) BETWEEN checking for a sitting and registering the new one, so
     // three callers arriving together each found none and each made one — the
@@ -1355,6 +1400,7 @@ export class TeamsService extends Service {
   private async findOrCreateSitting(input: {
     readonly projectFolder: string;
     readonly sessionId: string;
+    readonly teamId?: string | undefined;
   }): Promise<Team | undefined> {
     // Not before the saved sittings are back. "No sitting for this session"
     // is only true once restoring has finished; asked earlier, it is true of
@@ -1373,12 +1419,25 @@ export class TeamsService extends Service {
       return this.viewOf(existing);
     }
 
-    // The base is found by FOLDER, the same comparison the surfaces make.
-    const base = baseForFolder(
+    // The team is named by ID when the caller knows it (a session opened from
+    // that team's card). The folder alone only answers when it holds one team,
+    // or one that has never been opened — see `resolveBase`.
+    const resolved = resolveBase(
       records.map((record) => ({ ...record, projectFolder: record.input.projectFolder })),
-      input.projectFolder,
+      input,
     );
-    if (base === undefined) return undefined;
+    if (resolved.kind === "none") return undefined;
+    if (resolved.kind === "missing") {
+      throw new Error(`没有这支团队，或它不在这个文件夹里：${resolved.teamId}。`);
+    }
+    if (resolved.kind === "ambiguous") {
+      throw new Error(
+        `文件夹 ${input.projectFolder} 里有几支团队：${resolved.candidates
+          .map((record) => `「${record.input.displayName}」`)
+          .join("")}，不知道这个会话属于哪一支。请从团队卡片的「新开一场」进入。`,
+      );
+    }
+    const base = resolved.base;
     // The first session in the workspace adopts the team itself. See
     // `unclaimed`: a team is created before anyone sits down at it, and
     // starting a second empty sitting next to its own discussion would hide

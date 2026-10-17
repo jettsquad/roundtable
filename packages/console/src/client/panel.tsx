@@ -163,7 +163,7 @@ function NewSitting({ team, onChanged }: { readonly team: TeamSummary; readonly 
               // Creates the sitting AND marks the session, which is what
               // makes it survive a reload. Its id is the record the new
               // session works in from now on.
-              const sitting = await api.sitting({ projectFolder: team.projectFolder, sessionId });
+              const sitting = await api.sitting({ projectFolder: team.projectFolder, sessionId, teamId: team.teamId });
               if (sitting.teamId !== undefined) await api.designerAgenda({ teamId: sitting.teamId });
               shell.open(sessionId);
               onChanged();
