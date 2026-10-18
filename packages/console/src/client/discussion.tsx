@@ -24,6 +24,8 @@ import { extractLocalImages, imagePathsIn } from "@squad/shared";
 import { MARKDOWN_LABELS } from "./markdown-labels.ts";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, type TeamSummary, type TranscriptLine } from "./api.ts";
+import { AgendaMessage } from "./agenda-message.tsx";
+import { agendaInText } from "./agenda-text.ts";
 import { DraftCard } from "./draft-card.tsx";
 import { PlanCard, PlanMessage, PlanRefused } from "./plan-card.tsx";
 import { speech } from "./speech.ts";
@@ -496,7 +498,18 @@ export function Discussion({
               {(team.planTurnIds ?? []).includes(line.turnId) ? (
                 <PlanMessage team={team} turnId={line.turnId} raw={line.text} />
               ) : (
-                <MarkdownText text={shown.text} labels={MARKDOWN_LABELS} />
+                (() => {
+                  // An agenda is shown as one, for any seat that wrote it.
+                  const agenda = agendaInText(shown.text);
+                  return agenda === undefined ? (
+                    <MarkdownText text={shown.text} labels={MARKDOWN_LABELS} />
+                  ) : (
+                    <AgendaMessage
+                      found={agenda}
+                      seatNames={new Map(team.seats.map((seat) => [seat.seatId, seat.displayName]))}
+                    />
+                  );
+                })()
               )}
               {/* Pictures the message names, shown beneath it. A drawing an
                   agent just saved is reported as a path, often inside a code
