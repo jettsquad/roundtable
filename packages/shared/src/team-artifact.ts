@@ -79,3 +79,34 @@ export const resolveArtifactPath = (
   const ext = dot <= 0 ? "" : name.slice(dot);
   return `${dir}${stem}-${target.seatId}${ext}`;
 };
+
+/**
+ * A reply as the file it is written to should read.
+ *
+ * Without the 【结果】 line: that is the seat reporting to the agenda, not
+ * part of the document, and a chapter that ends 「【结果】完成」 has the
+ * report stapled to it.
+ */
+export function artifactText(reply: string): string {
+  const kept = reply.split("\n").filter((line) => !/^\s*【结果】/.test(line));
+  return `${kept.join("\n").trimEnd()}\n`;
+}
+
+/** What a file looked like at one moment. `undefined` when it was not there. */
+export interface FileStamp {
+  readonly mtimeMs: number;
+  readonly size: number;
+}
+
+/**
+ * Whether the file was written to between two looks at it.
+ *
+ * Used before the program writes a seat's reply over a file: a seat that
+ * already wrote the file itself with its own tools has put the real content
+ * there, and the reply is a report ABOUT it. Overwriting one with the other
+ * is how a finished chapter became a 40-line completion report.
+ */
+export function touchedSince(before: FileStamp | undefined, after: FileStamp | undefined): boolean {
+  if (after === undefined) return false;
+  return before === undefined || before.mtimeMs !== after.mtimeMs || before.size !== after.size;
+}

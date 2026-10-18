@@ -82,6 +82,9 @@ import {
   parseSeatReport,
   withTransientRetry,
   doneAfterAttempt,
+  artifactText,
+  touchedSince,
+  type FileStamp,
   phaseLedger,
   passedTitles,
   retryFeedback,
@@ -2514,6 +2517,14 @@ export class TeamsService extends Service {
           ? (opening.get(seat.seatId) ?? { lines: [] })
           : await this.windowForSeat(record, host, seat);
 
+      const path = resolveArtifactPath(
+        run.task.artifactPath === undefined ? undefined : { path: run.task.artifactPath },
+        { seatId: seat.seatId, phaseId: `${phase.title}-${run.round}` },
+        phase.tasks.filter((candidate) => candidate.artifactPath === run.task.artifactPath).length,
+      );
+      // Looked at BEFORE the seat runs, to tell afterwards whether it wrote the file.
+      const stampBefore = path === undefined ? undefined : await this.stampOf(record, path);
+
       const instructionId = newTurnId();
       record.log.append(
         record.input.hostDisplayName,
@@ -2553,13 +2564,16 @@ export class TeamsService extends Service {
         break;
       }
 
-      const path = resolveArtifactPath(
-        run.task.artifactPath === undefined ? undefined : { path: run.task.artifactPath },
-        { seatId: seat.seatId, phaseId: `${phase.title}-${run.round}` },
-        phase.tasks.filter((candidate) => candidate.artifactPath === run.task.artifactPath).length,
-      );
       if (path !== undefined && !reply.failed) {
-        await this.writeArtifact(record, path, reply.text);
+        // Not over a file the seat wrote itself. A seat told to save its work
+        // does, with its own tools, and then reports on it; writing that
+        // report over the file puts a 40-line completion note where the
+        // chapter was.
+        if (touchedSince(stampBefore, await this.stampOf(record, path))) {
+          record.log.append("系统", `↷ ${seat.displayName} 这一轮自己写了 ${path}，没有用他的回复覆盖它。`);
+        } else {
+          await this.writeArtifact(record, path, artifactText(reply.text));
+        }
         artifacts.push(path);
         record.artifacts.push(path);
       }
@@ -3145,20 +3159,26 @@ export class TeamsService extends Service {
             helperRun,
           });
           // A seat sent in to clear an obstacle has not done the phase's own
-          // work. Where a check follows, the check says whether the obstacle
-          // is gone. Where none does, the helper's 「完成」 would otherwise
-          // pass the phase by itself — an acceptance that found a
-          // requirement unmet would be "passed" by whoever patched it. So
-          // the phase's own seats go again, and theirs is the word that counts.
+          // work, and neither has a passing check proved it was done. A
+          // discussion phase whose check was 「the file exists」 passed on the
+          // helper's repair alone: the reviewers were never asked, and the
+          // report said three rounds had been held. So the phase's own seats
+          // go again, from the first task that did not finish (what did finish
+          // is not redone), and only then is the check run.
+          //
+          // The exception is a node whose last run ENDED in a failed check:
+          // every task had finished and the check is what stood in the way,
+          // so the check is what the helper's work is measured by.
           const cleared = attempt.report === undefined || attempt.report.kind === "done";
-          if (guidance?.seatId !== undefined && phase.check === undefined && attempt.failed === undefined && cleared) {
+          const checkWasTheObstacle = phase.check !== undefined && nodeOf(nodes, nodeId).lastCheck !== undefined;
+          if (guidance?.seatId !== undefined && attempt.failed === undefined && cleared && !checkWasTheObstacle) {
             const helper = record.seats.find((seat) => seat.seatId === guidance?.seatId)?.displayName ?? "被点到的席位";
             lastReply = attempt.last ?? lastReply;
             const { detour: _spent, ...kept } = nodeOf(nodes, nodeId);
             nodes = { ...nodes, [nodeId]: kept };
             this.saveNodes(record, agenda, hash, nodes);
             guidance = {
-              instruction: `${helper} 刚按安排处理了挡住这一阶段的问题。请把这一阶段从头重新做一遍，以现在的实际情况为准，不要沿用上一次的结论。`,
+              instruction: `${helper} 刚按安排处理了挡住这一阶段的问题。请接着做这一阶段还没做完的部分，以现在的实际情况为准，不要沿用上一次的结论。`,
             };
             continue;
           }
@@ -3390,6 +3410,15 @@ export class TeamsService extends Service {
    * write to is a path it may or may not have written to, and the checkpoint's
    * index would then point at files that sometimes exist.
    */
+  private async stampOf(record: TeamRecord, relative: string): Promise<FileStamp | undefined> {
+    try {
+      const info = await stat(join(record.input.projectFolder, relative));
+      return info.isFile() ? { mtimeMs: info.mtimeMs, size: info.size } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async writeArtifact(record: TeamRecord, relative: string, text: string): Promise<void> {
     const absolute = join(record.input.projectFolder, relative);
     await mkdir(dirname(absolute), { recursive: true });

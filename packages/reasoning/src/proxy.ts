@@ -44,7 +44,7 @@ export function buildProxyPrompt(point: DecisionPoint, criteria: readonly Criter
 
   const choices = [
     '{"kind":"retry","instruction":"…","say":"…"}　让原来的席位带着你的具体指示再做一次。instruction 写给席位，要具体到做什么、不做什么。',
-    '{"kind":"assign","seatId":"…","instruction":"…","say":"…"}　点另一个席位去清除障碍（seatId 必须是下面名册里的）。他做完后，这一阶段有出口检查就再跑一遍检查，没有出口检查就由这一阶段原来的席位从头重做一遍。',
+    '{"kind":"assign","seatId":"…","instruction":"…","say":"…"}　点另一个席位去清除障碍（seatId 必须是下面名册里的）。他做完后，这一阶段原来的席位会接着做还没做完的部分（已经做完的不重做），然后才跑出口检查；只有上一次是出口检查没过时，才直接再跑检查。',
     '{"kind":"answer","text":"…"}　席位问了主持人一个问题，而答案能从目标、计划或项目规则里得出：替主持人回答。',
     ...(settling
       ? []
