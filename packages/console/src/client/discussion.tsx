@@ -23,7 +23,7 @@ import { useEffect, useRef, useState } from "react";
 import { extractLocalImages, imagePathsIn } from "@squad/shared";
 import { MARKDOWN_LABELS } from "./markdown-labels.ts";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
-import { api, type TeamSummary } from "./api.ts";
+import { api, type TeamSummary, type TranscriptLine } from "./api.ts";
 import { DraftCard } from "./draft-card.tsx";
 import { PlanCard, PlanMessage, PlanRefused } from "./plan-card.tsx";
 import { speech } from "./speech.ts";
@@ -377,6 +377,36 @@ export function Discussion({
   // table's state rather than either surface's.
   const quoted = team.selection.quoteIds;
   const secretaryNames = team.seats.filter((seat) => seat.isSecretary).map((seat) => seat.displayName);
+  // Lines fetched on request from before the snapshot's tail. The snapshot
+  // carries only the newest few, so without this the rest of a long
+  // discussion was named (「前面还有 51 条」) and unreachable.
+  const [older, setOlder] = useState<{
+    readonly teamId: string;
+    readonly lines: readonly TranscriptLine[];
+    readonly remaining: number;
+  }>({ teamId: team.teamId, lines: [], remaining: 0 });
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState<string | undefined>(undefined);
+  const fetched = older.teamId === team.teamId ? older : { teamId: team.teamId, lines: [], remaining: 0 };
+  const tailIds = new Set(team.transcript.map((line) => line.turnId));
+  const lines: readonly TranscriptLine[] = [
+    ...fetched.lines.filter((line) => !tailIds.has(line.turnId)),
+    ...team.transcript,
+  ];
+  const stillBefore = fetched.lines.length === 0 ? team.transcriptOmitted : fetched.remaining;
+  const showEarlier = (): void => {
+    const first = lines[0];
+    if (first === undefined) return;
+    setLoadingOlder(true);
+    setOlderError(undefined);
+    void api
+      .earlierLines({ teamId: team.teamId, beforeTurnId: first.turnId })
+      .then((got) =>
+        setOlder({ teamId: team.teamId, lines: [...got.lines, ...fetched.lines], remaining: got.remaining }),
+      )
+      .catch((error: Error) => setOlderError(error.message))
+      .finally(() => setLoadingOlder(false));
+  };
   const count = team.transcript.length;
   useEffect(() => {
     if (autoScroll) end.current?.scrollIntoView({ block: "end" });
@@ -414,10 +444,16 @@ export function Discussion({
       <div ref={start} />
       {/* Said out loud: a discussion that begins mid-sentence with nothing
           saying so reads as the whole of it. */}
-      {team.transcriptOmitted === 0 ? null : (
-        <div className={styles.hint}>{t("talk.omitted", { n: team.transcriptOmitted })}</div>
+      {stillBefore === 0 ? null : (
+        <div className={styles.hint}>
+          {t("talk.omitted", { n: stillBefore })}{" "}
+          <button type="button" className={styles.quoteButton} disabled={loadingOlder} onClick={showEarlier}>
+            {loadingOlder ? t("talk.earlier.loading") : t("talk.earlier", { n: Math.min(stillBefore, 100) })}
+          </button>
+          {olderError === undefined ? null : <span className={styles.error}> {olderError}</span>}
+        </div>
       )}
-      {team.transcript.map((line) => {
+      {lines.map((line) => {
         const tint = tintOf(team, line.speaker);
         const host = line.speaker === team.hostDisplayName;
         const picked = quoted.includes(line.turnId);
