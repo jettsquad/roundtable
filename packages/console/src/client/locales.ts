@@ -326,7 +326,9 @@ export const zh = {
   // 讨论区
   "talk.empty": "还没有讨论。在下面说一句，团队就开始了。",
   "talk.empty.agenda": "还没有讨论。下面这份议程是建团时一起放好的，确认了它就开始。",
-  "talk.omitted": "前面还有 {n} 条，这里只显示最近的。",
+  "talk.omitted": "前面还有 {n} 条没显示。",
+  "talk.earlier": "再往前看 {n} 条",
+  "talk.earlier.loading": "正在取…",
   "talk.toTop": "回到最上面",
   "talk.toBottom": "到最下面",
   "agent.web.codeBash":
@@ -694,7 +696,9 @@ export const en: Record<SquadKey, string> = {
   "talk.empty": "No discussion yet. Say something below and the team starts.",
   "talk.empty.agenda":
     "No discussion yet. The agenda below was placed here when the team was created; confirming it starts the work.",
-  "talk.omitted": "{n} earlier messages; only the most recent are shown.",
+  "talk.omitted": "{n} earlier messages are not shown.",
+  "talk.earlier": "Show {n} earlier",
+  "talk.earlier.loading": "Loading…",
   "talk.toTop": "Back to top",
   "talk.toBottom": "To the bottom",
   "agent.web.codeBash":

@@ -284,16 +284,9 @@ function buildablePlans(team: {
   return { ok, refused };
 }
 
-/**
- * The tail of the discussion, and how much was left out.
- *
- * The omitted COUNT rides along rather than being silently dropped: a
- * transcript that begins mid-sentence with nothing saying so reads as the
- * whole discussion, and a person then concludes the team never said the
- * thing they are looking for.
- */
-export function transcriptTail(events: readonly { kind: string; text: string; turnId: string; at: number }[]) {
-  const spoken = events
+/** Every line anyone said, in order, with the speaker split from the text. */
+export function spokenLines(events: readonly { kind: string; text: string; turnId: string; at: number }[]) {
+  return events
     .filter((event) => event.kind === "user/message" && event.text !== "")
     .map((event) => {
       // `【甲】说的话` is how the record stores a speaker; split it back apart
@@ -306,10 +299,47 @@ export function transcriptTail(events: readonly { kind: string; text: string; tu
         at: event.at,
       };
     });
+}
+
+/**
+ * The tail of the discussion, and how much was left out.
+ *
+ * The omitted COUNT rides along rather than being silently dropped: a
+ * transcript that begins mid-sentence with nothing saying so reads as the
+ * whole discussion, and a person then concludes the team never said the
+ * thing they are looking for.
+ */
+export function transcriptTail(events: readonly { kind: string; text: string; turnId: string; at: number }[]) {
+  const spoken = spokenLines(events);
   return {
     transcript: spoken.slice(-TRANSCRIPT_TAIL),
     transcriptOmitted: Math.max(0, spoken.length - TRANSCRIPT_TAIL),
   };
+}
+
+/** How many earlier lines one 「看更早的」 click brings back. */
+const EARLIER_PAGE = 100;
+
+/**
+ * The lines that came before `beforeTurnId`, newest of them last.
+ *
+ * The snapshot carries only the newest few so that polling stays cheap, and
+ * the rest used to be reachable nowhere: 「前面还有 51 条」 with no way to
+ * read them is a record you cannot open. Asked for on request instead, by the
+ * turn id of the oldest line already on screen, so a new message arriving in
+ * between moves nothing.
+ */
+export function earlierLines(
+  events: readonly { kind: string; text: string; turnId: string; at: number }[],
+  beforeTurnId: string,
+  limit: number = EARLIER_PAGE,
+) {
+  const spoken = spokenLines(events);
+  const at = spoken.findIndex((line) => line.turnId === beforeTurnId);
+  if (at < 0) return { lines: [], remaining: 0 };
+  const take = Math.min(Math.max(1, Math.floor(limit)), 500);
+  const from = Math.max(0, at - take);
+  return { lines: spoken.slice(from, at), remaining: from };
 }
 
 /**
@@ -1917,6 +1947,15 @@ export function registerSquadApi(ctx: Context): () => void {
           resolveAgenda(ctx, await readJson<AgendaVerdictRequest>(req));
           res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
           res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (suffix === "/transcript/earlier" && req.method === "POST") {
+          // 「前面还有 N 条」 is only honest if they can be read. Asked for by
+          // the turn id of the oldest line on screen.
+          const body = await readJson<{ teamId: string; beforeTurnId: string; limit?: number }>(req);
+          const team = teamOf(ctx, body.teamId);
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify(earlierLines(team.transcript(), body.beforeTurnId, body.limit)));
           return;
         }
         if (suffix === "/sitting" && req.method === "POST") {

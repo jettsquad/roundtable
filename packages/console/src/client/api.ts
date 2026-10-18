@@ -31,6 +31,7 @@ export type { BackendTool, ToolStatus, UpgradeReport };
 export type { AgentCheckReport, AgentTemplate, DirectoryListing, PickerKind, SquadSnapshot };
 export type TeamSummary = SquadSnapshot["teams"][number];
 export type SeatSummary = TeamSummary["seats"][number];
+export type TranscriptLine = TeamSummary["transcript"][number];
 
 const PREFIX = "/api/squad";
 
@@ -169,6 +170,12 @@ export const api = {
   /** Re-express one of the secretary's own replies as a structured agenda. */
   agendaFromReply: (body: { teamId: string; turnId: string }): Promise<unknown> =>
     call("/agenda/from-reply", "POST", body),
+  /** The lines said before one already on screen; the snapshot only carries the newest. */
+  earlierLines: (body: {
+    teamId: string;
+    beforeTurnId: string;
+    limit?: number;
+  }): Promise<{ lines: readonly TranscriptLine[]; remaining: number }> => call("/transcript/earlier", "POST", body),
   /** The record this session should use, created on first sight. */
   sitting: (body: { projectFolder: string; sessionId: string; teamId?: string }): Promise<{ teamId?: string }> =>
     call("/sitting", "POST", body),
