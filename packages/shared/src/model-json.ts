@@ -28,6 +28,55 @@ export function extractJsonObject(text: string, whenMissing: string): unknown {
     const start = trimmed.indexOf("{");
     const end = trimmed.lastIndexOf("}");
     if (start === -1 || end === -1 || end < start) throw new Error(whenMissing);
-    return JSON.parse(trimmed.slice(start, end + 1));
+    const slice = trimmed.slice(start, end + 1);
+    try {
+      return JSON.parse(slice);
+    } catch (error) {
+      // A model writing a regular expression or a path into a JSON string
+      // often leaves the backslash single (`0\.9`), which JSON refuses. The
+      // intent is unambiguous, so read it as a literal backslash rather than
+      // throwing the whole draft away. Only that one fault is repaired.
+      const repaired = escapeStrayBackslashes(slice);
+      if (repaired === slice) throw error;
+      return JSON.parse(repaired);
+    }
   }
+}
+
+/**
+ * Double every backslash inside a JSON string that does not start a valid
+ * escape. Leaves valid escapes (`\n`, `\"`, `\u00e9`) and everything
+ * outside strings alone.
+ */
+export function escapeStrayBackslashes(json: string): string {
+  let out = "";
+  let inString = false;
+  for (let index = 0; index < json.length; index += 1) {
+    const char = json[index] ?? "";
+    if (!inString) {
+      if (char === '"') inString = true;
+      out += char;
+      continue;
+    }
+    if (char === '"') {
+      inString = false;
+      out += char;
+      continue;
+    }
+    if (char !== "\\") {
+      out += char;
+      continue;
+    }
+    const next = json[index + 1] ?? "";
+    const valid =
+      (next !== "" && '"\\/bfnrt'.includes(next)) ||
+      (next === "u" && /^[0-9a-fA-F]{4}$/.test(json.slice(index + 2, index + 6)));
+    if (valid) {
+      out += char + next;
+      index += 1;
+    } else {
+      out += "\\\\";
+    }
+  }
+  return out;
 }

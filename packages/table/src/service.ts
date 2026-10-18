@@ -80,6 +80,13 @@ import {
   initialNodes,
   nodeOf,
   parseSeatReport,
+  withTransientRetry,
+  doneAfterAttempt,
+  seatFailureReason,
+  artifactText,
+  touchedSince,
+  type FileStamp,
+  phaseLedger,
   passedTitles,
   retryFeedback,
   rewindTo,
@@ -2417,8 +2424,14 @@ export class TeamsService extends Service {
     guidance: NodeDetour | undefined,
     replies: SeatReply[],
     artifacts: string[],
+    /** Positions in the run plan that already finished and are not run again. */
+    finished: ReadonlySet<number> = new Set(),
   ): Promise<{
     readonly failed: { readonly seat: string; readonly why: string } | undefined;
+    /** Positions in the run plan that finished in THIS call. */
+    readonly completed: readonly number[];
+    /** Every task of the plan has now finished, here or earlier. */
+    readonly allDone: boolean;
     readonly report: SeatReport | undefined;
     /** What the last seat to speak said — what a decision point is shown. */
     readonly last: { readonly seat: string; readonly text: string } | undefined;
@@ -2427,6 +2440,7 @@ export class TeamsService extends Service {
     let failed = undefined as { readonly seat: string; readonly why: string } | undefined;
     let report = undefined as SeatReport | undefined;
     let last = undefined as { readonly seat: string; readonly text: string } | undefined;
+    const completed: number[] = [];
     // Taken once, before anything in the phase speaks. Every
     // `phase-start` run in this phase is handed this same snapshot, so
     // independence is a fact of what exists rather than a rule someone
@@ -2453,7 +2467,11 @@ export class TeamsService extends Service {
     // seat dropped now reopens on the checkpoint and the tail as they are.
     this.dropStaleSessions(record, host, record.seats);
     const opening = new Map<string, WindowAttempt>();
-    for (const run of runs) {
+    // A detour runs one helper outside the plan, so positions mean nothing there.
+    const resumable = guidance?.seatId === undefined;
+    const skipped = (index: number): boolean => resumable && finished.has(index);
+    for (const [index, run] of runs.entries()) {
+      if (skipped(index)) continue;
       if (run.window === "phase-start" && !opening.has(run.task.seatId)) {
         const seat = record.seats.find((candidate) => candidate.seatId === run.task.seatId);
         opening.set(
@@ -2465,7 +2483,13 @@ export class TeamsService extends Service {
       }
     }
 
-    for (const run of runs) {
+    for (const [index, run] of runs.entries()) {
+      if (skipped(index)) {
+        const name =
+          record.seats.find((candidate) => candidate.seatId === run.task.seatId)?.displayName ?? run.task.seatId;
+        record.log.append("系统", `↷ 「${phase.title}」里 ${name} 的这条任务上一次已经完成，这次不重做。`);
+        continue;
+      }
       // Checked between runs, so a stop lands at a task boundary rather
       // than halfway through one. The seat already running when the host
       // stopped is cancelled through the same signal.
@@ -2494,6 +2518,14 @@ export class TeamsService extends Service {
           ? (opening.get(seat.seatId) ?? { lines: [] })
           : await this.windowForSeat(record, host, seat);
 
+      const path = resolveArtifactPath(
+        run.task.artifactPath === undefined ? undefined : { path: run.task.artifactPath },
+        { seatId: seat.seatId, phaseId: `${phase.title}-${run.round}` },
+        phase.tasks.filter((candidate) => candidate.artifactPath === run.task.artifactPath).length,
+      );
+      // Looked at BEFORE the seat runs, to tell afterwards whether it wrote the file.
+      const stampBefore = path === undefined ? undefined : await this.stampOf(record, path);
+
       const instructionId = newTurnId();
       record.log.append(
         record.input.hostDisplayName,
@@ -2501,13 +2533,20 @@ export class TeamsService extends Service {
         instructionId,
       );
       record.handed.set(seat.seatId, instructionId);
-      const reply = await this.runSeat(
-        record,
-        host,
-        seat,
-        `${run.task.instruction}${added}${footer}`,
-        window,
-        running.abort.signal,
+      // A failure that running the seat again cures (the network, a busy model
+      // service) is cured here, by a fixed rule, before anyone is asked.
+      const reply = await withTransientRetry(
+        () =>
+          this.runSeat(record, host, seat, `${run.task.instruction}${added}${footer}`, window, running.abort.signal),
+        (result) => (result.failed === true ? result.text : undefined),
+        {
+          stopped: () => running.abort.signal.aborted,
+          onRetry: (why, attempt, delayMs) =>
+            record.log.append(
+              "系统",
+              `⟳ ${seat.displayName} 遇到瞬时错误，${Math.round(delayMs / 1000)} 秒后自动重试（第 ${attempt} 次）：${firstLine(why)}`,
+            ),
+        },
       );
       replies.push(reply);
       last = { seat: seat.displayName, text: reply.text };
@@ -2522,17 +2561,20 @@ export class TeamsService extends Service {
       // report that back — which is a round spent learning what was known
       // the moment this one failed.
       if (reply.failed && !running.abort.signal.aborted) {
-        failed = { seat: seat.displayName, why: firstLine(reply.text) };
+        failed = { seat: seat.displayName, why: seatFailureReason(reply.text) };
         break;
       }
 
-      const path = resolveArtifactPath(
-        run.task.artifactPath === undefined ? undefined : { path: run.task.artifactPath },
-        { seatId: seat.seatId, phaseId: `${phase.title}-${run.round}` },
-        phase.tasks.filter((candidate) => candidate.artifactPath === run.task.artifactPath).length,
-      );
       if (path !== undefined && !reply.failed) {
-        await this.writeArtifact(record, path, reply.text);
+        // Not over a file the seat wrote itself. A seat told to save its work
+        // does, with its own tools, and then reports on it; writing that
+        // report over the file puts a 40-line completion note where the
+        // chapter was.
+        if (touchedSince(stampBefore, await this.stampOf(record, path))) {
+          record.log.append("系统", `↷ ${seat.displayName} 这一轮自己写了 ${path}，没有用他的回复覆盖它。`);
+        } else {
+          await this.writeArtifact(record, path, artifactText(reply.text));
+        }
         artifacts.push(path);
         record.artifacts.push(path);
       }
@@ -2541,8 +2583,13 @@ export class TeamsService extends Service {
       // planned on its result. W1 「未完成」 and W2 「被卡住」 used to be
       // followed by W3, W4, W5 and a commit, each built on what was missing.
       if (said !== undefined && said.kind !== "done") break;
+      completed.push(index);
     }
-    return { failed, report, last };
+    const allDone =
+      failed === undefined &&
+      !running.abort.signal.aborted &&
+      runs.every((_, index) => skipped(index) || completed.includes(index));
+    return { failed, completed, allDone, report, last };
   }
 
   /** The name a proxy speaks under in the discussion, so nobody mistakes it for the host. */
@@ -2756,7 +2803,19 @@ export class TeamsService extends Service {
     lines.push(
       `- 议程：${agenda.phases.length} 个阶段，通过 ${counts.passed}，未解决 ${counts.unresolved}，跳过 ${counts.skipped}`,
     );
+    const ledger = phaseLedger(agenda, nodes);
+    const unverified = ledger.filter((entry) => entry.state === "passed" && !entry.verified).length;
+    if (unverified > 0) {
+      lines.push(`- **其中 ${unverified} 个阶段的「通过」没有命令验证过**，见下面「各阶段怎么通过的」`);
+    }
     lines.push(`- 生成时间：${new Date().toISOString()}`, "");
+    lines.push("## 各阶段怎么通过的", "");
+    for (const entry of ledger) {
+      lines.push(
+        `- ${entry.verified ? "✅" : entry.state === "passed" ? "⚠️" : "❌"} **${entry.title}**：${entry.line}`,
+      );
+    }
+    lines.push("");
 
     const dropped = agenda.phases
       .map((phase, index) => ({ phase, node: nodeOf(nodes, nodeIdOf(phase, index)) }))
@@ -3088,23 +3147,39 @@ export class TeamsService extends Service {
         // after a failed attempt, or what was decided at a decision point.
         let guidance = nodeOf(nodes, nodeId).detour;
         while (!running.abort.signal.aborted) {
-          const attempt = await this.runPhaseOnce(record, host, running, phase, guidance, replies, artifacts);
+          // What this node already finished is not run again; a helper sent in
+          // to clear an obstacle runs outside the plan and changes nothing here.
+          const finished = new Set(nodeOf(nodes, nodeId).doneTasks ?? []);
+          const attempt = await this.runPhaseOnce(record, host, running, phase, guidance, replies, artifacts, finished);
           if (running.abort.signal.aborted) break;
+          const helperRun = guidance?.seatId !== undefined;
+          const doneTasks = doneAfterAttempt({
+            before: nodeOf(nodes, nodeId).doneTasks,
+            completed: attempt.completed,
+            allDone: attempt.allDone,
+            helperRun,
+          });
           // A seat sent in to clear an obstacle has not done the phase's own
-          // work. Where a check follows, the check says whether the obstacle
-          // is gone. Where none does, the helper's 「完成」 would otherwise
-          // pass the phase by itself — an acceptance that found a
-          // requirement unmet would be "passed" by whoever patched it. So
-          // the phase's own seats go again, and theirs is the word that counts.
+          // work, and neither has a passing check proved it was done. A
+          // discussion phase whose check was 「the file exists」 passed on the
+          // helper's repair alone: the reviewers were never asked, and the
+          // report said three rounds had been held. So the phase's own seats
+          // go again, from the first task that did not finish (what did finish
+          // is not redone), and only then is the check run.
+          //
+          // The exception is a node whose last run ENDED in a failed check:
+          // every task had finished and the check is what stood in the way,
+          // so the check is what the helper's work is measured by.
           const cleared = attempt.report === undefined || attempt.report.kind === "done";
-          if (guidance?.seatId !== undefined && phase.check === undefined && attempt.failed === undefined && cleared) {
+          const checkWasTheObstacle = phase.check !== undefined && nodeOf(nodes, nodeId).lastCheck !== undefined;
+          if (guidance?.seatId !== undefined && attempt.failed === undefined && cleared && !checkWasTheObstacle) {
             const helper = record.seats.find((seat) => seat.seatId === guidance?.seatId)?.displayName ?? "被点到的席位";
             lastReply = attempt.last ?? lastReply;
             const { detour: _spent, ...kept } = nodeOf(nodes, nodeId);
             nodes = { ...nodes, [nodeId]: kept };
             this.saveNodes(record, agenda, hash, nodes);
             guidance = {
-              instruction: `${helper} 刚按安排处理了挡住这一阶段的问题。请把这一阶段从头重新做一遍，以现在的实际情况为准，不要沿用上一次的结论。`,
+              instruction: `${helper} 刚按安排处理了挡住这一阶段的问题。请接着做这一阶段还没做完的部分，以现在的实际情况为准，不要沿用上一次的结论。`,
             };
             continue;
           }
@@ -3137,6 +3212,7 @@ export class TeamsService extends Service {
               attempts,
               ...(check === undefined ? {} : { lastCheck: check }),
               ...(step.kind === "decide" ? { why: step.why } : {}),
+              ...(step.kind === "pass" || doneTasks === undefined ? {} : { doneTasks }),
               // Carried over: it is what stops a proxy deciding its way round
               // the same node for ever, and an attempt is not a reason to forget it.
               ...(before.decisions === undefined ? {} : { decisions: before.decisions }),
@@ -3335,6 +3411,15 @@ export class TeamsService extends Service {
    * write to is a path it may or may not have written to, and the checkpoint's
    * index would then point at files that sometimes exist.
    */
+  private async stampOf(record: TeamRecord, relative: string): Promise<FileStamp | undefined> {
+    try {
+      const info = await stat(join(record.input.projectFolder, relative));
+      return info.isFile() ? { mtimeMs: info.mtimeMs, size: info.size } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async writeArtifact(record: TeamRecord, relative: string, text: string): Promise<void> {
     const absolute = join(record.input.projectFolder, relative);
     await mkdir(dirname(absolute), { recursive: true });

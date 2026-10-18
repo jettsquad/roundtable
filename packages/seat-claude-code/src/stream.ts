@@ -176,7 +176,16 @@ export function readStream(output: string): StreamOutcome {
   const context = lastContextTokens(events);
   const usage = totals === undefined || context === undefined ? totals : { ...totals, contextTokens: context };
   return {
-    text: streamed !== "" ? streamed : fromEnvelope,
+    // On a failed run the envelope's own `result` is the CLI's account of why
+    // (`API Error: …`), and the assistant text before it is only what the seat
+    // had said by then. Kept alongside, not instead of: dropping it left a
+    // refusal by the service looking like a seat that stopped talking.
+    text:
+      failed && /API Error/i.test(fromEnvelope) && !streamed.includes(fromEnvelope)
+        ? [streamed, fromEnvelope].filter((part) => part !== "").join("\n\n")
+        : streamed !== ""
+          ? streamed
+          : fromEnvelope,
     failed,
     ...(typeof envelope.subtype === "string" ? { subtype: envelope.subtype } : {}),
     // Carried even on a failed run: a turn that burned tokens and then errored
