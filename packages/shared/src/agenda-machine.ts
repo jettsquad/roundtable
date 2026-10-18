@@ -19,6 +19,7 @@
  * running real seats.
  */
 import { needsOf, nodeIdOf, type AgendaPhase, type AgendaSpec } from "./agenda.ts";
+import { isClassifierBlock } from "./seat-failure.ts";
 
 /** Where a node stands, as it is written down. */
 export type NodeState =
@@ -272,7 +273,11 @@ export function afterAttempt(phase: AgendaPhase, attempts: number, outcome: Atte
     return {
       kind: "decide",
       reason: "seat-failed",
-      why: `${outcome.seatFailed.seat} 没有完成：${outcome.seatFailed.why}`,
+      why: `${outcome.seatFailed.seat} 没有完成：${outcome.seatFailed.why}${
+        isClassifierBlock(outcome.seatFailed.why)
+          ? "（模型服务的安全分类器拦下了这个席位的输出，不是网络问题；把同样的任务原样再做一遍多半还会被拦）"
+          : ""
+      }`,
     };
   }
   // What the seat says about its own work is heard BEFORE the check.
@@ -345,6 +350,9 @@ const TRANSIENT_FAILURE =
  * a decision, and in one agenda sent the retry to the wrong seat.
  */
 export function isTransientFailure(text: string): boolean {
+  // A refusal by the service's safety classifier is not a hiccup: the same
+  // job sent again meets the same refusal, so it is never run again here.
+  if (isClassifierBlock(text)) return false;
   return TRANSIENT_FAILURE.test(text);
 }
 

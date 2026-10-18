@@ -82,6 +82,7 @@ import {
   parseSeatReport,
   withTransientRetry,
   doneAfterAttempt,
+  seatFailureReason,
   artifactText,
   touchedSince,
   type FileStamp,
@@ -2560,7 +2561,7 @@ export class TeamsService extends Service {
       // report that back — which is a round spent learning what was known
       // the moment this one failed.
       if (reply.failed && !running.abort.signal.aborted) {
-        failed = { seat: seat.displayName, why: firstLine(reply.text) };
+        failed = { seat: seat.displayName, why: seatFailureReason(reply.text) };
         break;
       }
 

@@ -34,6 +34,21 @@ describe("readStream", () => {
     expect(outcome.subtype).toBe("error_during_execution");
   });
 
+  it("失败时信封里的 API 错误跟在席位旁白后面，不被旁白盖掉", () => {
+    // 文曲星被服务的安全分类器拦下：他先说了一句旁白，真正的原因在信封里。
+    const error = "API Error: Sonnet 5.5's safeguards flagged this message. Details: `[reasoning_extraction]`";
+    const outcome = readStream(
+      assistant("我先读正文和记录文件的当前状态。") +
+        result({ is_error: true, subtype: "error_during_execution", result: error }),
+    );
+    expect(outcome.failed).toBe(true);
+    expect(outcome.text).toBe(`我先读正文和记录文件的当前状态。\n\n${error}`);
+  });
+
+  it("成功时不动信封", () => {
+    expect(readStream(assistant("正文") + result({ result: "API Error: 假的" })).text).toBe("正文");
+  });
+
   it("treats a non-success subtype as failed even without is_error", () => {
     expect(readStream(result({ subtype: "error_max_turns", is_error: false }).valueOf()).failed).toBe(true);
   });
