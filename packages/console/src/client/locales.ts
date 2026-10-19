@@ -341,6 +341,7 @@ export const zh = {
   "agenda.check": "出口检查：",
   "agenda.check.none": "没有出口检查：席位答了、且没说「未完成」就算通过",
   "agenda.raw": "原始 JSON",
+  "talk.picture.missing": "图片没找到：{path}",
   "talk.toTop": "回到最上面",
   "talk.toBottom": "到最下面",
   "agent.web.codeBash":
@@ -723,6 +724,7 @@ export const en: Record<SquadKey, string> = {
   "agenda.check": "Exit check:",
   "agenda.check.none": "No exit check: passes when the seat answers without saying it is unfinished",
   "agenda.raw": "Raw JSON",
+  "talk.picture.missing": "Picture not found: {path}",
   "talk.toTop": "Back to top",
   "talk.toBottom": "To the bottom",
   "agent.web.codeBash":
