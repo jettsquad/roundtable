@@ -281,6 +281,28 @@ function CommandStatus({
   );
 }
 
+/**
+ * A picture a message names, or a line saying it could not be found.
+ *
+ * An image that fails to load used to draw the browser's broken-image icon
+ * and the alt text, which reads as a picture that is still loading or one the
+ * seat drew badly. A path that does not exist is a fact worth stating.
+ */
+function LocalPicture({
+  src,
+  alt,
+  path,
+}: {
+  readonly src: string;
+  readonly alt: string;
+  readonly path: string;
+}): JSX.Element {
+  const t = useT();
+  const [failed, setFailed] = useState(false);
+  if (failed) return <div className={styles.hint}>{t("talk.picture.missing", { path })}</div>;
+  return <img className={styles.attached} src={src} alt={alt} loading="lazy" onError={() => setFailed(true)} />;
+}
+
 function CopyButton({ text }: { readonly text: string }): JSX.Element {
   const t = useT();
   const [state, setState] = useState<"idle" | "done" | "failed">("idle");
@@ -515,12 +537,11 @@ export function Discussion({
                   agent just saved is reported as a path, often inside a code
                   block; the person wants to see the drawing, not the path. */}
               {pictures.map((picture) => (
-                <img
+                <LocalPicture
                   key={picture.path}
-                  className={styles.attached}
                   src={api.fileUrl(team.teamId, picture.path)}
                   alt={picture.alt}
-                  loading="lazy"
+                  path={picture.path}
                 />
               ))}
             </div>

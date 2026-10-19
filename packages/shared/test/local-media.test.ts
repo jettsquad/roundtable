@@ -55,3 +55,37 @@ describe("pasted image in a round's note", () => {
     expect(extractLocalImages(note).images).toEqual([{ alt: "image.png", path }]);
   });
 });
+
+describe("代码里的图片语法是示范，不是图片", () => {
+  const demo = "我会这样写：\n\n```\n![架构草图](/absolute/path/to/arch.png)\n```\n\n你直接看到。";
+
+  it("围栏里的 ![](…) 原样留着，不抽走、不当成图", () => {
+    // 野间解释「怎么给你看图」时举的例子：以前被抽走，围栏里空了一块，
+    // 底下还出现一张加载不出来的破图。
+    const out = extractLocalImages(demo);
+    expect(out.images).toEqual([]);
+    expect(out.text).toContain("![架构草图](/absolute/path/to/arch.png)");
+  });
+
+  it("行内代码里的也一样", () => {
+    const out = extractLocalImages("语法是 `![说明](/a/b.png)`，别当真。");
+    expect(out.images).toEqual([]);
+    expect(out.text).toContain("`![说明](/a/b.png)`");
+  });
+
+  it("代码外面的真图片照旧抽出来", () => {
+    const out = extractLocalImages("看这个：\n\n![图](/Users/x/p/squad-images/a.png)\n\n```\n![例](/x/y.png)\n```");
+    expect(out.images).toEqual([{ alt: "图", path: "/Users/x/p/squad-images/a.png" }]);
+    expect(out.text).toContain("![例](/x/y.png)");
+  });
+
+  it("没写完的围栏，后面都算代码", () => {
+    expect(extractLocalImages("```\n![例](/x/y.png)").images).toEqual([]);
+  });
+
+  it("代码块里报告的项目内图片路径，仍然会被找出来显示", () => {
+    const root = "/Volumes/Jett/p";
+    const text = "画好了：\n\n```\n![图](/Volumes/Jett/p/squad-downloads/a.png)\n```";
+    expect(imagePathsIn(text, root)).toEqual(["/Volumes/Jett/p/squad-downloads/a.png"]);
+  });
+});

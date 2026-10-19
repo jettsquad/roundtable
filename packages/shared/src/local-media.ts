@@ -61,7 +61,7 @@ export function extractLocalImages(text: string): {
   readonly images: readonly { readonly alt: string; readonly path: string }[];
 } {
   const images: { alt: string; path: string }[] = [];
-  const rest = text.replace(MARKDOWN_IMAGE, (_all, alt: string, path: string) => {
+  const rest = replaceOutsideCode(text, MARKDOWN_IMAGE, (_all, alt: string, path: string) => {
     images.push({ alt, path: safeDecode(path) });
     return "";
   });
@@ -73,6 +73,28 @@ export function extractLocalImages(text: string): {
       .trimEnd(),
     images,
   };
+}
+
+/** A fenced block or an inline code span: text shown as written, not interpreted. */
+const CODE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
+
+/**
+ * Apply a replacement to the parts of a message that are not code.
+ *
+ * `![架构草图](/absolute/path/to/arch.png)` inside a code block is a
+ * demonstration of the syntax, not a picture. Treated as one it was pulled out
+ * of the block — leaving the block empty — and drawn as a broken image for a
+ * file that never existed.
+ */
+function replaceOutsideCode(text: string, pattern: RegExp, replacement: (...groups: string[]) => string): string {
+  let out = "";
+  let from = 0;
+  for (const code of text.matchAll(CODE)) {
+    const at = code.index ?? 0;
+    out += text.slice(from, at).replace(pattern, replacement as never) + code[0];
+    from = at + code[0].length;
+  }
+  return out + text.slice(from).replace(pattern, replacement as never);
 }
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -91,7 +113,7 @@ const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/
 export function imagePathsIn(text: string, projectFolder: string): readonly string[] {
   const root = projectFolder.replace(/\/+$/, "");
   if (root === "") return [];
-  const bare = text.replace(MARKDOWN_IMAGE, " ");
+  const bare = replaceOutsideCode(text, MARKDOWN_IMAGE, () => " ");
   const found = new RegExp(`${escapeRegExp(root)}\\/[^\\s\`"'()<>\\]|]*?\\.${EXT}(?![\\w/.-])`, "gi");
   return [...new Set(bare.match(found) ?? [])];
 }
