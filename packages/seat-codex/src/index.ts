@@ -176,9 +176,11 @@ export class SquadSeatCodex extends Service {
           who: name,
           request,
           command: "codex",
+          promptViaStdin: true,
           tracker: codexTracker,
           argv: ({ prompt, cwd }) =>
             buildCodexArgv({
+              promptViaStdin: true,
               prompt,
               cwd,
               // Same as the Claude backend, and worth less here: a fresh codex

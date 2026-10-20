@@ -202,7 +202,9 @@ export class SquadSeatDsh extends Service {
           who: name,
           request,
           command: config.command ?? DEFAULTS.command,
-          argv: ({ prompt }) => buildDshArgv({ prompt, profile: config.profile ?? DEFAULTS.profile, patchPath }),
+          promptViaStdin: true,
+          argv: ({ prompt }) =>
+            buildDshArgv({ prompt, promptViaStdin: true, profile: config.profile ?? DEFAULTS.profile, patchPath }),
           env,
           // Removed after the run either way. A patch left behind describes
           // where a seat sent its traffic, in a world-readable temp dir.

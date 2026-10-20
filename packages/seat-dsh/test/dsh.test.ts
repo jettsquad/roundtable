@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { buildDshArgv } from "../src/argv.ts";
 import { readDshOutput } from "../src/stream.ts";
 
+it("omits positional task so headless reads stdin", () => {
+  expect(buildDshArgv({ prompt: "long task".repeat(20000), promptViaStdin: true, profile: "headless" })).toEqual([
+    "--profile",
+    "headless",
+  ]);
+});
+
 describe("buildDshArgv", () => {
   it("profile + 一个参数的提示词", () => {
     // `dsh --profile headless` 会把多个词用空格连起来，拆开传就会把

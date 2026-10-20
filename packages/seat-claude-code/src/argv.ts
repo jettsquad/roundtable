@@ -34,6 +34,7 @@ export interface ToolFence {
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
 
 export interface ArgvInput {
+  readonly promptViaStdin?: boolean;
   readonly prompt: string;
   readonly toolFilter?: ToolFence | undefined;
   /** Appended to the CLI's own system prompt, not replacing it. */
@@ -132,7 +133,6 @@ export function seatDenials(alwaysDeny: readonly string[], subagents: boolean): 
 export function buildArgv(input: ArgvInput): readonly string[] {
   const argv = [
     "-p",
-    input.prompt,
     "--output-format",
     "stream-json",
     "--verbose",
@@ -141,6 +141,7 @@ export function buildArgv(input: ArgvInput): readonly string[] {
     // an idle clock kills a seat that is working.
     "--include-partial-messages",
   ];
+  if (input.promptViaStdin !== true) argv.splice(1, 0, input.prompt);
 
   // Unless the seat asked for the host's configuration, everything the CLI
   // would have loaded on its own is turned off here. Auth, model selection,

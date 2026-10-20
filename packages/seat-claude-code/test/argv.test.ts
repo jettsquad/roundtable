@@ -6,6 +6,14 @@
 import { describe, expect, it } from "vitest";
 import { DELEGATION_TOOLS, buildArgv, seatDenials } from "../src/argv.ts";
 
+it("keeps long prompts out of the command line when stdin is selected", () => {
+  const prompt = "长上下文\n".repeat(20000);
+  const argv = buildArgv({ prompt, promptViaStdin: true });
+  expect(argv).toContain("-p");
+  expect(argv).not.toContain(prompt);
+  expect(argv.join(" ").length).toBeLessThan(2000);
+});
+
 const flagValues = (argv: readonly string[], flag: string): string[] => {
   const at = argv.indexOf(flag);
   if (at < 0) return [];

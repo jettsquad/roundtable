@@ -32,6 +32,7 @@ export function isCodexMode(mode: PermissionMode | string | undefined): mode is 
 }
 
 export interface CodexArgvInput {
+  readonly promptViaStdin?: boolean;
   readonly prompt: string;
   /** The team's project folder. Codex is told explicitly, not just via cwd. */
   readonly cwd: string;
@@ -186,6 +187,6 @@ export function buildCodexArgv(input: CodexArgvInput): readonly string[] {
   // The prompt goes LAST and is one argument. It is user text with newlines
   // and quotes in it; anything that assembled it into a shell string would be
   // a command-injection hole with the team's own discussion as the payload.
-  argv.push(input.prompt);
+  argv.push(input.promptViaStdin === true ? "-" : input.prompt);
   return argv;
 }

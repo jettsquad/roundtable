@@ -223,9 +223,11 @@ export class FencedClaudeCodeSeats extends Service {
           who: name,
           request,
           command: "claude",
+          promptViaStdin: true,
           tracker: claudeTracker,
           argv: ({ prompt, cwd }) =>
             buildArgv({
+              promptViaStdin: true,
               prompt,
               // Mounted only for a seat the table pre-approved the tool for:
               // the allow list is the one signal that says web access is on.

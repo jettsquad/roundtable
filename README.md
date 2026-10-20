@@ -73,6 +73,8 @@ Agent 测试同时检查独立 HEAD 请求与席位真实调用；真实调用�
 
 议程出口检查在 Windows 使用 PowerShell，在 macOS/Linux 使用 `/bin/sh`。PowerShell 检查必须用条件失败或异常表达断言；单独 `Test-Path` 只输出布尔值，不能充当退出码检查。
 
+Claude Code、Codex 和 DSH 席位通过标准输入传递完整提示词，避免长讨论触发操作系统命令行长度限制。
+
 ```sh
 npm install          # 会自动 link-dsh：把本仓库链到本机 dsh 的同一份框架
 npm run install-profile

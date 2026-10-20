@@ -3,6 +3,20 @@ import { buildCodexArgv, isCodexMode } from "../src/argv.ts";
 
 const base = { prompt: "做点事", cwd: "/p" };
 
+it("reads long prompts from stdin for fresh and resumed runs", () => {
+  const prompt = "长上下文\n".repeat(20000);
+  for (const resumeSessionId of [undefined, "thread-id"]) {
+    const argv = buildCodexArgv({
+      ...base,
+      prompt,
+      promptViaStdin: true,
+      ...(resumeSessionId ? { resumeSessionId } : {}),
+    });
+    expect(argv.at(-1)).toBe("-");
+    expect(argv).not.toContain(prompt);
+  }
+});
+
 describe("buildCodexArgv", () => {
   it("headless 入口 + 目录 + JSONL", () => {
     const argv = buildCodexArgv(base);

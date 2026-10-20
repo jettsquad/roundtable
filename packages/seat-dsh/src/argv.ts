@@ -15,6 +15,7 @@
  */
 
 export interface DshArgvInput {
+  readonly promptViaStdin?: boolean;
   readonly prompt: string;
   /** The dsh profile to boot. `headless` is the one that answers and exits. */
   readonly profile: string;
@@ -35,6 +36,6 @@ export function buildDshArgv(input: DshArgvInput): readonly string[] {
   // the fence, the round's instruction) is load-bearing.
   const argv = ["--profile", input.profile];
   if (input.patchPath !== undefined && input.patchPath !== "") argv.push("--patch", input.patchPath);
-  argv.push(input.prompt);
+  if (input.promptViaStdin !== true) argv.push(input.prompt);
   return argv;
 }

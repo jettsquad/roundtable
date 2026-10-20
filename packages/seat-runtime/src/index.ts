@@ -116,6 +116,8 @@ export interface SeatRunSpec {
   readonly request: SubagentStartRequest;
   /** The command to find on PATH. */
   readonly command: string;
+  /** Send the full prompt through stdin instead of the OS command line. */
+  readonly promptViaStdin?: boolean;
   /** Built from the prompt and the seat's configuration. */
   readonly argv: (input: { readonly prompt: string; readonly cwd: string }) => readonly string[];
   /** Environment contributed on top of the host's, resolved per start. */
@@ -244,7 +246,7 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
     // after it exits, and an unbounded buffer would let a chatty run take the
     // host down with it. Overflow keeps the TAIL, which is where the answer is.
     stdio: {
-      stdin: "ignore",
+      stdin: spec.promptViaStdin === true ? { data: prompt } : "ignore",
       stdout: { maxBytes: 8 * 1024 * 1024 },
       stderr: { maxBytes: 256 * 1024 },
     },
