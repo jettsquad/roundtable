@@ -20,6 +20,7 @@
  */
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import { runSeat } from "@squad/seat-runtime";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { SEAT_PROVIDER, providerForSeat, stripReasoning, type AgendaSpec } from "@squad/shared";
@@ -548,8 +549,7 @@ export class ReasoningService extends Service {
       parent,
       signal: signal ?? new AbortController().signal,
     };
-    const started = await this.ctx.subagents.start(this.distilProvider(), request);
-    const result = await started.result;
+    const result = await runSeat(this.ctx, this.distilProvider(), request);
     if (result.stopReason !== "completed") {
       throw new Error(`提炼任务未完成（${result.stopReason}），不采用。`);
     }

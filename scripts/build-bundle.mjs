@@ -19,7 +19,7 @@ import { build } from "esbuild";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildClient } from "./build-client.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -156,7 +156,7 @@ export async function buildBundle() {
   return { entries: Object.keys(ENTRIES).length, rows };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { entries, rows } = await buildBundle();
   console.log(`✅ ${PACKAGE} → bundle/lib（${entries} 个入口，patch ${rows} 行，全部对得上）`);
 }

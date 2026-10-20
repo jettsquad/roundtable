@@ -54,6 +54,8 @@ import type {
   AgendaNodeView,
 } from "./wire.ts";
 import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
+import { runSeat } from "@squad/seat-runtime";
+import type { Agent } from "@deepseek-ai/dsh-agent";
 import { agendaEditIsLegal } from "./agenda-verdict.ts";
 import { driftBetween } from "./roster-drift.ts";
 import { parseMentions } from "./mention.ts";
@@ -61,7 +63,7 @@ import { extractDocument, MAX_FILE_BYTES } from "./extract.ts";
 import { presence } from "./notify.ts";
 import { imagePointer, looksLikeImage, readMedia, saveImage } from "./image.ts";
 import { planSeatSync, syncSeat, type TemplateFacts } from "./seat-sync.ts";
-import { parseNewTeam } from "./parse.ts";
+import { isAbsoluteProjectFolder, parseNewTeam } from "./parse.ts";
 // Cyclic with `team-designer.ts`, which imports two helpers from here. Safe
 // and deliberate: everything crossing the cycle is a hoisted function
 // declaration used at call time, and both files are halves of one package —
@@ -102,6 +104,7 @@ import {
   shortHash,
   connectionMismatch,
   providerForSeat,
+  reconcileReachability,
   type AgentCheckReport,
   type AgentTemplate,
   type CheckResult,
@@ -889,7 +892,7 @@ export async function createTeamWithMembers(
   input: { readonly displayName: string; readonly projectFolder: string; readonly members: readonly TeamMember[] },
 ): Promise<string> {
   if (input.displayName.trim() === "") throw new Error("给团队起个名字。");
-  if (!input.projectFolder.trim().startsWith("/")) {
+  if (!isAbsoluteProjectFolder(input.projectFolder.trim())) {
     throw new Error(`项目文件夹要写绝对路径：「${input.projectFolder}」不是。`);
   }
   if (input.members.length === 0) throw new Error("至少要选一个 Agent。");
@@ -1157,10 +1160,10 @@ function syncTeamsWithTemplate(ctx: Context, template: TemplateFacts): void {
 async function probeSeat(ctx: Context, template: AgentTemplate): Promise<CheckResult> {
   const probeId = `squad-probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const deadline = AbortSignal.timeout(PROBE_TIMEOUT_MS);
-  let handle: { agent: Parameters<typeof ctx.subagents.start>[1]["parent"]; dispose(): Promise<void> } | undefined;
+  let handle: { agent: Agent; dispose(): Promise<void> } | undefined;
   try {
     handle = await ctx.agents.create({ sessionId: probeId as never, meta: { cwd: tmpdir() } });
-    const run = await ctx.subagents.start(providerForSeat(template), {
+    const result = await runSeat(ctx, providerForSeat(template), {
       label: `${template.displayName}（测试）`,
       prompt: [{ type: "text", text: "回答两个字：收到。不要做别的事，不要读写任何文件。" }],
       parent: handle.agent,
@@ -1171,7 +1174,6 @@ async function probeSeat(ctx: Context, template: AgentTemplate): Promise<CheckRe
         ? {}
         : { agentOptions: { reasoningEffort: template.reasoningEffort as never } }),
     });
-    const result = await run.result;
     const text = textOfBlocks(result.output).trim();
     if (result.stopReason !== "completed") {
       // Our own deadline is named, because 「停在 aborted」 says nothing: it
@@ -1316,6 +1318,7 @@ export async function checkAgent(ctx: Context, templateId: string): Promise<Agen
   // claude-code seat, which answers HTTP happily and does not speak the
   // Anthropic API at all.
   const endpoint = (connection?.endpoint ?? "").trim();
+  const reachabilityIndex = checks.length;
   if (endpoint === "") {
     checks.push({ name: "地址可达", outcome: "skipped", detail: "用后端默认地址。" });
   } else {
@@ -1351,7 +1354,10 @@ export async function checkAgent(ctx: Context, templateId: string): Promise<Agen
     // did not run. `unknown` keeps the report from reading as a pass.
     checks.push({ name: "真的问一句", outcome: "unknown", detail: "席位后端没就绪，问不出去——先解决上面那条。" });
   } else {
-    checks.push(await probeSeat(ctx, template));
+    const probe = await probeSeat(ctx, template);
+    const reachability = checks[reachabilityIndex];
+    if (reachability !== undefined) checks[reachabilityIndex] = reconcileReachability(reachability, probe);
+    checks.push(probe);
   }
 
   return { templateId, displayName: template.displayName, checks };

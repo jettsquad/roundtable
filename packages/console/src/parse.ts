@@ -13,6 +13,11 @@
  * mis-parses produces a team with the wrong seats and says nothing.
  */
 
+/** Recognize POSIX roots, Windows drive roots, and UNC shares in browser and host validation. */
+export function isAbsoluteProjectFolder(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || /^\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(path);
+}
+
 export interface SeatDraft {
   readonly seatId: string;
   readonly displayName: string;
@@ -44,7 +49,7 @@ export function parseNewTeam(raw: string): NewTeamInput {
   if (parts.length < 3 || displayName === "" || projectFolder === "" || roster === "") {
     throw new Error("用法：/squad-new 团队名 | 项目文件夹 | 甲*=角色, 乙=角色（* 标记秘书）");
   }
-  if (!projectFolder.startsWith("/")) {
+  if (!isAbsoluteProjectFolder(projectFolder)) {
     // Relative paths would resolve against whatever the harness's cwd happens
     // to be, which is not where the person thinks they are.
     throw new Error(`项目文件夹要写绝对路径：「${projectFolder}」不是。`);
@@ -151,7 +156,7 @@ export function checkTeamFields(input: {
     problems.push({ field: "displayName", detail: "名字里不能有「|」。" });
   }
   if (projectFolder === "") problems.push({ field: "projectFolder", detail: "选一个项目文件夹。" });
-  else if (!projectFolder.startsWith("/")) {
+  else if (!isAbsoluteProjectFolder(projectFolder)) {
     problems.push({ field: "projectFolder", detail: `要绝对路径：「${projectFolder}」不是。` });
   }
   if (roster === "") problems.push({ field: "roster", detail: "至少要有一个席位。" });
@@ -192,7 +197,7 @@ export function checkTeamDraft(input: {
 
   if (displayName === "") problems.push({ field: "displayName", detail: "给团队起个名字。" });
   if (projectFolder === "") problems.push({ field: "projectFolder", detail: "选一个项目文件夹。" });
-  else if (!projectFolder.startsWith("/")) {
+  else if (!isAbsoluteProjectFolder(projectFolder)) {
     problems.push({ field: "projectFolder", detail: `要绝对路径：「${projectFolder}」不是。` });
   }
   if (members.length === 0) problems.push({ field: "members", detail: "至少选一个 Agent。" });

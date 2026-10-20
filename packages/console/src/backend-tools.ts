@@ -193,10 +193,14 @@ function run(command: string, args: readonly string[], timeoutMs: number): Promi
 
 /** Find an executable on PATH, the way a shell would. */
 function onPath(command: string): string | undefined {
+  const extensions =
+    process.platform === "win32" ? ["", ...(process.env["PATHEXT"] ?? ".COM;.EXE;.BAT;.CMD").split(";")] : [""];
   for (const dir of (process.env["PATH"] ?? "").split(delimiter)) {
     if (dir === "") continue;
-    const candidate = join(dir, command);
-    if (existsSync(candidate)) return candidate;
+    for (const extension of extensions) {
+      const candidate = join(dir, `${command}${extension}`);
+      if (existsSync(candidate)) return candidate;
+    }
   }
   return undefined;
 }

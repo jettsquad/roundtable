@@ -39,6 +39,16 @@ export interface AgentCheckReport {
   readonly checks: readonly CheckResult[];
 }
 
+/** A successful seat request verifies reachability even when the separate HEAD probe failed. */
+export function reconcileReachability(reachability: CheckResult, probe: CheckResult): CheckResult {
+  if (reachability.outcome !== "fail" || probe.outcome !== "ok") return reachability;
+  return {
+    ...reachability,
+    outcome: "ok",
+    detail: `席位真实调用已成功，后端连接可用。独立 HEAD 探测未完成：${reachability.detail}`,
+  };
+}
+
 /**
  * The overall reading of a report.
  *

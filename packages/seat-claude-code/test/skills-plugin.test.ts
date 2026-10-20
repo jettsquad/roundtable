@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SKILLS_PLUGIN_NAME, ensureSkillsPlugin, sharedSkillsDir } from "../src/skills-plugin.ts";
 
@@ -15,9 +15,9 @@ afterEach(async () => {
 describe("sharedSkillsDir", () => {
   it("和 dsh 读同一个地方：DSH_AGENTS_HOME 优先，否则 ~/.agents", () => {
     // 两边不一致的话，同一张桌子上 dsh 席位和 Claude 席位看到的 skill 不一样。
-    expect(sharedSkillsDir({ DSH_AGENTS_HOME: "/custom/agents" })).toBe("/custom/agents/skills");
-    expect(sharedSkillsDir({ DSH_AGENTS_HOME: "  " })).toMatch(/\/\.agents\/skills$/);
-    expect(sharedSkillsDir({})).toMatch(/\/\.agents\/skills$/);
+    expect(sharedSkillsDir({ DSH_AGENTS_HOME: "/custom/agents" })).toBe(resolve("/custom/agents/skills"));
+    expect(sharedSkillsDir({ DSH_AGENTS_HOME: "  " })).toBe(join(homedir(), ".agents", "skills"));
+    expect(sharedSkillsDir({})).toBe(join(homedir(), ".agents", "skills"));
   });
 });
 
@@ -55,7 +55,7 @@ describe("ensureSkillsPlugin", () => {
     await mkdir(before, { recursive: true });
     await mkdir(after, { recursive: true });
     await mkdir(join(root, "plugin"), { recursive: true });
-    await symlink(before, join(root, "plugin", "skills"), "dir");
+    await symlink(before, join(root, "plugin", "skills"), process.platform === "win32" ? "junction" : "dir");
     await ensureSkillsPlugin(join(root, "plugin"), after);
     expect(await readlink(join(root, "plugin", "skills"))).toBe(after);
   });

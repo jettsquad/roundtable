@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { overallOf, type AgentCheckReport, type CheckResult } from "../src/index.ts";
+import { overallOf, reconcileReachability, type AgentCheckReport, type CheckResult } from "../src/index.ts";
 
 const report = (...checks: CheckResult[]): AgentCheckReport => ({
   templateId: "a",
@@ -7,6 +7,29 @@ const report = (...checks: CheckResult[]): AgentCheckReport => ({
   checks,
 });
 const check = (outcome: CheckResult["outcome"]): CheckResult => ({ name: "n", outcome, detail: "d" });
+
+describe("reachability evidence", () => {
+  it("uses a successful real request when HEAD timed out, retaining the diagnostic", () => {
+    const head = { name: "地址可达", outcome: "fail" as const, detail: "HEAD timeout" };
+    const result = reconcileReachability(head, check("ok"));
+    expect(result.outcome).toBe("ok");
+    expect(result.detail).toContain("HEAD timeout");
+    expect(overallOf(report(result, check("ok")))).toBe("ok");
+  });
+
+  it("keeps reachability failures when the real request failed or did not run", () => {
+    const head = check("fail");
+    for (const outcome of ["fail", "unknown", "skipped"] as const) {
+      expect(reconcileReachability(head, check(outcome))).toBe(head);
+    }
+  });
+
+  it("does not turn other configuration failures into success", () => {
+    const result = reconcileReachability(check("fail"), check("ok"));
+    expect(overallOf(report(result, check("fail")))).toBe("fail");
+    expect(reconcileReachability(check("skipped"), check("ok")).outcome).toBe("skipped");
+  });
+});
 
 describe("overallOf", () => {
   it("全过才是过", () => {

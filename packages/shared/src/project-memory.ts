@@ -50,6 +50,7 @@ export const PROJECT_MEMORY_MAX_CHARS = 15_000;
  * guaranteed to read is the file.
  */
 export const PROJECT_MEMORY_RULES: readonly string[] = [
+  "项目边界是当前团队的项目目录。自动建档不得读取父目录、同级项目或目录外的记忆来推断项目背景；目录为空或事实不足时明确写尚未确定，等待主持人说明。",
   "只写「不读就会做错」的项目事实：项目是干什么的、各目录负责什么、架构和约定、硬性禁令、踩过的坑和结论。",
   "不写：变更历史和「某日更新了什么」（git log 里有）；已作废的设计（直接删掉，不要标「已停用」留着）；" +
     "致谢、免责声明、许可证；一次性的安装或初始化教程；完整文件树、大段命令清单、从代码里就能直接读到的东西；" +
@@ -92,6 +93,19 @@ export function stripProjectMemoryRules(text: string): string {
  */
 export function withProjectMemoryRules(body: string): string {
   return `${projectMemoryRulesBlock()}\n\n${stripProjectMemoryRules(body).trim()}\n`;
+}
+
+/** Initial notes contain only the declared project root, never inferred project facts. */
+export function initialProjectMemory(projectFolder: string): string {
+  return withProjectMemoryRules(
+    [
+      "# 项目说明",
+      `本团队的项目目录：${projectFolder}`,
+      "项目目标、技术栈、目录职责和约定尚未由主持人确认。",
+      "空目录是独立的新项目，不代表代码位于父目录或同级目录。不得将其他项目的事实写入本文件。",
+      "只根据主持人明确提供的信息与本项目目录内已确认的文件补充事实；没有事实时先询问，不要猜测。",
+    ].join("\n\n"),
+  );
 }
 
 /**

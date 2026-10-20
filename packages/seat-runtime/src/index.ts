@@ -14,7 +14,7 @@
  * one nobody was looking at.
  */
 import {
-  resolveChildCwd,
+  assertUsableCwd,
   settleRunResult,
   subprocessRunHandle,
   type SubagentResult,
@@ -76,6 +76,7 @@ export { COMMAND_SHOWN_CHARS, jsonLineFeeder, shownCommand } from "./tracker.ts"
 export { dshHome, seatStateDir } from "./home.ts";
 export { requestedEffort } from "./effort.ts";
 export { downloadMcpConfig } from "./download-tool.ts";
+export { runSeat } from "./subagent.ts";
 
 /**
  * Follows a seat's output as it arrives and says what is still open.
@@ -221,7 +222,7 @@ export function failureText(input: {
  */
 export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
   const { ctx, request, limits } = spec;
-  const cwd = resolveChildCwd(spec.who, undefined, request.parent.session.header.cwd);
+  const cwd = assertUsableCwd(spec.who, "child cwd", request.cwd ?? "");
   const executable = await ctx.subprocess.resolveExecutable(spec.command, spec.env, request.signal);
 
   const prompt = promptOf(request);

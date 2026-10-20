@@ -281,7 +281,7 @@ for (const { name, source, link } of targets) {
   // Resolve through the farm's own symlink so both paths share one realpath.
   const target = lstatSync(source).isSymbolicLink() ? readlinkSync(source) : source;
   if (existsSync(link) || lstatSync(link, { throwIfNoEntry: false })) rmSync(link, { recursive: true, force: true });
-  symlinkSync(target, link, "dir");
+  symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
   console.log(`✓ ${name} → ${target}`);
   linked += 1;
 }

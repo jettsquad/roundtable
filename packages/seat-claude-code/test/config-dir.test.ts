@@ -8,6 +8,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { claudeConfigDirFor } from "../src/config-dir.ts";
+import { resolve } from "node:path";
 
 const home = process.env["DSH_HOME"];
 afterEach(() => {
@@ -33,7 +34,7 @@ describe("claudeConfigDirFor", () => {
   it("跟着 DSH_HOME 走，不写进真正的家目录", () => {
     process.env["DSH_HOME"] = "/tmp/squad-home-test";
     expect(claudeConfigDirFor({ authMode: "api-key", connectionId: "conn-a" })).toBe(
-      "/tmp/squad-home-test/squad-seat-state/claude-config/conn-a",
+      resolve("/tmp/squad-home-test/squad-seat-state/claude-config/conn-a"),
     );
   });
 

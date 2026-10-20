@@ -67,7 +67,7 @@ export async function ensureSkillsPlugin(
       // Whatever is there is not the link we want: an old link to a folder
       // that moved, or something left by hand.
       if (existing !== undefined) await rm(link, { recursive: true, force: true });
-      await symlink(skillsDir, link, "dir");
+      await symlink(skillsDir, link, process.platform === "win32" ? "junction" : "dir");
     }
     return pluginDir;
   } catch {

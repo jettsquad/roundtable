@@ -4,7 +4,27 @@
  * nothing either way.
  */
 import { describe, expect, it } from "vitest";
-import { checkTeamDraft, checkTeamFields, parseNewTeam, parseSay } from "../src/parse.ts";
+import { checkTeamDraft, checkTeamFields, isAbsoluteProjectFolder, parseNewTeam, parseSay } from "../src/parse.ts";
+
+describe("project paths across platforms", () => {
+  it.each(["J:\\project\\ShadowofCloud", "C:/My Project", "\\\\server\\share\\project", "/home/project"])(
+    "accepts %s in commands and both team forms",
+    (projectFolder) => {
+      expect(isAbsoluteProjectFolder(projectFolder)).toBe(true);
+      expect(parseNewTeam(`team | ${projectFolder} | Joker*`).projectFolder).toBe(projectFolder);
+      expect(checkTeamFields({ displayName: "team", projectFolder, roster: "Joker*" })).toEqual([]);
+      expect(
+        checkTeamDraft({ displayName: "team", projectFolder, members: [{ templateId: "a", isSecretary: true }] }),
+      ).toEqual([]);
+    },
+  );
+  it.each(["project", "J:project", "\\project", "\\\\server", "https://example.com/project"])(
+    "rejects incomplete or relative path %s",
+    (path) => {
+      expect(isAbsoluteProjectFolder(path)).toBe(false);
+    },
+  );
+});
 
 describe("parseNewTeam", () => {
   it("reads a name, a folder and a roster", () => {

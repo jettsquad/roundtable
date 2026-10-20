@@ -25,7 +25,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -234,7 +234,7 @@ export function clientPackages() {
   return ["console"].filter((pkg) => existsSync(join(root, "packages", pkg, "src/client/index.tsx")));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const watch = process.argv.includes("--watch");
   const dev = watch || process.argv.includes("--dev");
   // Check against the harness we are actually LINKED to, not whichever one

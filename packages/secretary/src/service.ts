@@ -18,6 +18,7 @@
  */
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
+import { runSeat } from "@squad/seat-runtime";
 import type { SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm/types";
 import { providerForSeat, SEAT_PROVIDER, stripReasoning, type ReasoningEffort } from "@squad/shared";
@@ -187,8 +188,7 @@ export class SecretaryService extends Service {
           ? {}
           : { agentOptions: { reasoningEffort: run.secretary.reasoningEffort as never } }),
       };
-      const started = await this.ctx.subagents.start(provider, request);
-      const result = await started.result;
+      const result = await runSeat(this.ctx, provider, request);
       return { text: stripReasoning(textOf(result.output)), stopReason: result.stopReason };
     };
   }

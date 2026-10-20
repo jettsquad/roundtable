@@ -73,6 +73,10 @@ export const TIMELINE_IGNORED_KINDS: ReadonlySet<string> = new Set([
   // dsh 0.2: compaction moving an image out of context. Bookkeeping, like the
   // `compaction/*` rows above.
   "image/offload",
+  // Runtime job lifecycle and directory state are bookkeeping, not speech.
+  "job/registered",
+  "job/settled",
+  "working-directory/change",
   "llm/retry",
   "llm/retry-started",
   // Which model was picked, and the policy a subagent inherits. Both are

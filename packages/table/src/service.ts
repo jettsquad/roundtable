@@ -19,8 +19,9 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type { Agent, AgentHandle } from "@deepseek-ai/dsh-agent";
+import { runSeat } from "@squad/seat-runtime";
 import type { SubagentResult, SubagentStartRequest } from "@deepseek-ai/dsh-subagent";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Domain } from "@deepseek-ai/dsh-storage-domain";
 import { SQUAD_TABLE_DOMAIN, type TeamPersisted } from "./domain.ts";
@@ -54,7 +55,6 @@ import {
   blocksForSeat,
   PROJECT_MEMORY_MAX_CHARS,
   projectMemoryFile,
-  projectMemoryNote,
   withProjectMemoryRules,
   type TeamPrompts,
 } from "@squad/shared";
@@ -71,6 +71,7 @@ import {
   type SeatActivity,
 } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase, type PlannedRun } from "./agenda.ts";
+import { ensureProjectMemoryFile } from "./project-memory.ts";
 import {
   REPORT_FOOTER,
   REPORT_FOOTER_UNCHECKED,
@@ -3561,26 +3562,15 @@ export class TeamsService extends Service {
   private async projectMemoryFor(
     record: TeamRecord,
     seat: SeatSpec,
-  ): Promise<
-    | { readonly kind: "missing"; readonly forSeat: string; readonly notice: string }
-    | { readonly kind: "present"; readonly file: string; readonly text: string }
-    | undefined
-  > {
+  ): Promise<{ readonly kind: "present"; readonly file: string; readonly text: string } | undefined> {
     const file = projectMemoryFile(seat.backend);
     const folder = record.input.projectFolder;
     if (file === undefined || folder === undefined || folder.trim() === "") return undefined;
     const path = join(folder, file);
     try {
-      await stat(path);
-    } catch {
-      return {
-        kind: "missing",
-        forSeat: projectMemoryNote(file).join("\n"),
-        notice: `${seat.displayName} 发现这个项目还没有 ${file}，这一轮会先把它建起来。之后要改，请你自己改。`,
-      };
-    }
-    try {
-      const text = await readFile(path, "utf8");
+      const { text, created } = await ensureProjectMemoryFile(folder, file);
+      if (created)
+        record.log.append("系统", `已建立本项目的 ${file} 最小模板；项目背景等待主持人确认，不自动搜索目录外的信息。`);
       if (text.trim() === "") return undefined;
       return { kind: "present", file, text: await this.compacted(record, path, file, text) };
     } catch {
@@ -3674,9 +3664,6 @@ export class TeamsService extends Service {
       // it did. Said ONCE — the check is re-run every turn, but the file
       // exists after the first one, so the notice cannot repeat.
       const memory = await this.projectMemoryFor(record, seat);
-      if (memory?.kind === "missing") {
-        record.log.append("系统", memory.notice);
-      }
       // Sent only when this seat is opening a FRESH conversation. A resumed
       // one is still carrying the copy it was handed, and re-sending it would
       // pay for the project's notes again every single turn — which is the
@@ -3687,7 +3674,7 @@ export class TeamsService extends Service {
       const compose = (context: readonly string[]): string =>
         composeSeatPrompt({
           seat,
-          instruction: memory?.kind === "missing" ? `${memory.forSeat}\n\n${instruction}` : instruction,
+          instruction,
           context,
           ...(projectMemory === undefined
             ? {}
@@ -3730,8 +3717,7 @@ export class TeamsService extends Service {
         signal: signal ?? new AbortController().signal,
       });
       const runOnce = async (prompt: string): Promise<SubagentResult> => {
-        const run = await this.ctx.subagents.start(provider, requestFor(prompt));
-        return run.result;
+        return runSeat(this.ctx, provider, requestFor(prompt));
       };
       // Read BEFORE the turn: the provider resolves the same id when it builds
       // its command line, and if the CLI rejects it this is what says which id

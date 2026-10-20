@@ -90,9 +90,11 @@ export class SquadSeatCodex extends Service {
     // The host's own `codex login`, nothing injected — once closed, once open,
     // because the web axis has to exist for connectionless seats too.
     // Crossed with delegation, which is argv too.
-    for (const web of [false, true]) {
-      for (const sub of [false, true]) {
-        this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, undefined, web, sub)));
+    for (const mode of [undefined, ...CODEX_PERMISSION_MODES]) {
+      for (const web of [false, true]) {
+        for (const sub of [false, true]) {
+          this.ctx.effect(() => this.ctx.subagents.registerProvider(this.provider(undefined, mode, web, sub)));
+        }
       }
     }
     this.syncConnections();
