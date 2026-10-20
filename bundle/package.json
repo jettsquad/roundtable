@@ -57,7 +57,7 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/dsh-subagent-claude-code": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-subagent-claude-code": "^0.2.1-alpha.1",
     "mammoth": "^1.12.1",
     "pdf-parse": "^2.4.5"
   },

@@ -19,7 +19,7 @@ dsh web
 
 ## 前提
 
-- `dsh` ≥ 0.1.2-alpha.5，且 `pnpm` 在 PATH 上（`dsh plugin` 转发给它）
+- `dsh` ≥ 0.2.1-alpha.1，且 `pnpm` 在 PATH 上（`dsh plugin` 转发给它）
 - Node `^22.19 || >=24`
 - 席位后端各自的 CLI 与登录态，用哪个装哪个：
   `claude`（Claude Code）· `codex` · `dsh` 自己

@@ -86,7 +86,7 @@ npm run build:bundle     # 打成可发布的 @jettsquad/roundtable
 
 ## 前提
 
-- `dsh` ≥ 0.1.2-alpha.5，`pnpm` 在 PATH 上（`dsh plugin` 转发给它）
+- `dsh` ≥ 0.2.1-alpha.1，`pnpm` 在 PATH 上（`dsh plugin` 转发给它）
 - Node `^22.19 || >=24`
 - 用哪个席位后端就装哪个 CLI 并登录
 
