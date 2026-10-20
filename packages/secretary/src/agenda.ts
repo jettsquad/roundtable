@@ -61,6 +61,9 @@ export function buildAgendaPrompt(input: AgendaDraftInput): string {
     // is what lets the host's own criteria be consulted when the phase opens,
     // instead of only when somebody remembers to ask.
     `Set "situation" to describe what KIND of decision the phase makes. "action" is exactly one of: ${ACTION_KINDS.join(", ")}. "features" are properties of the thing being decided about, zero or more of: ${FEATURE_FLAGS.join(", ")}. Both lists are CLOSED — never invent a value; omit "situation" entirely if none of them fit.`,
+    process.platform === "win32"
+      ? "Check commands run in Windows PowerShell, not a POSIX shell. Use native PowerShell syntax; Test-Path alone only prints a boolean and is not an assertion. Use if (...) { throw 'check failed' } to fail on missing or invalid content; do not use bash, grep, test -s, or POSIX quoting. Do not invent numeric acceptance thresholds unless the host specified them."
+      : "Check commands run in /bin/sh. Use POSIX shell syntax and a nonzero exit status when the stated criterion is not met.",
     `Seats (use these exact seatIds): ${roster}.`,
     `Topic: ${input.topic}`,
     `Host instruction: ${input.command}`,

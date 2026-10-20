@@ -82,6 +82,7 @@ const firstWord = (segment: string): string => {
 /** Whether one simple command is of a kind that exits 0 whatever it finds. */
 function neverFails(segment: string): boolean {
   const word = firstWord(segment);
+  if (word.toLowerCase() === "test-path") return true;
   if (NEVER_FAILS.has(word)) return true;
   if (word === "exit") return /^exit\s+0?\s*$/.test(segment.trim()) || segment.trim() === "exit";
   if (word !== "git") return false;
@@ -119,8 +120,14 @@ function unassertedSearch(pipeline: readonly string[]): boolean {
  *    `git log --grep` above. Pipe it to `grep -q .` or wrap it in `test -n`.
  */
 export function vacuousCheckReason(command: string): string | undefined {
-  const text = command.trim();
+  let text = command.trim();
   if (text === "") return "检查命令是空的";
+
+  // PowerShell assertions can fail before their final success exit. Do not
+  // confuse that with an unconditional `npm test; exit 0`.
+  if (/\bif\s*\([^{}]+\)\s*\{\s*exit\s+[1-9]\d*\s*;?\s*\}/i.test(text)) {
+    text = text.replace(/;\s*exit\s+0\s*;?\s*$/i, "");
+  }
 
   if (/\|\|\s*(true|:|exit\s+0|echo\b)/.test(text) || /;\s*(true|:|exit\s+0)\s*$/.test(text)) {
     return "命令把失败吞掉了（|| true、; true 或 exit 0），无论结果如何都会通过";

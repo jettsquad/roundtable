@@ -71,6 +71,8 @@ Agent 测试同时检查独立 HEAD 请求与席位真实调用；真实调用�
 
 项目说明缺失时，程序只在团队目录创建最小模板，不再让模型自动搜集背景。空目录的目标与架构标为待主持人确认，父目录和同级项目不能作为自动建档的背景来源。
 
+议程出口检查在 Windows 使用 PowerShell，在 macOS/Linux 使用 `/bin/sh`。PowerShell 检查必须用条件失败或异常表达断言；单独 `Test-Path` 只输出布尔值，不能充当退出码检查。
+
 ```sh
 npm install          # 会自动 link-dsh：把本仓库链到本机 dsh 的同一份框架
 npm run install-profile

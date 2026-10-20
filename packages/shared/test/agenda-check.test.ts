@@ -34,6 +34,14 @@ describe("不可能失败的出口检查", () => {
     expect(vacuousCheckReason("npm test; exit 0")).toContain("吞掉");
   });
 
+  it("PowerShell 的条件失败不能被末尾成功退出掩盖", () => {
+    const command =
+      "if (-not (Test-Path 'plan.md')) { exit 1 }; $c = Get-Content 'plan.md' -Raw; if ($c.Length -lt 20) { exit 1 }; exit 0";
+    expect(vacuousCheckReason(command)).toBeUndefined();
+    expect(vacuousCheckReason("npm test; exit 0")).toContain("吞掉");
+    expect(vacuousCheckReason("Test-Path 'plan.md'")).toBeDefined();
+  });
+
   it("会失败的命令放行", () => {
     expect(vacuousCheckReason("npm test")).toBeUndefined();
     expect(vacuousCheckReason("cd clients/web && npx vitest run tests/a.test.ts && npm run typecheck")).toBeUndefined();

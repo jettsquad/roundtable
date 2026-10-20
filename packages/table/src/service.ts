@@ -72,6 +72,7 @@ import {
 } from "@squad/seat-runtime";
 import { outstandingWork, pausesAfter, planPhase, type PlannedRun } from "./agenda.ts";
 import { ensureProjectMemoryFile } from "./project-memory.ts";
+import { checkShellArgv } from "./check-shell.ts";
 import {
   REPORT_FOOTER,
   REPORT_FOOTER_UNCHECKED,
@@ -2966,7 +2967,7 @@ export class TeamsService extends Service {
     );
     try {
       const child = await this.ctx.subprocess.spawn({
-        argv: ["/bin/sh", "-c", check.command],
+        argv: checkShellArgv(check.command),
         cwd: record.input.projectFolder,
         stdio: { stdin: "ignore", stdout: { maxBytes: CHECK_OUTPUT_BYTES }, stderr: { maxBytes: CHECK_OUTPUT_BYTES } },
         graceMs: 2_000,
