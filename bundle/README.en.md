@@ -24,7 +24,7 @@ agents, prompts, connections and criteria are yours to create.
 
 ## Requirements
 
-- `dsh` ≥ 0.1.2-alpha.5, with `pnpm` on PATH (`dsh plugin` forwards to it)
+- `dsh` ≥ 0.2.1-alpha.1, with `pnpm` on PATH (`dsh plugin` forwards to it)
 - Node `^22.19 || >=24`
 - The CLI and login for whichever seat backends you use:
   `claude` (Claude Code) · `codex` · `dsh` itself
