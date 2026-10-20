@@ -55,6 +55,26 @@ describe("不可能失败的出口检查", () => {
     ).toBeUndefined();
   });
 
+  it("accepts PowerShell throws followed by a success exit, including loops", () => {
+    expect(
+      vacuousCheckReason(
+        "if (-not (Test-Path 'acceptance.md')) { throw 'missing' }; $acc = Get-Content 'acceptance.md' -Raw; foreach ($k in @('GPU','imports')) { if ($acc -notmatch $k) { throw \"missing $k\" } }; exit 0",
+      ),
+    ).toBeUndefined();
+    expect(
+      vacuousCheckReason(
+        "if ((Get-Content 'requirements.txt' -Raw) -notmatch 'torch') { throw 'missing pin' }; exit 0",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does not treat quoted or caught throws as a failing branch", () => {
+    expect(vacuousCheckReason("Write-Output 'if ($x) { throw error }'; exit 0")).toContain("吞掉");
+    expect(vacuousCheckReason("try { if ($x) { throw 'error' } } catch {}; exit 0")).toContain("吞掉");
+    expect(vacuousCheckReason("npm test; exit 0")).toContain("吞掉");
+    expect(vacuousCheckReason("grep -q '|| true' file.txt")).toBeUndefined();
+  });
+
   it("引号里的分隔符不算", () => {
     expect(vacuousCheckReason("grep -q 'a && b | c' file.txt")).toBeUndefined();
   });

@@ -39,6 +39,26 @@ const NEVER_FAILS = new Set([
 /** `git` subcommands that report and exit 0 unless asked to fail on what they find. */
 const GIT_REPORTS = new Set(["log", "show", "status", "branch", "diff", "tag", "rev-list", "shortlog"]);
 
+/** Hide literal strings before inspecting shell control statements. */
+function withoutQuotedText(text: string): string {
+  let quote: string | undefined;
+  let code = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index] ?? "";
+    if (quote !== undefined) {
+      code += " ";
+      if ((char === "\\" || char === "`") && quote === '"') {
+        code += " ";
+        index += 1;
+      } else if (char === quote) quote = undefined;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      code += " ";
+    } else code += char;
+  }
+  return code;
+}
+
 /**
  * Split on a separator outside quotes. `||` is kept apart from `|`, and `&&`
  * from `&`, so a chain and a pipeline are not confused.
@@ -123,13 +143,17 @@ export function vacuousCheckReason(command: string): string | undefined {
   let text = command.trim();
   if (text === "") return "检查命令是空的";
 
-  // PowerShell assertions can fail before their final success exit. Do not
-  // confuse that with an unconditional `npm test; exit 0`.
-  if (/\bif\s*\([^{}]+\)\s*\{\s*exit\s+[1-9]\d*\s*;?\s*\}/i.test(text)) {
+  // Conditional throws and nonzero exits can terminate before the final
+  // success exit. Caught exceptions do not establish that failure path.
+  const code = withoutQuotedText(text);
+  const conditionalFailure =
+    /\bif\s*\(/i.test(code) && /\{\s*(?:exit\s+[1-9]\d*\b|throw\b)/i.test(code) && !/\b(?:catch|trap)\b/i.test(code);
+  if (conditionalFailure && /;\s*exit\s+0\s*;?\s*$/i.test(code)) {
     text = text.replace(/;\s*exit\s+0\s*;?\s*$/i, "");
   }
 
-  if (/\|\|\s*(true|:|exit\s+0|echo\b)/.test(text) || /;\s*(true|:|exit\s+0)\s*$/.test(text)) {
+  const control = withoutQuotedText(text);
+  if (/\|\|\s*(true|:|exit\s+0|echo\b)/.test(control) || /;\s*(true|:|exit\s+0)\s*$/.test(control)) {
     return "命令把失败吞掉了（|| true、; true 或 exit 0），无论结果如何都会通过";
   }
 
