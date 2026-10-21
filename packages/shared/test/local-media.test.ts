@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { extractLocalImages, imagePathOfMaterial, imagePathsIn } from "../src/local-media.ts";
+import { extractLocalImages, imagePathOfMaterial, imagePathsIn, legacyAttachedImages } from "../src/local-media.ts";
 import { attachmentNote } from "../src/material.ts";
 
+it("restores old attachment previews without substituting another screenshot with the same name", () => {
+  const text = "打不开\n（本轮附带资料：image.png）";
+  const image = { name: "image.png", addedAt: 1, imagePath: String.raw`J:\p\squad-images\a.png` };
+  expect(legacyAttachedImages(text, 2, [image])).toEqual([{ alt: image.name, path: image.imagePath }]);
+  expect(legacyAttachedImages(text, 0, [image])).toEqual([]);
+  expect(
+    legacyAttachedImages(text, 3, [image, { ...image, addedAt: 2, imagePath: "J:/p/squad-images/b.png" }]),
+  ).toEqual([]);
+  expect(legacyAttachedImages(text + "\n![image.png](J:/p/squad-images/a.png)", 2, [image])).toEqual([]);
+});
+
 describe("extractLocalImages", () => {
+  it("recognizes Windows drive and UNC images while preserving remote Markdown", () => {
+    expect(extractLocalImages(String.raw`![图](J:\project\p\squad-images\a.png)`).images).toEqual([
+      { alt: "图", path: String.raw`J:\project\p\squad-images\a.png` },
+    ]);
+    expect(extractLocalImages(String.raw`![图](\\server\share\a.png)`).images).toHaveLength(1);
+    expect(extractLocalImages("![图](https://example.com/a.png)").images).toEqual([]);
+  });
   it("pulls embedded local pictures out and leaves the text", () => {
     const out = extractLocalImages("你看得到吗？（本轮附带资料：image.png）\n![image.png](/p/My%20Files/a%20b.png)");
     expect(out.text).toBe("你看得到吗？（本轮附带资料：image.png）");
@@ -15,6 +33,15 @@ describe("extractLocalImages", () => {
 });
 
 describe("imagePathsIn", () => {
+  it("finds Windows image paths with either separator, including an UNC project", () => {
+    const root = String.raw`J:\project\My Files (1)`;
+    const path = root + String.raw`\docs\diagram.png`;
+    expect(imagePathsIn(`图：\`${path}\``, root)).toEqual([path]);
+    expect(imagePathsIn("J:/project/My Files (1)/docs/diagram.png", root)).toEqual([
+      "J:/project/My Files (1)/docs/diagram.png",
+    ]);
+    expect(imagePathsIn(String.raw`\\server\share\p\a.png`, String.raw`\\server\share\p`)).toHaveLength(1);
+  });
   const folder = "/Volumes/Jett/projects/claude_hiking_hub_app";
   it("finds the drawings an agent reports inside code blocks", () => {
     const text = [
@@ -43,6 +70,13 @@ describe("imagePathsIn", () => {
 describe("pasted image in a round's note", () => {
   const pointer = (path: string): string =>
     `（这是一张图片，不是文字。文件在：${path}\n用你的读文件工具打开它再回答。）`;
+  it("carries a Windows clipboard image through pointer, saved note and preview extraction", () => {
+    const path = String.raw`J:\project\My Files (1)\squad-images\a b.png`;
+    expect(imagePathOfMaterial(pointer(path))).toBe(path);
+    const note = attachmentNote([{ materialId: "m", name: "image.png", text: pointer(path), addedAt: 0 }]) ?? "";
+    expect(extractLocalImages(note).images).toEqual([{ alt: "image.png", path: path.replace(/\\/g, "/") }]);
+    expect(imagePathsIn(note, String.raw`J:\project\My Files (1)`)).toEqual([]);
+  });
   it("finds the file a pasted-image material points at, and nothing else", () => {
     expect(imagePathOfMaterial(pointer("/p/squad-images/a.png"))).toBe("/p/squad-images/a.png");
     expect(imagePathOfMaterial("普通文档，文件在：/p/squad-images/a.png")).toBeUndefined();

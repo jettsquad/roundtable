@@ -20,7 +20,7 @@
  * text told you what was said and nothing told you where one answer ended.
  */
 import { useEffect, useRef, useState } from "react";
-import { extractLocalImages, imagePathsIn } from "@squad/shared";
+import { extractLocalImages, imagePathsIn, legacyAttachedImages } from "@squad/shared";
 import { MARKDOWN_LABELS } from "./markdown-labels.ts";
 import { MarkdownText } from "@deepseek-ai/dsh-client-ui-primitives";
 import { api, type TeamSummary, type TranscriptLine } from "./api.ts";
@@ -487,11 +487,15 @@ export function Discussion({
         const shown = extractLocalImages(line.text);
         const pictures = [
           ...shown.images,
+          ...(host ? legacyAttachedImages(line.text, line.at, team.materials) : []),
           ...imagePathsIn(shown.text, team.projectFolder).map((path) => ({
             alt: path.split("/").pop() ?? path,
             path,
           })),
-        ].filter((picture, index, all) => all.findIndex((other) => other.path === picture.path) === index);
+        ].filter(
+          (picture, index, all) =>
+            all.findIndex((other) => other.path.replace(/\\/g, "/") === picture.path.replace(/\\/g, "/")) === index,
+        );
         return (
           <article key={line.turnId} className={`${styles.message} ${host ? styles.messageMine : ""}`}>
             <div className={styles.messageHead}>

@@ -20,7 +20,7 @@ const DIRS = `squad-(?:images|downloads)`;
 const EXT = `(?:png|jpe?g|gif|webp|bmp|svg)`;
 
 /** `![alt](/abs/path/x.png)` — any absolute path; the server decides whether it may be read. */
-const MARKDOWN_IMAGE = new RegExp(`!\\[([^\\]]*)\\]\\((\\/[^)\\s]+\\.${EXT})\\)`, "gi");
+const MARKDOWN_IMAGE = new RegExp(`!\\[([^\\]]*)\\]\\(((?:/|[a-z]:[\\\\/]|\\\\\\\\)[^)\\s]+\\.${EXT})\\)`, "gi");
 
 function safeDecode(path: string): string {
   try {
@@ -35,7 +35,8 @@ function safeDecode(path: string): string {
  * the link early, and a project folder with a space in it is ordinary.
  */
 export function markdownPath(path: string): string {
-  return encodeURI(path).replace(/\(/g, "%28").replace(/\)/g, "%29");
+  const portable = /^(?:[a-z]:[\\/]|\\\\)/i.test(path) ? path.replace(/\\/g, "/") : path;
+  return encodeURI(portable).replace(/\(/g, "%28").replace(/\)/g, "%29");
 }
 
 /**
@@ -45,7 +46,23 @@ export function markdownPath(path: string): string {
 export function imagePathOfMaterial(text: string): string | undefined {
   if (!text.includes("这是一张图片")) return undefined;
   const path = /文件在：(.+)/.exec(text)?.[1]?.trim();
-  return path !== undefined && new RegExp(`/${DIRS}/`).test(path) ? path : undefined;
+  return path !== undefined && new RegExp(`[\\\\/]${DIRS}[\\\\/]`).test(path) ? path : undefined;
+}
+
+/** Old Windows messages recorded only attachment names. Recover a preview
+ * only when exactly one image with that name existed at send time. */
+export function legacyAttachedImages(
+  text: string,
+  at: number,
+  materials: readonly { readonly name: string; readonly addedAt: number; readonly imagePath?: string }[],
+): readonly { readonly alt: string; readonly path: string }[] {
+  if (extractLocalImages(text).images.length > 0) return [];
+  const names = /（本轮附带资料：([^\n]*)）/.exec(text)?.[1]?.split("、") ?? [];
+  return names.flatMap((name) => {
+    const candidates = materials.filter((material) => material.name === name && material.addedAt <= at);
+    const material = candidates.length === 1 ? candidates[0] : undefined;
+    return material?.imagePath === undefined ? [] : [{ alt: name, path: material.imagePath }];
+  });
 }
 
 /**
@@ -111,9 +128,10 @@ const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/
  * Pictures already embedded with `![](…)` are left out; they render in place.
  */
 export function imagePathsIn(text: string, projectFolder: string): readonly string[] {
-  const root = projectFolder.replace(/\/+$/, "");
+  const root = projectFolder.replace(/[\\/]+$/, "");
   if (root === "") return [];
   const bare = replaceOutsideCode(text, MARKDOWN_IMAGE, () => " ");
-  const found = new RegExp(`${escapeRegExp(root)}\\/[^\\s\`"'()<>\\]|]*?\\.${EXT}(?![\\w/.-])`, "gi");
+  const rootPattern = root.split(/[\\/]/).map(escapeRegExp).join("[\\\\/]");
+  const found = new RegExp(`${rootPattern}[\\\\/][^\\s\`"'()<>\\]|]*?\\.${EXT}(?![\\w/\\\\.-])`, "gi");
   return [...new Set(bare.match(found) ?? [])];
 }
