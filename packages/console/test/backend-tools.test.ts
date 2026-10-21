@@ -96,6 +96,9 @@ describe("upgradeArgv", () => {
   it("升级装回原来那棵 npm 树", () => {
     expect(npmPrefixOf(CODEX)).toBe("/opt/homebrew");
     expect(npmPrefixOf(CLAUDE)).toBeUndefined();
+    expect(npmPrefixOf("H:\\Programs\\agent-cli\\node_modules\\@openai\\codex\\bin\\codex.js")).toBe(
+      "H:/Programs/agent-cli",
+    );
   });
 });
 

@@ -53,7 +53,7 @@ import type {
   TeamSummary,
   AgendaNodeView,
 } from "./wire.ts";
-import { SEAT_SILENCE_LIMITS } from "@squad/seat-runtime";
+import { SEAT_SILENCE_LIMITS, findCliLaunch } from "@squad/seat-runtime";
 import { runSeat } from "@squad/seat-runtime";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import { agendaEditIsLegal } from "./agenda-verdict.ts";
@@ -1278,7 +1278,7 @@ export async function checkAgent(ctx: Context, templateId: string): Promise<Agen
     checks.push({ name: "命令行工具", outcome: "unknown", detail: `不知道 ${template.backend} 用哪个可执行文件。` });
   } else {
     try {
-      const path = await ctx.subprocess.resolveExecutable(executable, {});
+      const path = findCliLaunch(executable)?.path ?? (await ctx.subprocess.resolveExecutable(executable, {}));
       checks.push({ name: "命令行工具", outcome: "ok", detail: path });
     } catch {
       checks.push({

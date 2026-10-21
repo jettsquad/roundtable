@@ -36,6 +36,8 @@ import {
   type OpenCommand,
 } from "./activity.ts";
 import { withoutHeartbeats } from "./alive.ts";
+import { findCliLaunch } from "./cli-launch.ts";
+export { findCliLaunch } from "./cli-launch.ts";
 
 export { silenceVerdict, watchSilence, silenceMessage, SEAT_SILENCE_LIMITS } from "./silence.ts";
 export type { SilenceBusy, SilenceLimits, SilenceReason } from "./silence.ts";
@@ -225,7 +227,9 @@ export function failureText(input: {
 export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
   const { ctx, request, limits } = spec;
   const cwd = assertUsableCwd(spec.who, "child cwd", request.cwd ?? "");
-  const executable = await ctx.subprocess.resolveExecutable(spec.command, spec.env, request.signal);
+  const launch = findCliLaunch(spec.command, { ...process.env, ...spec.env });
+  const executable =
+    launch?.command ?? (await ctx.subprocess.resolveExecutable(spec.command, spec.env, request.signal));
 
   const prompt = promptOf(request);
   if (prompt.trim() === "") throw new Error(`${spec.who}: 席位任务不能是空的。`);
@@ -240,7 +244,7 @@ export async function runCliSeat(spec: SeatRunSpec): Promise<SubagentRun> {
   request.signal.addEventListener("abort", onAbort, { once: true });
 
   const child = await ctx.subprocess.spawn({
-    argv: [executable, ...spec.argv({ prompt, cwd })],
+    argv: [executable, ...(launch?.args ?? []), ...spec.argv({ prompt, cwd })],
     cwd,
     // Collected with a cap rather than piped: a seat's stdout is read once,
     // after it exits, and an unbounded buffer would let a chatty run take the

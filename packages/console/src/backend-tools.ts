@@ -17,6 +17,7 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import type { BackendTool, InstallMethod, ToolStatus, UpgradeReport } from "./wire.ts";
+import { findCliLaunch } from "@squad/seat-runtime";
 
 export type { BackendTool, InstallMethod, ToolStatus, UpgradeReport };
 
@@ -101,8 +102,10 @@ export function installMethodOf(tool: BackendTool, resolvedPath: string): Instal
  */
 export function npmPrefixOf(resolvedPath: string): string | undefined {
   const path = resolvedPath.replace(/\\/g, "/");
-  const at = path.indexOf("/lib/node_modules/");
-  return at < 0 ? undefined : path.slice(0, at);
+  const at = path.indexOf("/node_modules/");
+  if (at < 0) return undefined;
+  const prefix = path.slice(0, at);
+  return prefix.endsWith("/lib") ? prefix.slice(0, -4) : prefix;
 }
 
 /**
@@ -185,9 +188,15 @@ interface Ran {
 
 function run(command: string, args: readonly string[], timeoutMs: number): Promise<Ran> {
   return new Promise((resolve) => {
-    execFile(command, [...args], { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
-      resolve({ ok: error === null, output: `${String(stdout)}${String(stderr)}`.trim() });
-    });
+    const launch = findCliLaunch(command);
+    execFile(
+      launch?.command ?? command,
+      [...(launch?.args ?? []), ...args],
+      { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        resolve({ ok: error === null, output: `${String(stdout)}${String(stderr)}`.trim() });
+      },
+    );
   });
 }
 
@@ -206,6 +215,8 @@ function onPath(command: string): string | undefined {
 }
 
 async function resolved(command: string): Promise<string | undefined> {
+  const launch = findCliLaunch(command);
+  if (launch !== undefined) return launch.path;
   const found = onPath(command);
   if (found === undefined) return undefined;
   try {
@@ -292,8 +303,9 @@ export async function upgradeTool(tool: BackendTool): Promise<UpgradeReport> {
     const program = plan.command === "npm" && ownNpm !== undefined && existsSync(ownNpm) ? ownNpm : plan.command;
 
     const attempt = async (extra: readonly string[]): Promise<string | undefined> => {
-      const ran = await run(program, [...plan.args, ...extra], 10 * 60_000);
-      log.push(`$ ${[plan.command, ...plan.args, ...extra].join(" ")}`, ran.output);
+      const prefixArgs = prefix === undefined ? [] : ["--prefix", prefix];
+      const ran = await run(program, [...plan.args, ...prefixArgs, ...extra], 10 * 60_000);
+      log.push(`$ ${[plan.command, ...plan.args, ...prefixArgs, ...extra].join(" ")}`, ran.output);
       const after = await installedVersion(command);
       if (after.version === undefined) log.push(`$ ${command} --version`, after.output);
       return after.version;
